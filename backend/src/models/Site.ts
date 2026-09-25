@@ -209,4 +209,4 @@ const SiteSchema: Schema = new Schema(
   }
 );
 
-export const Site = mongoose.models.Site || mongoose.model<ISite>('Site', SiteSchema);
+export const Site: any = mongoose.models.Site || mongoose.model<ISite>('Site', SiteSchema);

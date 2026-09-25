@@ -37,4 +37,4 @@ const SitePanelSchema: Schema = new Schema(
 // Ensure unique panelIndex per site
 SitePanelSchema.index({ siteId: 1, panelIndex: 1 }, { unique: true });
 
-export const SitePanel = mongoose.models.SitePanel || mongoose.model<ISitePanel>('SitePanel', SitePanelSchema);
+export const SitePanel: any = mongoose.models.SitePanel || mongoose.model<ISitePanel>('SitePanel', SitePanelSchema);

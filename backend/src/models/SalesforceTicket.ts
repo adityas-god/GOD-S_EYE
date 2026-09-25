@@ -74,4 +74,4 @@ const SalesforceTicketSchema: Schema = new Schema(
 SalesforceTicketSchema.index({ siteId: 1, receivedDate: 1 });
 SalesforceTicketSchema.index({ siteId: 1, severity: 1 });
 
-export const SalesforceTicket = mongoose.models.SalesforceTicket || mongoose.model<ISalesforceTicket>('SalesforceTicket', SalesforceTicketSchema);
+export const SalesforceTicket: any = mongoose.models.SalesforceTicket || mongoose.model<ISalesforceTicket>('SalesforceTicket', SalesforceTicketSchema);
