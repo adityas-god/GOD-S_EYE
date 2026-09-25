@@ -39,119 +39,6 @@ app.get(['/health', '/api/health'], (req, res) => {
   });
 });
 
-// Diagnostic endpoint to inspect Grafana responses
-app.get('/api/grafana-debug', async (req, res) => {
-  const testUrl = (req.query.url as string) || 'https://cloudwatch.greymatter.greyorange.com/d-solo/LyR7MASDk/process-service-metrics-dashboard-v1?orgId=1&panelId=panel-160&__feature.dashboardSceneSolo=true';
-  try {
-    const r = await fetch(testUrl, {
-      headers: {
-        'User-Agent': (req.headers['user-agent'] as string) || 'Mozilla/5.0 Chrome/122',
-        'Cookie': process.env.GRAFANA_COOKIE || (req.headers['cookie'] as string) || '',
-        'Authorization': process.env.GRAFANA_API_TOKEN ? `Bearer ${process.env.GRAFANA_API_TOKEN}` : (req.headers['authorization'] as string) || ''
-      }
-    });
-    const text = await r.text();
-    res.json({
-      status: r.status,
-      statusText: r.statusText,
-      contentType: r.headers.get('content-type'),
-      xFrameOptions: r.headers.get('x-frame-options'),
-      location: r.headers.get('location'),
-      setCookie: r.headers.get('set-cookie'),
-      isHtml: (r.headers.get('content-type') || '').includes('text/html'),
-      bodySnippet: text.substring(0, 500)
-    });
-  } catch (err: any) {
-    res.json({ error: err.message });
-  }
-});
-
-app.get('/api/test-auth', async (req, res) => {
-  const sessionVal = (process.env.GRAFANA_COOKIE || 'grafana_session=29f08d8a79298c6261a279c6a3a1041f').trim();
-  const cookieStr = sessionVal.includes('=') ? sessionVal : `grafana_session=${sessionVal}`;
-
-  const tests = [
-    {
-      name: 'Full browser headers /api/org',
-      url: 'https://cloudwatch.greymatter.greyorange.com/api/org',
-      headers: {
-        'Host': 'cloudwatch.greymatter.greyorange.com',
-        'Cookie': cookieStr,
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Origin': 'https://cloudwatch.greymatter.greyorange.com',
-        'Referer': 'https://cloudwatch.greymatter.greyorange.com/d/LyR7MASDk/process-service-metrics-dashboard-v1',
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
-      }
-    },
-    {
-      name: 'Ping endpoint /api/login/ping',
-      url: 'https://cloudwatch.greymatter.greyorange.com/api/login/ping',
-      headers: {
-        'Cookie': cookieStr,
-        'User-Agent': 'Mozilla/5.0 Chrome/122',
-      }
-    },
-    {
-      name: 'Current user /api/user',
-      url: 'https://cloudwatch.greymatter.greyorange.com/api/user',
-      headers: {
-        'Cookie': cookieStr,
-        'User-Agent': 'Mozilla/5.0 Chrome/122',
-      }
-    }
-  ];
-
-  const results: any[] = [];
-  for (const t of tests) {
-    try {
-      const r = await fetch(t.url, { headers: t.headers });
-      const text = await r.text();
-      results.push({
-        name: t.name,
-        status: r.status,
-        statusText: r.statusText,
-        setCookie: r.headers.get('set-cookie'),
-        location: r.headers.get('location'),
-        body: text.substring(0, 300)
-      });
-    } catch (e: any) {
-      results.push({ name: t.name, error: e.message });
-    }
-  }
-
-  res.json({ cookieUsed: cookieStr, results });
-});
-
-app.get('/api/inspect-settings', async (req, res) => {
-  const testUrl = (req.query.url as string) || 'https://cloudwatch.greymatter.greyorange.com/d-solo/LyR7MASDk/process-service-metrics-dashboard-v1?orgId=1&panelId=panel-160&__feature.dashboardSceneSolo=true';
-  try {
-    const r = await fetch(testUrl);
-    const text = await r.text();
-    
-    // Look for panels or dashboard init data
-    const panelMatches = [...text.matchAll(/["'](?:panelId|id)["']\s*:\s*["']?([^"',\s}]+)["']?/gi)].map(m => m[1]);
-    const dMatches = [...text.matchAll(/["']panel-(\d+)["']/g)].map(m => m[0]);
-    const titleMatch = text.match(/<title>([^<]+)<\/title>/i);
-    const isSolo = text.includes('dashboardSceneSolo') || testUrl.includes('d-solo');
-
-    res.json({
-      status: r.status,
-      title: titleMatch ? titleMatch[1] : null,
-      isSolo,
-      samplePanels: Array.from(new Set(panelMatches)).slice(0, 20),
-      panelNumbers: Array.from(new Set(dMatches)).slice(0, 20),
-      hasBootData: text.includes('__grafana_bootData'),
-      bootDataSnippet: text.includes('__grafana_bootData') ? text.substring(text.indexOf('__grafana_bootData'), text.indexOf('__grafana_bootData') + 500) : null
-    });
-  } catch (err: any) {
-    res.json({ error: err.message });
-  }
-});
-
 // --- CORE MICROSERVICES ---
 
 // 1. Grafana Panel Rendering & Embed Microservice (Persist & retrieve Grafana dashboard links from Atlas)
@@ -724,7 +611,7 @@ app.use(['/api', '/apis'], async (req, res, next) => {
 
 // Fallback: If not an internal app route, forward GET requests to Grafana proxy
 app.use((req, res) => {
-  const isInternalApi = req.originalUrl.startsWith('/api/') && ['/grafana', '/salesforce', '/proxy-dashboard', '/calendar', '/tickets', '/analytics', '/sites'].some(p => req.originalUrl.startsWith(`/api${p}`));
+  const isInternalApi = req.originalUrl.startsWith('/api/') && ['/grafana', '/salesforce', '/proxy-dashboard', '/calendar', '/tickets', '/analytics', '/sites', '/influx'].some(p => req.originalUrl.startsWith(`/api${p}`));
   if (req.method === 'GET' && !isInternalApi) {
     return grafanaAssetProxy(req, res);
   }
