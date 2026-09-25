@@ -33,7 +33,7 @@ router.get('/', async (req: Request, res: Response) => {
 router.get('/:siteId', async (req: Request, res: Response) => {
   const { siteId } = req.params;
   try {
-    let site = await Site.findOne({ siteId }).lean();
+    let site: any = await Site.findOne({ siteId }).lean();
     if (!site) {
       // Case-insensitive / code lookup
       site = await Site.findOne({ 
@@ -131,7 +131,7 @@ router.get('/:siteId', async (req: Request, res: Response) => {
 router.get('/:siteId/alerts', async (req: Request, res: Response) => {
   const { siteId } = req.params;
   try {
-    let site = await Site.findOne({ siteId }).lean();
+    let site: any = await Site.findOne({ siteId }).lean();
     if (!site) {
       site = await Site.findOne({
         $or: [

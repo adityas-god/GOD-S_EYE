@@ -19,14 +19,14 @@ jobs:
           echo "🚀 Starting Automated Deployment for Operations Dashboard"
           echo "=========================================================="
 
-          DEPLOY_DIR="/home/ubuntu/GOD-S_EYE"
+          DEPLOY_DIR="/GOD-S_EYE"
 
-          # 1. Ensure isolated project directory exists
+          # 1. Ensure isolated dedicated project directory exists for GOD-S_EYE
           if [ ! -d "$DEPLOY_DIR" ]; then
-            if [ -d "/home/ubuntu/operations-dashboard" ]; then
-              DEPLOY_DIR="/home/ubuntu/operations-dashboard"
+            if [ -d "/home/aditya_s_ctr_greyorange_com/GOD-S_EYE" ]; then
+              DEPLOY_DIR="/home/aditya_s_ctr_greyorange_com/GOD-S_EYE"
             else
-              echo "Creating $DEPLOY_DIR and cloning repository..."
+              echo "Creating $DEPLOY_DIR and cloning GOD-S_EYE repository..."
               git clone https://github.com/adityas-god/GOD-S_EYE.git "$DEPLOY_DIR"
             fi
           fi
