@@ -78,6 +78,7 @@ const DEFAULT_EMBED_LINKS: AdminPanelLink[] = [
     site_id: 'default',
     panel_key: 'primary_metrics',
     title: 'Live Telemetry & Sorter Throughput Dashboard',
+    embed_url: 'https://grafana.wikimedia.org/d-solo/000000021/mediawiki-alerts?orgId=1&panelId=1&theme=dark',
     embedUrl: 'https://grafana.wikimedia.org/d-solo/000000021/mediawiki-alerts?orgId=1&panelId=1&theme=dark',
     panel_type: 'iframe',
     display_order: 1

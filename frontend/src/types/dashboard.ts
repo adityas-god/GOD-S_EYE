@@ -84,6 +84,7 @@ export interface AdminPanelLink {
   panel_key: string;
   title: string;
   embed_url: string;
+  embedUrl?: string;
   panel_type: 'iframe' | 'markdown' | 'metrics';
   display_order: number;
   updated_by?: string;

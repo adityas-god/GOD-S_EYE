@@ -7,7 +7,7 @@
  * Backend endpoint: GET /api/proxy-dashboard?url=<encoded>
  */
 
-const BACKEND_BASE = import.meta.env.VITE_API_URL || '';
+const BACKEND_BASE = (import.meta as any).env?.VITE_API_URL || '';
 
 /**
  * Normalizes any Grafana URL or embed HTML snippet:
