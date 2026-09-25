@@ -1,0 +1,64 @@
+name: Deploy Operations Dashboard
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Cloud VM
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Deploy Docker Stack
+        run: |
+          set -e
+          echo "=========================================================="
+          echo "🚀 Starting Automated Deployment for Operations Dashboard"
+          echo "=========================================================="
+
+          DEPLOY_DIR="/home/ubuntu/GOD-S_EYE"
+
+          # 1. Ensure isolated project directory exists
+          if [ ! -d "$DEPLOY_DIR" ]; then
+            if [ -d "/home/ubuntu/operations-dashboard" ]; then
+              DEPLOY_DIR="/home/ubuntu/operations-dashboard"
+            else
+              echo "Creating $DEPLOY_DIR and cloning repository..."
+              git clone https://github.com/adityas-god/GOD-S_EYE.git "$DEPLOY_DIR"
+            fi
+          fi
+
+          cd "$DEPLOY_DIR"
+
+          # 2. Fetch latest changes from main
+          echo "📥 Pulling latest code from origin/main..."
+          git fetch origin main
+          git reset --hard origin/main
+
+          # 3. Ensure production .env exists
+          if [ ! -f ".env" ]; then
+            echo "⚠️  .env file not found. Creating from .env.example..."
+            cp .env.example .env
+          fi
+
+          # 4. Build and start containers in isolated Docker network
+          echo "🐳 Building and starting Docker containers..."
+          docker compose up -d --build --remove-orphans
+
+          # 5. Verify deployment health on host port 8000
+          echo "🔍 Verifying service health on port 8000..."
+          for i in {1..12}; do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "✅ Operations Dashboard is UP and healthy!"
+              break
+            fi
+            echo "Waiting for services to initialize ($i/12)..."
+            sleep 5
+          done
+
+          # 6. Report container status
+          echo "📊 Active Containers:"
+          docker ps --filter "name=ops-dashboard"

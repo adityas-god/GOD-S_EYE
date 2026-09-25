@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ops-dashboard-backend
+    restart: unless-stopped
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+      - MONGODB_URI=${MONGODB_URI:-mongodb+srv://adityasctr_db_user:ydv9XNaewJtaQjYC@cluster0.ef4bjjj.mongodb.net/operations_db?retryWrites=true&w=majority}
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-operations_db}
+      - SALESFORCE_MOCK_ENABLED=${SALESFORCE_MOCK_ENABLED:-true}
+      - GRAFANA_BASE_URL=${GRAFANA_BASE_URL:-https://cloudwatch.greymatter.greyorange.com}
+      - GRAFANA_API_TOKEN=${GRAFANA_API_TOKEN:-}
+      - GRAFANA_COOKIE=${GRAFANA_COOKIE:-}
+    networks:
+      - ops-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5050/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ops-dashboard-frontend
+    restart: unless-stopped
+    ports:
+      # Maps VM Host Port 8000 -> Container Port 80 (Nginx)
+      # Port 5000 on the host is left untouched for Auto_BOT
+      - "${HOST_PORT:-8000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - ops-network
+
+networks:
+  ops-network:
+    driver: bridge
