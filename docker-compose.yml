@@ -5,7 +5,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: ops-dashboard-backend
+    container_name: gods-eye-backend
     restart: unless-stopped
     environment:
       - PORT=5050
@@ -17,9 +17,9 @@ services:
       - GRAFANA_API_TOKEN=${GRAFANA_API_TOKEN:-}
       - GRAFANA_COOKIE=${GRAFANA_COOKIE:-}
     networks:
-      - ops-network
+      - gods-eye-net
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:5050/health || exit 1"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:5050/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)}).on('error', () => process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,18 +29,17 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: ops-dashboard-frontend
+    container_name: gods-eye-frontend
     restart: unless-stopped
     ports:
       # Maps VM Host Port 8000 -> Container Port 80 (Nginx)
       # Port 5000 on the host is left untouched for Auto_BOT
       - "${HOST_PORT:-8000}:80"
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
     networks:
-      - ops-network
+      - gods-eye-net
 
 networks:
-  ops-network:
+  gods-eye-net:
     driver: bridge

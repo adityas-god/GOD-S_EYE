@@ -61,4 +61,4 @@ jobs:
 
           # 6. Report container status
           echo "📊 Active Containers:"
-          docker ps --filter "name=ops-dashboard"
+          docker ps --filter "name=gods-eye"
