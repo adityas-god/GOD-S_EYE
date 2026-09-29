@@ -129,8 +129,8 @@ Open `http://localhost:3000` in your browser.
 
 This project is fully containerized and configured for zero-downtime, isolated deployment on Linux VMs (Ubuntu/Debian) alongside existing services (such as `Auto_BOT` on port 5000):
 
-- **Host Port**: `8000` (maps to frontend Nginx container; backend runs inside private Docker network `gods-eye-net` on internal port 5050 without colliding with host port 5000).
-- **Public URL**: `http://<VM_EXTERNAL_IP>:8000`
+- **Host Port**: `8081` (maps to frontend Nginx container; backend runs inside private Docker network `gods-eye-net` on internal port 5050 without colliding with host port 5000 or InfluxQL on 8080).
+- **Public URL**: `http://<VM_EXTERNAL_IP>:8081`
 - **Container Names**: `gods-eye-frontend`, `gods-eye-backend`
 
 ### Quick Start with Docker:
@@ -147,7 +147,7 @@ cp .env.example .env
 docker compose up -d --build --remove-orphans
 
 # 4. Verify health
-curl http://localhost:8000/health
+curl http://localhost:8081/health
 ```
 
 ---

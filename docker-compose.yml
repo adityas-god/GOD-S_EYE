@@ -30,9 +30,9 @@ services:
     container_name: gods-eye-frontend
     restart: unless-stopped
     ports:
-      # Maps VM Host Port 8000 -> Container Port 80 (Nginx)
-      # Port 5000 on the host is left untouched for Auto_BOT
-      - "${HOST_PORT:-8000}:80"
+      # Maps VM Host Port 8081 -> Container Port 80 (Nginx)
+      # Port 5000 is for Auto_BOT, 8080 is for InfluxQL analyzer
+      - "${HOST_PORT:-8081}:80"
     depends_on:
       - backend
     networks:
