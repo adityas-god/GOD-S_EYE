@@ -363,10 +363,18 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const defaults = generateDefaultLinks();
         // Upgrade any wikimedia, empty, or broken URLs missing panelId to the real defaults
         for (const [k, v] of Object.entries(defaults)) {
-          const currentVal = parsed[k];
-          if (!currentVal || currentVal.includes('wikimedia.org') || (currentVal.includes('/d/') && !currentVal.includes('panelId') && !currentVal.includes('kiosk'))) {
-            parsed[k] = v;
+          let currentVal = parsed[k];
+          if (!currentVal || currentVal.includes('wikimedia.org') || (currentVal.includes('/d/') && !currentVal.includes('panelId'))) {
+            currentVal = v;
           }
+          if (typeof currentVal === 'string' && currentVal.includes('kiosk')) {
+            try {
+              const u = new URL(currentVal);
+              u.searchParams.delete('kiosk');
+              currentVal = u.toString();
+            } catch (_) {}
+          }
+          parsed[k] = currentVal;
         }
         setDashboardLinks(parsed);
       } catch (e) {

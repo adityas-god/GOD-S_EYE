@@ -208,18 +208,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
                 )}
 
-                {/* Collapsed dot / badge */}
-                {isCollapsed && item.count && (
-                  <span className={`absolute top-1.5 right-1.5 w-2 h-2 rounded-full ${
-                    isSlack 
-                      ? 'bg-emerald-400 shadow-[0_0_6px_#10B981]' 
-                      : isWarRoom
-                        ? 'bg-blue-400 shadow-[0_0_6px_#3B82F6]'
-                        : isAlertPool && activeAlertCount > 0
-                          ? 'bg-red-500 shadow-[0_0_6px_#EF4444] animate-ping'
-                          : 'bg-[#FF7A00] shadow-[0_0_6px_#FF7A00]'
-                  }`} />
-                )}
+
 
                 {/* Hover Tooltip when collapsed */}
                 {isCollapsed && (

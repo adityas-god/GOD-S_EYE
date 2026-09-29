@@ -52,6 +52,11 @@ export function normalizeGrafanaUrl(raw: string | undefined | null): string {
       }
     }
 
+    // Strip kiosk / tv mode from all panel and dashboard rendering
+    if (urlObj.searchParams.has('kiosk')) {
+      urlObj.searchParams.delete('kiosk');
+    }
+
     // ONLY convert /d/ to /d-solo/ if an explicit panelId is present!
     // Without a panelId, /d-solo/ causes Grafana to throw "Panel not found"!
     if (urlObj.searchParams.has('panelId')) {
@@ -63,11 +68,6 @@ export function normalizeGrafanaUrl(raw: string | undefined | null): string {
       }
       if (!urlObj.searchParams.has('theme')) {
         urlObj.searchParams.set('theme', 'dark');
-      }
-    } else {
-      // Full dashboard view: add kiosk=tv so Grafana header/sidebar doesn't clutter the embed
-      if (!urlObj.searchParams.has('kiosk')) {
-        urlObj.searchParams.set('kiosk', 'tv');
       }
     }
 

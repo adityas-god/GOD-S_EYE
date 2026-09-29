@@ -394,6 +394,11 @@ app.get('/api/proxy-dashboard', async (req, res) => {
         parsed.searchParams.set('panelId', viewPanel);
       }
     }
+    // Strip kiosk / tv mode from all panel and dashboard rendering
+    if (parsed.searchParams.has('kiosk')) {
+      parsed.searchParams.delete('kiosk');
+    }
+
     // Only switch to solo panel mode if a specific panel was requested!
     // Full dashboard URLs without panelId must stay as /d/
     if (parsed.searchParams.has('panelId')) {
@@ -402,11 +407,6 @@ app.get('/api/proxy-dashboard', async (req, res) => {
       }
       if (!parsed.searchParams.has('__feature.dashboardSceneSolo')) {
         parsed.searchParams.set('__feature.dashboardSceneSolo', 'true');
-      }
-    } else {
-      // For full dashboards, enable kiosk mode to remove outer chrome
-      if (!parsed.searchParams.has('kiosk')) {
-        parsed.searchParams.set('kiosk', 'tv');
       }
     }
     const fromParam = parsed.searchParams.get('from');
