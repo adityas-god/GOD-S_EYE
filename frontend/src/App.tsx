@@ -20,7 +20,7 @@ const DashboardView: React.FC = () => {
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
 
   return (
-    <div className="h-screen w-screen bg-[#0B0E14] text-[#ECEFF4] flex flex-col font-sans selection:bg-[#FF7A00] selection:text-white overflow-hidden">
+    <div className="h-screen w-screen bg-[#090A0E] text-[#F3F4F6] flex flex-col font-sans selection:bg-[#FF5426] selection:text-white overflow-hidden">
       {/* Top Navbar */}
       <Navbar onOpenAdminModal={() => setIsAdminModalOpen(true)} />
 

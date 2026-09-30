@@ -193,14 +193,14 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
   const monthYearLabel = `${MONTH_NAMES[monthIndex]} ${year}`;
 
   return (
-    <div className="surface-card rounded-xl p-2 sm:p-2.5 flex flex-col justify-between shadow-lg h-full min-h-0 font-mono border border-[#232A39]">
+    <div className="surface-card rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between shadow-lg h-full min-h-0 font-mono border border-white/[0.06]">
       
       {/* 1. Header with Month Navigator & Real Navigation Controls */}
       <div>
-        <div className="flex items-center justify-between pb-1 border-b border-[#232A39] gap-2">
+        <div className="flex items-center justify-between pb-1.5 border-b border-white/[0.06] gap-2">
           
           <div className="flex items-center gap-1.5 min-w-0">
-            <CalendarIcon className="w-3.5 h-3.5 text-[#FF7A00] shrink-0" />
+            <CalendarIcon className="w-3.5 h-3.5 text-[#FF5426] shrink-0" />
             <span className="font-bold text-xs uppercase tracking-wider text-white truncate">
               Site Calendar
             </span>
@@ -208,7 +208,7 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
           {/* REAL MONTH/YEAR NAVIGATOR */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="flex items-center gap-1 bg-[#121620] px-1.5 py-0.5 rounded-lg border border-[#232A39]">
+            <div className="flex items-center gap-1 bg-[#13141B] px-2 py-0.5 rounded-full border border-white/[0.06]">
               <button 
                 onClick={handlePrevMonth}
                 className="text-[#7E879B] hover:text-white p-0.5 transition-colors"
@@ -232,7 +232,7 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
             <button 
               onClick={handleToday}
-              className="px-2 py-0.5 text-[9px] font-semibold bg-[#171D27] hover:bg-[#202735] text-gray-300 hover:text-white rounded border border-[#283144] transition-all"
+              className="px-2.5 py-0.5 text-[9px] font-semibold bg-[#13141B] hover:bg-[#181A23] text-gray-300 hover:text-white rounded-full border border-white/[0.06] hover:border-[#FF5426]/40 transition-all"
             >
               Today
             </button>
@@ -241,8 +241,8 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
         </div>
 
         {/* 2. Facility Info Row */}
-        <div className="flex items-center justify-between pt-0.5 text-[9px] text-[#76839A]">
-          <span className="truncate">Facility: <strong className="text-[#FF7A00]">{currentSiteObj?.name || 'Selected Facility'}</strong> ({currentSiteObj?.code || 'SITE'})</span>
+        <div className="flex items-center justify-between pt-1 text-[9px] text-[#76839A]">
+          <span className="truncate">Facility: <strong className="text-[#FF5426]">{currentSiteObj?.name || 'Selected Facility'}</strong> ({currentSiteObj?.code || 'SITE'})</span>
           <span className="shrink-0">Apex Sync: <strong className="text-emerald-400">Live</strong></span>
         </div>
 

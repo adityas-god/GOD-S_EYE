@@ -29,14 +29,14 @@ export const TicketFlowTrendChart: React.FC = () => {
   }, [currentSiteObj, trendData]);
 
   return (
-    <div className="surface-card rounded-xl p-2 sm:p-2.5 flex flex-col justify-between shadow-lg h-full min-h-0">
+    <div className="surface-card rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between shadow-lg h-full min-h-0 border border-white/[0.06]">
       
       {/* Header & Filter Dropdown */}
       <div>
-        <div className="flex items-center justify-between pb-1 border-b border-[#232A39]">
+        <div className="flex items-center justify-between pb-1.5 border-b border-white/[0.06]">
           <div className="flex items-center gap-2">
-            <BarChart2 className="w-3.5 h-3.5 text-[#FF7A00]" />
-            <span className="font-mono font-bold text-xs uppercase tracking-wider text-white">
+            <BarChart2 className="w-3.5 h-3.5 text-[#FF5426]" />
+            <span className="font-bold text-xs uppercase tracking-wider text-white">
               Incident Trend ({timeRange})
             </span>
           </div>
@@ -45,19 +45,19 @@ export const TicketFlowTrendChart: React.FC = () => {
             <select
               value={timeRange}
               onChange={(e) => setTimeRange(e.target.value)}
-              className="appearance-none bg-[#141923] hover:bg-[#1D2433] text-gray-200 text-[10px] font-mono font-semibold pl-2 pr-6 py-0.5 rounded-lg border border-[#283144] hover:border-[#FF7A00]/50 focus:outline-none cursor-pointer transition-colors"
+              className="appearance-none bg-[#13141B] hover:bg-[#181A23] text-gray-200 text-[10px] font-semibold pl-3 pr-7 py-1 rounded-full border border-white/[0.06] hover:border-[#FF5426]/50 focus:outline-none cursor-pointer transition-colors"
             >
               <option value="Last 30 Days">Last 30 Days</option>
               <option value="Last 90 Days">Last 90 Days</option>
               <option value="Last 1 Year">Last 1 Year</option>
             </select>
-            <ChevronDown className="w-3 h-3 text-[#7B869D] absolute right-1.5 top-1.5 pointer-events-none" />
+            <ChevronDown className="w-3 h-3 text-[#7B869D] absolute right-2.5 top-1.5 pointer-events-none" />
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-0.5 text-[9px] font-mono text-[#76839A]">
-          <span>Site Trend: <strong className="text-[#FF7A00]">{currentSiteObj?.name || 'Selected'}</strong></span>
-          <span>Window: <strong className="text-gray-200">13 Weeks Telemetry</strong></span>
+        <div className="flex items-center justify-between pt-1 text-[9px] text-[#76839A]">
+          <span>Site Trend: <strong className="text-[#FF5426]">{currentSiteObj?.name || 'Selected'}</strong></span>
+          <span>Window: <strong className="text-gray-200 font-mono">13 Weeks Telemetry</strong></span>
         </div>
       </div>
 
@@ -75,19 +75,19 @@ export const TicketFlowTrendChart: React.FC = () => {
         </div>
 
         {/* Chart Area */}
-        <div className="flex-1 flex flex-col justify-between relative border-l border-b border-[#232A39] pl-1.5 pb-4">
+        <div className="flex-1 flex flex-col justify-between relative border-l border-b border-white/[0.06] pl-1.5 pb-4">
           
           {/* Subtle Grid Lines */}
-          <div className="absolute inset-0 bottom-4 flex flex-col justify-between pointer-events-none opacity-15">
-            <div className="border-b border-[#3E4A62] w-full" />
-            <div className="border-b border-[#3E4A62] w-full" />
-            <div className="border-b border-[#3E4A62] w-full" />
-            <div className="border-b border-[#3E4A62] w-full" />
-            <div className="border-b border-[#3E4A62] w-full" />
-            <div className="border-b border-[#3E4A62] w-full" />
+          <div className="absolute inset-0 bottom-4 flex flex-col justify-between pointer-events-none opacity-20">
+            <div className="border-b border-white/[0.06] w-full" />
+            <div className="border-b border-white/[0.06] w-full" />
+            <div className="border-b border-white/[0.06] w-full" />
+            <div className="border-b border-white/[0.06] w-full" />
+            <div className="border-b border-white/[0.06] w-full" />
+            <div className="border-b border-white/[0.06] w-full" />
           </div>
 
-          {/* Stacked Bars */}
+          {/* Stacked Bars with Sleek Rounded Caps */}
           <div className="flex items-end justify-between gap-1.5 h-full w-full z-10">
             {siteBarsData.map((bar: any, i: number) => {
               const total = (bar.green || 0) + (bar.blue || 0) + (bar.yellow || 0) + (bar.red || 0);
@@ -107,18 +107,18 @@ export const TicketFlowTrendChart: React.FC = () => {
                 >
                   {/* Tooltip on Hover */}
                   {hoveredIndex === i && (
-                    <div className="absolute -top-14 bg-[#0E121A]/95 text-white text-[10px] font-mono p-2 rounded-lg shadow-2xl border border-[#FF7A00]/50 z-20 whitespace-nowrap animate-in fade-in">
-                      <div className="font-bold text-[#FF7A00]">{bar.label} — Cases: {total}</div>
+                    <div className="absolute -top-14 bg-[#0B0C10]/95 backdrop-blur-md text-white text-[10px] font-mono p-2 rounded-xl shadow-2xl border border-[#FF5426]/50 z-20 whitespace-nowrap animate-in fade-in">
+                      <div className="font-bold text-[#FF5426]">{bar.label} — Cases: {total}</div>
                       <div className="text-gray-300">
                         🔴 SEV1: {bar.red} | 🟡 SEV2: {bar.yellow} | 🔵 SEV3: {bar.blue}
                       </div>
                     </div>
                   )}
 
-                  {/* Stacked Column */}
+                  {/* Stacked Column with Smooth Rounded Top */}
                   <div
                     style={{ height: `${heightPct}%` }}
-                    className="w-full rounded-xs flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125 group-hover:scale-y-102"
+                    className="w-full rounded-t-md flex flex-col-reverse overflow-hidden transition-all duration-150 group-hover:brightness-125 group-hover:scale-y-102 shadow-sm"
                   >
                     <div style={{ height: `${greenPct}%` }} className="w-full bg-[#10B981]" />
                     <div style={{ height: `${bluePct}%` }} className="w-full bg-[#3B82F6]" />

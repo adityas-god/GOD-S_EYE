@@ -318,17 +318,17 @@ export const ActiveDashboardViewer: React.FC = () => {
   const proxiedUrl = toProxyUrl(currentUrl);
 
   return (
-    <div className="surface-card rounded-xl p-2.5 sm:p-3 shadow-lg font-mono border border-[#232A39] flex flex-col justify-between h-[360px] select-none">
+    <div className="surface-card rounded-2xl p-2.5 sm:p-3 shadow-lg font-mono border border-white/[0.06] flex flex-col justify-between h-[360px] select-none">
       
       {/* Top Header Bar & URL Address Bar */}
-      <div className="shrink-0 flex flex-col gap-1.5 pb-2 border-b border-[#232A39]">
+      <div className="shrink-0 flex flex-col gap-1.5 pb-2 border-b border-white/[0.06]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
-            <Activity className="w-3.5 h-3.5 text-[#FF7A00] animate-pulse shrink-0" />
+            <Activity className="w-3.5 h-3.5 text-[#FF5426] animate-pulse shrink-0" />
             <span className="font-bold text-xs uppercase text-white tracking-wider truncate">
               {siteName} — {currentConfig.label} ({currentConfig.category}) Live Panel
             </span>
-            <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950/60 text-emerald-400 border border-emerald-600/30 font-bold hidden sm:inline">
+            <span className="text-[9px] px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-600/30 font-bold hidden sm:inline">
               LIVE RENDER
             </span>
           </div>

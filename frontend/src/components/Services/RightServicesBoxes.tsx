@@ -203,11 +203,11 @@ export const RightServicesBoxes: React.FC = () => {
   return (
     <div className="flex flex-col gap-1 font-mono select-none h-full min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between px-2 py-1 rounded-lg bg-[#0F131C] border border-[#1E2535] shrink-0">
+      <div className="flex items-center justify-between px-2.5 py-1.5 rounded-xl bg-[#121319] border border-white/[0.06] shrink-0">
         <div className="flex items-center gap-1.5">
-          <Activity className="w-3.5 h-3.5 text-[#FF7A00] animate-pulse" />
+          <Activity className="w-3.5 h-3.5 text-[#FF5426] animate-pulse" />
           <span className="font-extrabold text-[10px] uppercase tracking-wider text-white">Cluster Telemetry</span>
-          <span className="text-[8px] px-1 py-0.2 rounded bg-[#151D2B] text-emerald-400 border border-emerald-500/30 font-bold">
+          <span className="text-[8px] px-1.5 py-0.2 rounded-full bg-[#181A22] text-emerald-400 border border-emerald-500/30 font-bold">
             6 Panels
           </span>
         </div>
@@ -224,8 +224,8 @@ export const RightServicesBoxes: React.FC = () => {
           const stroke = s.status === 'RED' ? '#EF4444' : s.status === 'AMBER' ? '#F59E0B' : '#10B981';
           const dot = s.status === 'RED' ? 'bg-red-400 animate-ping' : s.status === 'AMBER' ? 'bg-amber-400 animate-pulse' : 'bg-emerald-400';
           const ring = isSelected
-            ? 'border-[#FF7A00] ring-1 ring-[#FF7A00]/60 shadow-[0_0_12px_rgba(255,122,0,0.25)] bg-[#121824]'
-            : 'border-[#1D2535] hover:border-[#2E3D56] bg-[#0D1119] hover:bg-[#111722]';
+            ? 'border-[#FF5426] ring-1 ring-[#FF5426]/60 shadow-[0_0_15px_rgba(255,84,38,0.25)] bg-[#14151C]'
+            : 'border-white/[0.06] hover:border-[#FF5426]/30 bg-[#121318] hover:bg-[#161720]';
 
           const currentUrl = dashboardLinks[s.id] || '';
           const hasUrl = isRealDashboardUrl(currentUrl);
@@ -248,7 +248,7 @@ export const RightServicesBoxes: React.FC = () => {
                 setSelectedService(s.id);
                 setActiveDashboardKey(s.id);
               }}
-              className={`flex-1 min-h-0 rounded-xl border transition-all duration-150 cursor-pointer overflow-hidden flex flex-col p-1.5 justify-between relative group ${ring}`}
+              className={`flex-1 min-h-0 rounded-2xl border transition-all duration-150 cursor-pointer overflow-hidden flex flex-col p-2 justify-between relative group ${ring}`}
             >
               {/* Top Accent Shimmer */}
               <div 
@@ -448,19 +448,19 @@ export const RightServicesBoxes: React.FC = () => {
               )}
 
               {/* Bottom stats row */}
-              <div className="flex items-center justify-between text-[8px] text-gray-500 pt-0.5 border-t border-[#18202D] z-10 shrink-0">
+              <div className="flex items-center justify-between text-[8px] text-gray-500 pt-1 border-t border-white/[0.06] z-10 shrink-0">
                 <span className="text-gray-400 font-mono truncate">{s.clusterTag}</span>
                 {hasUrl ? (
                   <span 
                     onClick={(e) => handleOpenPaste(e, s.id)}
-                    className="text-[#FF7A00] font-bold hover:underline cursor-pointer"
+                    className="text-[#FF5426] font-bold hover:underline cursor-pointer"
                   >
                     {isLiveMode ? 'Live Rendered' : 'Paste Link ✎'}
                   </span>
                 ) : (
                   <span 
                     onClick={(e) => handleOpenPaste(e, s.id)}
-                    className="text-amber-400 font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                    className="text-[#FF5426] font-bold hover:underline cursor-pointer flex items-center gap-0.5"
                   >
                     <span>Paste Link ✎</span>
                   </span>
@@ -472,7 +472,7 @@ export const RightServicesBoxes: React.FC = () => {
       </div>
 
       {/* Footer Legend */}
-      <div className="shrink-0 flex items-center justify-around px-2 py-1 rounded-lg bg-[#0E121A] border border-[#1E2533] text-[7.5px] text-gray-400">
+      <div className="shrink-0 flex items-center justify-around px-2.5 py-1 rounded-xl bg-[#121319] border border-white/[0.06] text-[7.5px] text-gray-400">
         <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />Healthy</span>
         <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />Warning</span>
         <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block" />Critical</span>

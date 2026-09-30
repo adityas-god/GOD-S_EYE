@@ -37,7 +37,7 @@ const METRICS: MetricConfig[] = [
     unit: 'Units/hr',  
     change: '+5.4%', 
     isPositive: true, 
-    color: '#FF7A00', 
+    color: '#FF5426', 
     data: [60, 72, 80, 75, 85, 78, 88, 82, 90, 85, 88, 92] 
   },
   { 
@@ -192,14 +192,14 @@ export const MetricPillsBar: React.FC = () => {
           const ly = H - (m.data[m.data.length - 1] / 100) * H * 0.78 - H * 0.10;
 
           const ring = isSelected
-            ? 'border-[#FF7A00] ring-1 ring-[#FF7A00]/60 shadow-[0_0_12px_rgba(255,122,0,0.25)] bg-[#121824]'
-            : 'border-[#1D2535] hover:border-[#2E3D56] bg-[#0D1119] hover:bg-[#111722]';
+            ? 'border-[#FF5426] ring-1 ring-[#FF5426]/60 shadow-[0_0_15px_rgba(255,84,38,0.25)] bg-[#14151C]'
+            : 'border-white/[0.06] hover:border-[#FF5426]/30 bg-[#121318] hover:bg-[#161720]';
 
           return (
             <div
               key={m.key}
               onClick={() => setActiveDashboardKey(m.key)}
-              className={`rounded-xl border transition-all duration-150 cursor-pointer overflow-hidden p-2 flex flex-col justify-between group relative min-h-[118px] ${ring}`}
+              className={`rounded-2xl border transition-all duration-150 cursor-pointer overflow-hidden p-2.5 flex flex-col justify-between group relative min-h-[118px] ${ring}`}
             >
               {/* Top Accent Shimmer */}
               <div 
@@ -211,7 +211,7 @@ export const MetricPillsBar: React.FC = () => {
               <div className="flex items-center justify-between z-10 shrink-0">
                 <div className="flex items-center gap-1.5">
                   <span
-                    className="text-[9.5px] font-black px-1.5 py-0.2 rounded shrink-0 uppercase tracking-wider"
+                    className="text-[9.5px] font-black px-2 py-0.5 rounded-full shrink-0 uppercase tracking-wider"
                     style={{ backgroundColor: `${m.color}22`, color: m.color, border: `1px solid ${m.color}44` }}
                   >
                     {m.label}
@@ -237,7 +237,7 @@ export const MetricPillsBar: React.FC = () => {
                   <button
                     type="button"
                     onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="p-1 rounded bg-[#161D2B] hover:bg-[#FF7A00] text-gray-300 hover:text-white transition-colors"
+                    className="p-1 rounded-full bg-[#181A23] hover:bg-[#FF5426] text-gray-300 hover:text-white transition-colors"
                     title="Paste / Edit Grafana Link"
                   >
                     <Link className="w-2.5 h-2.5" />
@@ -412,7 +412,7 @@ export const MetricPillsBar: React.FC = () => {
               )}
 
               {/* Footer status dot */}
-              <div className="flex items-center justify-between text-[7.5px] text-gray-500 pt-1 border-t border-[#18202D] shrink-0">
+              <div className="flex items-center justify-between text-[7.5px] text-gray-500 pt-1.5 border-t border-white/[0.06] shrink-0">
                 <span className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
                   <span className="text-gray-400 font-mono">Telemetry</span>
@@ -420,14 +420,14 @@ export const MetricPillsBar: React.FC = () => {
                 {hasUrl ? (
                   <span 
                     onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="text-[#FF7A00] font-bold hover:underline cursor-pointer"
+                    className="text-[#FF5426] font-bold hover:underline cursor-pointer"
                   >
                     {isLiveMode ? 'Live Rendered' : 'Paste Link ✎'}
                   </span>
                 ) : (
                   <span 
                     onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="text-amber-400 font-bold hover:underline cursor-pointer"
+                    className="text-[#FF5426] font-bold hover:underline cursor-pointer"
                   >
                     Paste Link ✎
                   </span>

@@ -51,34 +51,34 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
   };
 
   return (
-    <header className="h-12 bg-[#0E121A] border-b border-[#1E2533] px-4 sm:px-6 flex items-center justify-between z-30 select-none sticky top-0">
+    <header className="h-12 bg-[#0B0C10]/95 backdrop-blur-md border-b border-white/[0.06] px-4 sm:px-6 flex items-center justify-between z-30 select-none sticky top-0">
       
       {/* LEFT: Brand + Streamlined Site Switcher */}
       <div className="flex items-center gap-3 sm:gap-4">
         
         {/* Brand */}
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-[#FF7A00] flex items-center justify-center text-white font-mono font-black text-xs shadow-[0_0_10px_rgba(255,122,0,0.3)]">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#FF5426] to-[#FF3508] flex items-center justify-center text-white font-mono font-black text-xs shadow-[0_2px_10px_rgba(255,84,38,0.35)]">
             GO
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="font-mono font-extrabold text-sm tracking-wide text-white">
-              GREY<span className="text-[#FF7A00]">ORANGE</span>
+            <span className="font-bold text-sm tracking-wide text-white">
+              GREY<span className="text-[#FF5426]">ORANGE</span>
             </span>
-            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-[#FF7A00]/15 text-[#FF7A00] border border-[#FF7A00]/30 font-bold">
+            <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-[#FF5426]/15 text-[#FF5426] border border-[#FF5426]/30 font-bold">
               OPS
             </span>
           </div>
         </div>
 
-        <div className="h-4 w-px bg-[#1E2533]" />
+        <div className="h-4 w-px bg-white/[0.08]" />
 
         {/* Category Dropdown */}
         <div className="relative">
           <select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value as SiteCategory)}
-            className="appearance-none bg-[#141923] hover:bg-[#1A2230] text-[#FF7A00] text-xs font-mono font-bold pl-2.5 pr-6 py-1 rounded-md border border-[#232A39] hover:border-[#FF7A00]/50 focus:border-[#FF7A00] focus:outline-none cursor-pointer transition-colors"
+            className="appearance-none bg-[#13141B] hover:bg-[#181A23] text-[#FF5426] text-xs font-semibold pl-3 pr-7 py-1 rounded-full border border-white/[0.06] hover:border-[#FF5426]/50 focus:border-[#FF5426] focus:outline-none cursor-pointer transition-colors"
           >
             <option value="RTP_TTP">RTP / TTP (61)</option>
             <option value="RMS">RMS (14)</option>
@@ -86,7 +86,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
             <option value="RIL">RIL (12)</option>
             <option value="CASE_PICK">Case Pick (2)</option>
           </select>
-          <ChevronDown className="w-3 h-3 text-[#FF7A00] absolute right-1.5 top-2 pointer-events-none" />
+          <ChevronDown className="w-3 h-3 text-[#FF5426] absolute right-2.5 top-2 pointer-events-none" />
         </div>
 
         {/* Site Dropdown */}
@@ -94,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
           <select
             value={selectedSite}
             onChange={(e) => setSelectedSite(e.target.value)}
-            className="appearance-none bg-[#141923] hover:bg-[#1A2230] text-gray-200 text-xs font-mono font-medium pl-2.5 pr-6 py-1 rounded-md border border-[#232A39] hover:border-[#FF7A00]/50 focus:border-[#FF7A00] focus:outline-none cursor-pointer transition-colors max-w-[180px] sm:max-w-[240px] truncate"
+            className="appearance-none bg-[#13141B] hover:bg-[#181A23] text-gray-200 text-xs font-medium pl-3 pr-7 py-1 rounded-full border border-white/[0.06] hover:border-[#FF5426]/50 focus:border-[#FF5426] focus:outline-none cursor-pointer transition-colors max-w-[180px] sm:max-w-[240px] truncate"
           >
             {availableSitesForCategory.map((s) => (
               <option key={s.id} value={s.id}>
@@ -102,17 +102,17 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
               </option>
             ))}
           </select>
-          <ChevronDown className="w-3 h-3 text-gray-400 absolute right-1.5 top-2 pointer-events-none" />
+          <ChevronDown className="w-3 h-3 text-gray-400 absolute right-2.5 top-2 pointer-events-none" />
         </div>
 
         {/* Quick Search Dialog Button */}
         <button
           onClick={() => setIsCategoryModalOpen(true)}
-          className="flex items-center gap-1 px-2 py-1 rounded-md bg-[#141923] hover:bg-[#1A2230] text-gray-400 hover:text-[#FF7A00] border border-[#232A39] text-xs font-mono transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#13141B] hover:bg-[#181A23] text-gray-400 hover:text-[#FF5426] border border-white/[0.06] text-xs transition-colors"
           title="Search all 80+ enterprise sites"
         >
           <Search className="w-3 h-3" />
-          <span className="hidden lg:inline text-[10px]">Search Sites</span>
+          <span className="hidden lg:inline text-[11px] font-medium">Search Sites</span>
         </button>
       </div>
 
@@ -120,7 +120,7 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
       <div className="flex items-center gap-3">
         
         {/* Simple Live Clock */}
-        <div className="flex items-center gap-1.5 text-xs font-mono text-gray-400 bg-[#141923] px-2.5 py-1 rounded-md border border-[#1E2533]">
+        <div className="flex items-center gap-1.5 text-xs font-mono text-gray-400 bg-[#13141B] px-3 py-1 rounded-full border border-white/[0.06]">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
           <span className="text-gray-200 font-medium">{currentTime || '12:00 PM'}</span>
           <span className="text-[10px] text-gray-500 font-bold">{getTimezoneLabel()}</span>
@@ -132,10 +132,10 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
             setIsAdminMode(!isAdminMode);
             onOpenAdminModal();
           }}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#181F2C] hover:bg-[#202A3C] text-gray-300 hover:text-white border border-[#263145] hover:border-[#FF7A00]/50 text-xs font-mono transition-all"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#13141B] hover:bg-[#181A23] text-gray-300 hover:text-white border border-white/[0.06] hover:border-[#FF5426]/50 text-xs transition-all"
           title="Configure Dashboard Settings"
         >
-          <Settings className="w-3 h-3 text-[#FF7A00]" />
+          <Settings className="w-3 h-3 text-[#FF5426]" />
           <span className="font-semibold">Admin</span>
         </button>
 

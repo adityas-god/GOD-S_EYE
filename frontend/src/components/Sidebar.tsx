@@ -99,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside 
-      className={`bg-[#10141C] border-r border-[#232A39] flex flex-col justify-between shrink-0 select-none transition-all duration-300 ease-in-out relative z-20 h-full overflow-hidden ${
+      className={`bg-[#0B0C10] border-r border-white/[0.06] flex flex-col justify-between shrink-0 select-none transition-all duration-300 ease-in-out relative z-20 h-full overflow-hidden ${
         isCollapsed ? 'w-16' : 'w-56 lg:w-60'
       }`}
     >
@@ -107,23 +107,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Top Section: Nav items + Collapse Toggle */}
       <div>
         {/* Header / Collapse Bar */}
-        <div className={`p-3 border-b border-[#232A39]/60 flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+        <div className={`p-3 border-b border-white/[0.06] flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
           {!isCollapsed && (
-            <span className="text-[10px] font-mono text-[#5A6478] uppercase tracking-wider font-semibold truncate">
+            <span className="text-[10px] font-mono text-[#7A8396] uppercase tracking-wider font-semibold truncate">
               Operations Core
             </span>
           )}
           
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1.5 rounded-lg text-[#7A869C] hover:text-white hover:bg-[#1A2230] border border-transparent hover:border-[#2B3548] transition-all"
+            className="p-1.5 rounded-lg text-[#7A869C] hover:text-white hover:bg-[#151720] border border-transparent hover:border-white/[0.06] transition-all"
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             aria-label={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {isCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-[#FF7A00]" />
+              <ChevronRight className="w-4 h-4 text-[#FF5426]" />
             ) : (
-              <ChevronLeft className="w-4 h-4 text-[#FF7A00]" />
+              <ChevronLeft className="w-4 h-4 text-[#FF5426]" />
             )}
           </button>
         </div>
@@ -150,20 +150,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 key={item.id}
                 onClick={handleClick}
                 title={isCollapsed ? `${item.label} ${item.count ? `(${item.count})` : ''}` : undefined}
-                className={`w-full flex items-center rounded-lg text-xs font-mono font-medium transition-all text-left relative group ${
+                className={`w-full flex items-center rounded-xl text-xs font-medium transition-all text-left relative group ${
                   isCollapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2.5'
                 } ${
                   isSlack 
-                    ? 'text-emerald-400 hover:text-white hover:bg-[#172420] border border-emerald-900/30' 
+                    ? 'text-emerald-400 hover:text-white hover:bg-[#121B17] border border-emerald-900/30' 
                     : isWarRoom
-                      ? 'text-blue-400 hover:text-white hover:bg-[#131F33] border border-blue-900/30'
+                      ? 'text-blue-400 hover:text-white hover:bg-[#121824] border border-blue-900/30'
                       : isAlertPool && isActive
-                        ? 'bg-red-500/15 text-red-400 font-bold border-l-2 border-red-500 shadow-[0_2px_12px_rgba(239,68,68,0.15)]'
+                        ? 'bg-red-500 text-white font-bold shadow-[0_4px_16px_rgba(239,68,68,0.3)]'
                         : isAlertPool && activeAlertCount > 0
-                          ? 'text-red-400/90 hover:text-red-300 hover:bg-[#1F171A]'
+                          ? 'text-red-400 hover:text-red-300 hover:bg-[#1F1418]'
                           : isActive
-                            ? 'bg-[#FF7A00]/15 text-[#FF7A00] font-bold border-l-2 border-[#FF7A00] shadow-[0_2px_12px_rgba(255,122,0,0.12)]'
-                            : 'text-[#8893A8] hover:text-white hover:bg-[#161C26]'
+                            ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white font-bold shadow-[0_4px_16px_rgba(255,84,38,0.32)]'
+                            : 'text-[#8E95A5] hover:text-white hover:bg-[#13141B]'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -175,8 +175,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         : isAlertPool && activeAlertCount > 0
                           ? 'text-red-400 animate-pulse'
                           : isActive 
-                            ? 'text-[#FF7A00]' 
-                            : 'text-[#626D82]'
+                            ? 'text-white' 
+                            : 'text-[#727B8E]'
                   }`} />
                   {!isCollapsed && (
                     <span className="truncate">{item.label}</span>
@@ -196,11 +196,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             ? 'bg-blue-950 text-blue-300 border border-blue-800/60'
                             : isAlertPool && activeAlertCount > 0
                               ? isActive 
-                                ? 'bg-red-500 text-white' 
+                                ? 'bg-red-600 text-white' 
                                 : 'bg-red-500/20 text-red-400 border border-red-500/40 animate-pulse'
                               : isActive 
-                                ? 'bg-[#FF7A00] text-white' 
-                                : 'bg-[#222A3A] text-gray-300'
+                                ? 'bg-white/20 text-white' 
+                                : 'bg-[#181A22] text-gray-300 border border-white/[0.04]'
                       }`}>
                         {item.count}
                       </span>
@@ -226,25 +226,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom GreyOrange Facility Telemetry Card with direct Slack launcher */}
-      <div className="p-2 border-t border-[#232A39]/60">
+      <div className="p-2 border-t border-white/[0.06]">
         {!isCollapsed ? (
-          <div className="p-3 rounded-xl bg-[#141923] border border-[#232A39] shadow-inner space-y-2.5">
+          <div className="p-3 rounded-2xl bg-[#121319] border border-white/[0.06] shadow-lg space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] font-mono text-[#6A758B] uppercase tracking-wider font-semibold">
+              <span className="text-[10px] font-mono text-[#7B8599] uppercase tracking-wider font-semibold">
                 Active Hub
               </span>
               <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-400">
-                <Radio className="w-3 h-3 animate-pulse" />
+                <Radio className="w-3 h-3 animate-pulse text-emerald-400" />
                 LIVE
               </span>
             </div>
 
             <div>
-              <div className="font-mono font-extrabold text-[#FF7A00] text-sm tracking-tight truncate">
+              <div className="font-extrabold text-[#FF5426] text-sm tracking-tight truncate">
                 {currentSiteObj.name}
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-[#8893A8] font-mono mt-0.5">
-                <MapPin className="w-3 h-3 text-[#FF7A00] shrink-0" />
+              <div className="flex items-center gap-1.5 text-[11px] text-[#8E95A5] font-mono mt-0.5">
+                <MapPin className="w-3 h-3 text-[#FF5426] shrink-0" />
                 <span className="truncate">{currentSiteObj.code} • {currentSiteObj.region}</span>
               </div>
             </div>
@@ -252,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Direct Slack Channel Action Button */}
             <button
               onClick={openSiteSlack}
-              className="w-full flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-lg bg-[#11241C] hover:bg-[#163024] border border-emerald-500/40 text-emerald-400 hover:text-emerald-200 text-[11px] font-mono font-semibold transition-all group shadow-sm"
+              className="w-full flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-[#111C17] hover:bg-[#15251F] border border-emerald-500/30 text-emerald-400 hover:text-emerald-200 text-[11px] font-semibold transition-all group shadow-sm"
               title={`Open Slack channel: ${siteIntelligence?.slackChannelName || '#ops-site'}`}
             >
               <div className="flex items-center gap-1.5 truncate">
@@ -263,9 +263,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             {/* Ranger Bot fleet micro-stat */}
-            <div className="pt-2 border-t border-[#1F2636] flex items-center justify-between text-[10px] font-mono text-[#788399]">
+            <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[10px] font-mono text-[#788399]">
               <div className="flex items-center gap-1">
-                <Bot className="w-3 h-3 text-[#FF7A00]" />
+                <Bot className="w-3 h-3 text-[#FF5426]" />
                 <span>142 Bots</span>
               </div>
               <div className="flex items-center gap-1 text-emerald-400">
@@ -275,14 +275,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center p-2 rounded-lg bg-[#141923] border border-[#232A39] text-center gap-1.5" title={`Active: ${currentSiteObj.name}`}>
+          <div className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#121319] border border-white/[0.06] text-center gap-1.5" title={`Active: ${currentSiteObj.name}`}>
             <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span className="text-[9px] font-mono font-bold text-[#FF7A00] truncate max-w-[44px]">
+            <span className="text-[9px] font-mono font-bold text-[#FF5426] truncate max-w-[44px]">
               {currentSiteObj.code}
             </span>
             <button 
               onClick={openSiteSlack} 
-              className="p-1 rounded bg-[#11241C] text-emerald-400 hover:text-white"
+              className="p-1 rounded-lg bg-[#111C17] text-emerald-400 hover:text-white"
               title={`Open Slack: ${siteIntelligence?.slackChannelName}`}
             >
               <MessageSquare className="w-3 h-3" />

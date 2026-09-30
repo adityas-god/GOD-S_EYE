@@ -9,40 +9,42 @@ export default {
     extend: {
       colors: {
         industrial: {
-          bg: '#1E2229',        // Dark Slate Main Background
-          card: '#2A2F3A',      // Dark Charcoal Panels / Cards
-          hover: '#323846',     // Card Hover & Selected states
-          subtle: '#232832',    // Nested dark container
-          border: '#3A4252',    // Industrial Slate Borders
-          borderDark: '#282E3B',
-          text: '#F3F4F6',      // Crisp white/light grey text
-          muted: '#9CA3AF',     // Muted secondary telemetry text
+          bg: '#090A0E',        // Deep Obsidian Matte Background
+          card: '#121318',      // Sleek Charcoal Card / Panel Background
+          hover: '#171821',     // Smooth Card Hover & Selected states
+          subtle: '#0D0E13',    // Dark inner recessed container
+          border: '#1F222C',    // Ultra-refined Sleek Dark Borders
+          borderDark: '#161820',
+          text: '#FFFFFF',      // Crisp Pure White text
+          muted: '#8E95A5',     // Warm Muted Secondary Telemetry text
           orange: {
-            DEFAULT: '#FF7A00', // Vivid Industrial Orange Accent
-            hover: '#E56D00',
-            dark: '#B35500',
-            glow: 'rgba(255, 122, 0, 0.25)',
-            subtle: 'rgba(255, 122, 0, 0.12)'
+            DEFAULT: '#FF5426', // Radiant Burnt Orange / Coral Accent
+            hover: '#FF6B3D',
+            dark: '#D93B11',
+            glow: 'rgba(255, 84, 38, 0.28)',
+            subtle: 'rgba(255, 84, 38, 0.12)'
           },
           sev: {
             red: '#EF4444',     // SEV 1 Critical
             yellow: '#F59E0B',  // SEV 2 Major (>=2)
             blue: '#3B82F6',    // SEV 3 Minor
-            green: '#10B981'    // Normal / Zero Tickets
+            green: '#10B981'    // Normal / Nominal
           }
         }
       },
       boxShadow: {
-        'industrial-glow': '0 0 20px rgba(255, 122, 0, 0.15)',
+        'industrial-glow': '0 0 20px rgba(255, 84, 38, 0.22)',
+        'orange-pill': '0 4px 16px -2px rgba(255, 84, 38, 0.35)',
+        'sleek-card': '0 4px 20px -2px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.05)',
         'red-glow': '0 0 15px rgba(239, 68, 68, 0.3)',
         'yellow-glow': '0 0 15px rgba(245, 158, 11, 0.3)',
         'blue-glow': '0 0 15px rgba(59, 130, 246, 0.3)',
         'green-glow': '0 0 15px rgba(16, 185, 129, 0.3)',
-        'panel': '0 4px 20px -2px rgba(0, 0, 0, 0.5)'
+        'panel': '0 4px 20px -2px rgba(0, 0, 0, 0.65)'
       },
       fontFamily: {
         mono: ['"JetBrains Mono"', '"Fira Code"', 'ui-monospace', 'monospace'],
-        sans: ['"Inter"', 'system-ui', '-apple-system', 'sans-serif']
+        sans: ['"Plus Jakarta Sans"', '"Inter"', 'system-ui', '-apple-system', 'sans-serif']
       }
     },
   },

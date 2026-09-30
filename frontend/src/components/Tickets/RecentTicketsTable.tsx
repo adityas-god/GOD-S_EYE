@@ -270,57 +270,57 @@ export const RecentTicketsTable: React.FC = () => {
   };
 
   return (
-    <div className="surface-card rounded-xl p-1.5 sm:p-2 shadow-lg overflow-hidden h-full min-h-0 flex flex-col border border-[#232A39] font-mono">
+    <div className="surface-card rounded-2xl p-2 sm:p-2.5 shadow-lg overflow-hidden h-full min-h-0 flex flex-col border border-white/[0.06] font-mono">
       
       {/* Header & Controls Bar */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between pb-1 border-b border-[#232A39] gap-1.5">
+      <div className="shrink-0 flex flex-wrap items-center justify-between pb-1.5 border-b border-white/[0.06] gap-1.5">
         
         {/* Title + Active context badge + Mode switcher */}
         <div className="flex items-center gap-2">
           <span className="font-extrabold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-[#FF7A00]" />
+            <Layers className="w-3.5 h-3.5 text-[#FF5426]" />
             Incident Details
           </span>
 
-          <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-[#151A24] text-[#8C98AE] border border-[#273246]">
+          <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#13141B] text-[#8C98AE] border border-white/[0.06]">
             {activeTab === 'alerts' 
               ? `${filteredSiteAlerts.length} alerts` 
               : `${filteredIncidents.length} active`}
           </span>
 
-          <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-[#FF7A00]/15 text-[#FF7A00] border border-[#FF7A00]/30 font-bold flex items-center gap-1 truncate max-w-[130px]">
+          <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#FF5426]/15 text-[#FF5426] border border-[#FF5426]/30 font-bold flex items-center gap-1 truncate max-w-[130px]">
             <MapPin className="w-3 h-3 shrink-0" />
             <span className="truncate">{currentSiteObj?.name || "Sam's ATL"}</span>
           </span>
 
           {selectedService && (
-            <span className="text-[9.5px] px-1.5 py-0.2 rounded-md bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30 font-bold">
+            <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30 font-bold">
               {selectedService.toUpperCase()}
             </span>
           )}
 
           {/* Toggle between Cases, Alert Pool, & Live Telemetry Panel */}
-          <div className="hidden sm:flex items-center bg-[#121620] rounded-md border border-[#232A39] p-0.5 text-[9.5px]">
+          <div className="hidden sm:flex items-center bg-[#13141B] rounded-full border border-white/[0.06] p-0.5 text-[9.5px]">
             <button
               onClick={() => setActiveTab('tickets')}
-              className={`px-2 py-0.5 rounded font-bold transition-all ${
-                activeTab === 'tickets' ? 'bg-[#FF7A00] text-white' : 'text-gray-400 hover:text-white'
+              className={`px-2.5 py-0.5 rounded-full font-bold transition-all ${
+                activeTab === 'tickets' ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white shadow-[0_2px_10px_rgba(255,84,38,0.35)]' : 'text-gray-400 hover:text-white'
               }`}
             >
               Cases
             </button>
             <button
               onClick={() => setActiveTab('alerts')}
-              className={`px-2 py-0.5 rounded font-bold transition-all flex items-center gap-1 ${
+              className={`px-2.5 py-0.5 rounded-full font-bold transition-all flex items-center gap-1 ${
                 activeTab === 'alerts' 
-                  ? 'bg-red-500 text-white shadow-[0_0_8px_rgba(239,68,68,0.4)]' 
+                  ? 'bg-red-500 text-white shadow-[0_2px_10px_rgba(239,68,68,0.4)]' 
                   : 'text-gray-400 hover:text-white'
               }`}
             >
               <AlertTriangle className="w-2.5 h-2.5" />
               <span>Alert Pool</span>
               {activeAlertCount > 0 && (
-                <span className={`px-1 py-0.1 rounded text-[8.5px] font-extrabold ${
+                <span className={`px-1 py-0.1 rounded-full text-[8.5px] font-extrabold ${
                   activeTab === 'alerts' ? 'bg-black/30 text-white' : 'bg-red-500/20 text-red-400 border border-red-500/40'
                 }`}>
                   {activeAlertCount}
@@ -329,8 +329,8 @@ export const RecentTicketsTable: React.FC = () => {
             </button>
             <button
               onClick={() => setActiveTab('telemetry')}
-              className={`px-2 py-0.5 rounded font-bold transition-all flex items-center gap-1 ${
-                activeTab === 'telemetry' ? 'bg-[#FF7A00] text-white' : 'text-gray-400 hover:text-white'
+              className={`px-2.5 py-0.5 rounded-full font-bold transition-all flex items-center gap-1 ${
+                activeTab === 'telemetry' ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white shadow-[0_2px_10px_rgba(255,84,38,0.35)]' : 'text-gray-400 hover:text-white'
               }`}
             >
               <Activity className="w-2.5 h-2.5" />
@@ -351,20 +351,20 @@ export const RecentTicketsTable: React.FC = () => {
         {activeTab === 'tickets' && (
           <div className="flex items-center gap-1.5">
             <div className="relative">
-              <Search className="w-3 h-3 text-[#657187] absolute left-2 top-1.5 pointer-events-none" />
+              <Search className="w-3 h-3 text-[#657187] absolute left-2.5 top-2 pointer-events-none" />
               <input
                 type="text"
                 placeholder="Search cases..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="bg-[#121620] text-gray-200 text-[11px] pl-6 pr-2 py-0.5 rounded-md border border-[#262F41] focus:outline-none focus:border-[#FF7A00] w-28 sm:w-36 placeholder-[#545E73]"
+                className="bg-[#13141B] text-gray-200 text-[11px] pl-7 pr-3 py-1 rounded-full border border-white/[0.06] focus:outline-none focus:border-[#FF5426] w-28 sm:w-36 placeholder-[#545E73]"
               />
             </div>
 
             <select
               value={filterSeverity}
               onChange={(e) => setFilterSeverity(e.target.value)}
-              className="bg-[#121620] text-gray-300 text-[11px] px-2 py-0.5 rounded-md border border-[#262F41] focus:outline-none focus:border-[#FF7A00] cursor-pointer"
+              className="bg-[#13141B] text-gray-300 text-[11px] px-3 py-1 rounded-full border border-white/[0.06] focus:outline-none focus:border-[#FF5426] cursor-pointer"
             >
               <option value="ALL">All Severities</option>
               <option value="RED">🔴 Red</option>
