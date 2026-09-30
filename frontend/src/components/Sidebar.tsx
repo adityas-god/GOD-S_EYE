@@ -64,7 +64,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       id: 'sops', 
       label: 'SOP Attachments', 
       icon: BookOpen, 
-      count: siteSopCount > 0 ? `${siteSopCount} SOP` : 'SOP',
+      count: siteSopCount > 0 ? `${siteSopCount}` : null,
       type: 'nav'
     },
     { 

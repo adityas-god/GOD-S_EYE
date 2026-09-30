@@ -362,16 +362,22 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }).catch(() => {});
   }, [siteIntelligence, updateSiteIntelligence, selectedSite]);
 
-  // SOP Attachments state with localStorage persistence & default seeds
+  // SOP Attachments state with clean persistence (no hardcoded text mocks)
   const [sops, setSops] = useState<SiteSopAttachment[]>(() => {
     try {
-      const cached = localStorage.getItem('greyorange_site_sops_v1');
+      // Purge legacy storage keys containing mock data
+      localStorage.removeItem('greyorange_site_sops_v1');
+      localStorage.removeItem('greyorange_site_sops_v2');
+
+      const cached = localStorage.getItem('greyorange_site_sops_clean');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((s: any) => s && s.title && s.documentUrl);
+        }
       }
     } catch (e) {}
-    return DEFAULT_SITE_SOPS;
+    return [];
   });
 
   const [isAttachSopModalOpen, setIsAttachSopModalOpen] = useState<boolean>(false);
@@ -391,12 +397,12 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const newSop: SiteSopAttachment = {
       ...newSopData,
       id: `sop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      createdAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) + ' ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+      createdAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' })
     };
     setSops(prev => {
       const updated = [newSop, ...prev];
       try {
-        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(updated));
+        localStorage.setItem('greyorange_site_sops_clean', JSON.stringify(updated));
       } catch (e) {}
       return updated;
     });
@@ -406,7 +412,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSops(prev => {
       const next = prev.map(s => s.id === id ? { ...s, ...updated, updatedAt: new Date().toISOString() } : s);
       try {
-        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(next));
+        localStorage.setItem('greyorange_site_sops_clean', JSON.stringify(next));
       } catch (e) {}
       return next;
     });
@@ -416,7 +422,7 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setSops(prev => {
       const next = prev.filter(s => s.id !== id);
       try {
-        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(next));
+        localStorage.setItem('greyorange_site_sops_clean', JSON.stringify(next));
       } catch (e) {}
       return next;
     });
