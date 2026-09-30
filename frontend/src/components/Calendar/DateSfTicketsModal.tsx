@@ -82,14 +82,14 @@ export const DateSfTicketsModal: React.FC<DateSfTicketsModalProps> = ({
         {/* Severity Summary Pills */}
         <div className="px-4 py-2 bg-[#111622] border-b border-[#1E2638] flex items-center gap-2 text-[11px] shrink-0">
           <span className="text-[#627087]">Severity Breakdown:</span>
-          <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-bold border border-red-500/30">
-            {sev1Tickets.length} SEV 1
+          <span className="px-2 py-0.5 rounded bg-[#FF5E00]/15 text-[#FF5E00] font-bold border border-[#FF5E00]/30">
+            {sev1Tickets.length} SEV 1 (Orange)
           </span>
-          <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
-            {sev2Tickets.length} SEV 2
+          <span className="px-2 py-0.5 rounded bg-[#384252]/50 text-gray-200 font-bold border border-[#384252]">
+            {sev2Tickets.length} SEV 2 (Dark Grey)
           </span>
-          <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 font-bold border border-blue-500/30">
-            {sev3Tickets.length} SEV 3
+          <span className="px-2 py-0.5 rounded bg-[#707D93]/20 text-[#CBD5E1] font-bold border border-[#707D93]/30">
+            {sev3Tickets.length} SEV 3 (Light Grey)
           </span>
         </div>
 
@@ -127,8 +127,12 @@ export const DateSfTicketsModal: React.FC<DateSfTicketsModalProps> = ({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded text-white ${
-                        isSev1 ? 'bg-[#EF4444]' : isSev2 ? 'bg-[#F59E0B] text-black' : 'bg-[#3B82F6]'
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${
+                        isSev1 
+                          ? 'bg-[#FF5E00] text-white' 
+                          : isSev2 
+                            ? 'bg-[#384252] text-white border border-[#4F5D73]' 
+                            : 'bg-[#707D93] text-white'
                       }`}>
                         {isSev1 ? 'SEV 1' : isSev2 ? 'SEV 2' : 'SEV 3'}
                       </span>
@@ -147,7 +151,7 @@ export const DateSfTicketsModal: React.FC<DateSfTicketsModalProps> = ({
                       href={sfDirectLink}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#FF7A00] hover:bg-[#FF8B21] text-white text-[10px] font-bold shadow-xs transition-all shrink-0"
+                      className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#FF5E00] hover:bg-[#FF7522] text-white text-[10px] font-bold shadow-none transition-all shrink-0"
                       title="Open this Case directly in Salesforce Lightning"
                     >
                       <span>Salesforce Link</span>

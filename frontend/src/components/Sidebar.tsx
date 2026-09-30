@@ -2,6 +2,7 @@ import React from 'react';
 import { 
   LayoutGrid, 
   ClipboardList,
+  Calendar as CalendarIcon,
   Radio, 
   Settings,
   MapPin,
@@ -58,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { 
       id: 'site-notes', 
       label: 'Site Notes', 
-      icon: ClipboardList, 
+      icon: CalendarIcon, 
       count: 'INTEL',
       type: 'nav'
     },
@@ -274,19 +275,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#0F1218] border border-[#1E2430] text-center gap-1.5" title={`Active: ${currentSiteObj.name}`}>
-            <span className="w-2 h-2 rounded-full bg-emerald-400" />
-            <span className="text-[9px] font-mono font-bold text-gray-200 truncate max-w-[44px]">
+          <div 
+            onClick={openSiteSlack}
+            className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#0F1218] border border-[#1E2430] hover:border-[#2E3748] text-center gap-1.5 cursor-pointer transition-colors" 
+            title={`Active: ${currentSiteObj.name} (${currentSiteObj.code}) — Click for Slack`}
+          >
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            <span className="text-[8px] font-mono font-bold text-gray-200 tracking-tight">
               {currentSiteObj.code}
             </span>
-            <button 
-              onClick={openSiteSlack} 
-              className="p-1 rounded-lg bg-[#111C17] text-emerald-400 hover:text-white"
-              title={`Open Slack: ${siteIntelligence?.slackChannelName}`}
-            >
-              <MessageSquare className="w-3 h-3" />
-            </button>
+            <div className="w-3 flex flex-col justify-center gap-0.5 opacity-50">
+              <span className="h-[1.5px] w-full bg-gray-400 rounded-full" />
+              <span className="h-[1.5px] w-2/3 bg-gray-400 rounded-full mx-auto" />
+            </div>
           </div>
         )}
       </div>

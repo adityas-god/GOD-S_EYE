@@ -66,14 +66,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenAdminModal }) => {
           className="flex items-center cursor-pointer py-1 pr-1 group"
           title="GreyOrange Operations Portal"
         >
-          <img 
-            src="/greyorange-logo.svg" 
-            alt="GreyOrange" 
-            className="h-6 sm:h-7 w-auto object-contain transition-opacity group-hover:opacity-90"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).src = '/favicon.svg';
-            }}
-          />
+          <div className="bg-white px-2 py-0.5 rounded-lg flex items-center border border-white/20 hover:opacity-90 transition-opacity">
+            <img 
+              src="/assets/GreyOrange-Robotics.f1670267315.png" 
+              alt="GreyOrange" 
+              className="h-5 sm:h-5.5 w-auto object-contain"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).src = '/assets/images.jpg';
+              }}
+            />
+          </div>
         </div>
 
         {/* Category Pill Dropdown */}

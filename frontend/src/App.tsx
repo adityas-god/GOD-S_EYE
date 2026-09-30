@@ -17,7 +17,7 @@ import { LoadingLogo } from './components/LoadingLogo';
 const DashboardView: React.FC = () => {
   const { selectedDate, setSelectedDate, isLoadingSiteData } = useDashboard();
   const [activeNav, setActiveNav] = useState<string>('overview');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(true);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
 
   return (

@@ -15,9 +15,9 @@ export const LoadingLogo: React.FC<LoadingLogoProps> = ({
     <div className="flex flex-col items-center justify-center gap-3 p-6 select-none animate-in fade-in duration-200">
       <div className={`relative ${dim} rounded-2xl overflow-hidden shadow-none border border-[#1E2430]`}>
         <img 
-          src="/favicon.svg" 
+          src="/assets/images.jpg" 
           alt="GreyOrange" 
-          className="w-full h-full object-contain animate-pulse"
+          className="w-full h-full object-cover animate-pulse"
         />
       </div>
       {label && (
