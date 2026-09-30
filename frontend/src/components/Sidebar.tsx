@@ -14,7 +14,8 @@ import {
   MessageSquare,
   Sparkles,
   AlertTriangle,
-  Video
+  Video,
+  BookOpen
 } from 'lucide-react';
 import { useDashboard } from '../context/DashboardContext';
 
@@ -38,8 +39,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
     siteIntelligence, 
     openSiteSlack, 
     openSiteWarRoom, 
-    activeAlertCount 
+    activeAlertCount,
+    sops 
   } = useDashboard();
+
+  const siteSopCount = (sops || []).filter(s => s.siteId === currentSiteObj.id || s.siteId === 'ALL').length;
 
   const navItems = [
     { 
@@ -54,6 +58,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Alert Pool', 
       icon: AlertTriangle, 
       count: activeAlertCount > 0 ? `${activeAlertCount} ACT` : '0 ACT',
+      type: 'nav'
+    },
+    { 
+      id: 'sops', 
+      label: 'SOP Attachments', 
+      icon: BookOpen, 
+      count: siteSopCount > 0 ? `${siteSopCount} SOP` : 'SOP',
       type: 'nav'
     },
     { 

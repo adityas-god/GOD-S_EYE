@@ -8,6 +8,8 @@ import {
   SiteCategory,
   SiteIntelligence,
   SiteAlert,
+  SiteSopAttachment,
+  DEFAULT_SITE_SOPS,
   generateDefaultSiteIntelligence
 } from '../types/sites';
 import { DashboardLinkKey, DEFAULT_12_LINKS } from '../types/twelveLinks';
@@ -65,6 +67,17 @@ interface DashboardContextType {
   acknowledgeAlert: (alertId: string) => Promise<void>;
   resolveAlert: (alertId: string) => Promise<void>;
   silenceAlert: (alertId: string) => Promise<void>;
+
+  // SOP Attachments Library (Categorized as Alert & Site Incident SOPs)
+  sops: SiteSopAttachment[];
+  addSop: (sop: Omit<SiteSopAttachment, 'id' | 'createdAt'>) => Promise<void>;
+  updateSop: (id: string, updated: Partial<SiteSopAttachment>) => Promise<void>;
+  deleteSop: (id: string) => Promise<void>;
+  isAttachSopModalOpen: boolean;
+  setIsAttachSopModalOpen: (open: boolean) => void;
+  sopModalPrefill: Partial<SiteSopAttachment> | null;
+  openAttachSopModal: (prefill?: Partial<SiteSopAttachment>) => void;
+  closeAttachSopModal: () => void;
 
   isLoading: boolean;
   lastUpdated: Date;
@@ -348,6 +361,66 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       body: JSON.stringify({ status: 'SILENCED' })
     }).catch(() => {});
   }, [siteIntelligence, updateSiteIntelligence, selectedSite]);
+
+  // SOP Attachments state with localStorage persistence & default seeds
+  const [sops, setSops] = useState<SiteSopAttachment[]>(() => {
+    try {
+      const cached = localStorage.getItem('greyorange_site_sops_v1');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return DEFAULT_SITE_SOPS;
+  });
+
+  const [isAttachSopModalOpen, setIsAttachSopModalOpen] = useState<boolean>(false);
+  const [sopModalPrefill, setSopModalPrefill] = useState<Partial<SiteSopAttachment> | null>(null);
+
+  const openAttachSopModal = useCallback((prefill?: Partial<SiteSopAttachment>) => {
+    setSopModalPrefill(prefill || null);
+    setIsAttachSopModalOpen(true);
+  }, []);
+
+  const closeAttachSopModal = useCallback(() => {
+    setIsAttachSopModalOpen(false);
+    setSopModalPrefill(null);
+  }, []);
+
+  const addSop = useCallback(async (newSopData: Omit<SiteSopAttachment, 'id' | 'createdAt'>) => {
+    const newSop: SiteSopAttachment = {
+      ...newSopData,
+      id: `sop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      createdAt: new Date().toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }) + ' ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    };
+    setSops(prev => {
+      const updated = [newSop, ...prev];
+      try {
+        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(updated));
+      } catch (e) {}
+      return updated;
+    });
+  }, []);
+
+  const updateSop = useCallback(async (id: string, updated: Partial<SiteSopAttachment>) => {
+    setSops(prev => {
+      const next = prev.map(s => s.id === id ? { ...s, ...updated, updatedAt: new Date().toISOString() } : s);
+      try {
+        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  }, []);
+
+  const deleteSop = useCallback(async (id: string) => {
+    setSops(prev => {
+      const next = prev.filter(s => s.id !== id);
+      try {
+        localStorage.setItem('greyorange_site_sops_v1', JSON.stringify(next));
+      } catch (e) {}
+      return next;
+    });
+  }, []);
 
   // Load site-specific 12 links from storage when selectedSite changes
   useEffect(() => {
@@ -741,6 +814,15 @@ export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         acknowledgeAlert,
         resolveAlert,
         silenceAlert,
+        sops,
+        addSop,
+        updateSop,
+        deleteSop,
+        isAttachSopModalOpen,
+        setIsAttachSopModalOpen,
+        sopModalPrefill,
+        openAttachSopModal,
+        closeAttachSopModal,
         isLoading,
         lastUpdated,
         refreshData,

@@ -14,7 +14,8 @@ import {
   MessageSquare,
   Check,
   RotateCcw,
-  ShieldAlert
+  ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 import { useDashboard } from '../../context/DashboardContext';
 import { ActiveDashboardViewer } from '../Grafana/ActiveDashboardViewer';
@@ -47,7 +48,9 @@ export const RecentTicketsTable: React.FC = () => {
     acknowledgeAlert,
     resolveAlert,
     openSiteSlack,
-    siteIntelligence
+    siteIntelligence,
+    sops,
+    openAttachSopModal
   } = useDashboard();
 
   const [activeTab, setActiveTab] = useState<'tickets' | 'alerts' | 'telemetry'>('tickets');
@@ -659,28 +662,92 @@ export const RecentTicketsTable: React.FC = () => {
                       </tr>
 
                       {/* Expanded Detail Drawer */}
-                      {isExpanded && (
-                        <tr className="bg-[#121620]/95 border-b border-[#232A39]">
-                          <td colSpan={8} className="p-2.5">
-                            <div className="bg-[#171D27] rounded-lg p-3 border border-[#283245] space-y-2">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="font-bold text-[#FF7A00]">{t.ticketKey} Diagnostics</span>
-                                <span className="text-[#78849B]">Assigned to: <strong className="text-white">{t.assignee}</strong> ({t.assigneeRole})</span>
+                      {isExpanded && (() => {
+                        const matchedSops = (sops || []).filter(s => 
+                          s.associatedKey === t.ticketKey || 
+                          (s.subsystem.toLowerCase() === t.service.toLowerCase() && (s.siteId === t.siteId || s.siteId === 'ALL'))
+                        );
+
+                        return (
+                          <tr className="bg-[#121620]/95 border-b border-[#232A39]">
+                            <td colSpan={8} className="p-2.5">
+                              <div className="bg-[#171D27] rounded-lg p-3 border border-[#283245] space-y-2.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <span className="font-bold text-[#FF5E00]">{t.ticketKey} Diagnostics</span>
+                                  <span className="text-[#78849B]">Assigned to: <strong className="text-white">{t.assignee}</strong> ({t.assigneeRole})</span>
+                                </div>
+
+                                <p className="text-xs text-gray-300 leading-relaxed bg-[#10141C] p-2.5 rounded border border-[#212836]">
+                                  {t.description}
+                                </p>
+
+                                {/* Attached SOPs for this incident */}
+                                {matchedSops.length > 0 && (
+                                  <div className="p-2.5 rounded-lg bg-[#0F131D] border border-[#1E2536] space-y-1.5">
+                                    <div className="text-[10px] uppercase font-bold text-[#FF5E00] flex items-center gap-1.5">
+                                      <BookOpen className="w-3 h-3 text-[#FF5E00]" />
+                                      <span>Attached Standard Operating Runbooks ({matchedSops.length}):</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      {matchedSops.map(sop => (
+                                        <div key={sop.id} className="p-2 rounded bg-[#131924] border border-[#222B3D] flex items-center justify-between gap-2">
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-bold text-white truncate">{sop.title}</div>
+                                            <div className="text-[10px] text-[#76839A] truncate">{sop.description}</div>
+                                          </div>
+                                          <a
+                                            href={sop.documentUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-2 py-1 rounded bg-[#FF5E00] hover:bg-[#FF7522] text-white text-[10px] font-bold flex items-center gap-1 shrink-0"
+                                            title="Open SOP Document in new tab"
+                                          >
+                                            <span>Open SOP</span>
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[#232A39]">
+                                  <span className="text-[#78849B]">Target MTTR: <strong className="text-emerald-400">&lt; 45 mins</strong></span>
+                                  
+                                  <div className="flex items-center gap-2">
+                                    {/* Attach SOP button directly from Incident Panel */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openAttachSopModal({
+                                          category: 'SITE_INCIDENT',
+                                          siteId: currentSiteObj.id,
+                                          subsystem: t.service,
+                                          severity: t.severity,
+                                          associatedKey: t.ticketKey,
+                                          title: `${t.service} — ${t.summary.split('—')[1]?.trim() || 'Incident'} Resolution SOP`,
+                                          description: `Operating triage procedure for ${t.ticketKey}: ${t.description}`
+                                        });
+                                      }}
+                                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#18202D] hover:bg-[#222C3E] text-gray-200 hover:text-white border border-[#2B3548] font-bold transition-all"
+                                      title="Attach an SOP document to this incident"
+                                    >
+                                      <BookOpen className="w-3 h-3 text-[#FF5E00]" />
+                                      <span>Attach SOP</span>
+                                    </button>
+
+                                    <button className="flex items-center gap-1 px-2 py-1 rounded bg-[#FF5E00] hover:bg-[#FF7522] text-white font-bold">
+                                      <span>Open in Salesforce Apex</span>
+                                      <ExternalLink className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
                               </div>
-                              <p className="text-xs text-gray-300 leading-relaxed bg-[#10141C] p-2.5 rounded border border-[#212836]">
-                                {t.description}
-                              </p>
-                              <div className="flex items-center justify-between text-[10px] pt-1 border-t border-[#232A39]">
-                                <span className="text-[#78849B]">Target MTTR: <strong className="text-emerald-400">&lt; 45 mins</strong></span>
-                                <button className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#FF7A00] hover:bg-[#FF8A1C] text-white font-bold">
-                                  <span>Open in Salesforce Apex</span>
-                                  <ExternalLink className="w-3 h-3" />
-                                </button>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     </React.Fragment>
                   );
                 })

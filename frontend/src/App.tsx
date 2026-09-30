@@ -12,6 +12,8 @@ import { EditDashboardLinkModal } from './components/Admin/EditDashboardLinkModa
 import { SamsAtlDashboard } from './scenes/SamsAtlDashboard';
 import { SiteNotesView } from './components/SiteNotes/SiteNotesView';
 import { AlertPoolView } from './components/AlertPool/AlertPoolView';
+import { SopLibraryView } from './components/SOP/SopLibraryView';
+import { AttachSopModal } from './components/SOP/AttachSopModal';
 import { LoadingLogo } from './components/LoadingLogo';
 
 const DashboardView: React.FC = () => {
@@ -57,6 +59,10 @@ const DashboardView: React.FC = () => {
           ) : activeNav === 'alert-pool' ? (
             <div className="h-full flex flex-col overflow-hidden min-h-0">
               <AlertPoolView />
+            </div>
+          ) : activeNav === 'sops' ? (
+            <div className="h-full flex flex-col overflow-hidden min-h-0">
+              <SopLibraryView />
             </div>
           ) : (
             /* Whiteboard Wireframe: Main Area (Left) + 6-panel Grafana Column (Right) */
@@ -110,6 +116,9 @@ const DashboardView: React.FC = () => {
         isOpen={isAdminModalOpen}
         onClose={() => setIsAdminModalOpen(false)}
       />
+
+      {/* Global SOP Attachment Modal */}
+      <AttachSopModal />
     </div>
   );
 };

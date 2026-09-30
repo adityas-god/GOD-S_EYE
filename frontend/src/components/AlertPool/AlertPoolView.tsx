@@ -19,7 +19,8 @@ import {
   Clock, 
   RotateCcw,
   Sparkles,
-  ShieldAlert
+  ShieldAlert,
+  BookOpen
 } from 'lucide-react';
 import { useDashboard } from '../../context/DashboardContext';
 import { SiteAlert } from '../../types/sites';
@@ -33,7 +34,9 @@ export const AlertPoolView: React.FC = () => {
     acknowledgeAlert, 
     resolveAlert, 
     silenceAlert, 
-    openSiteSlack 
+    openSiteSlack,
+    sops,
+    openAttachSopModal
   } = useDashboard();
 
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -450,55 +453,114 @@ export const AlertPoolView: React.FC = () => {
                       </tr>
 
                       {/* Expanded Diagnostic Runbook Drawer */}
-                      {isExpanded && (
-                        <tr className="bg-[#131824] border-b border-[#232A39]">
-                          <td colSpan={8} className="p-3">
-                            <div className="bg-[#182030] rounded-xl p-3.5 border border-[#28354A] space-y-2.5">
-                              <div className="flex items-center justify-between text-xs">
-                                <div className="flex items-center gap-2">
-                                  <ShieldAlert className="w-4 h-4 text-[#FF7A00]" />
-                                  <span className="font-bold text-white">{alert.alertKey} Root Cause Analysis</span>
-                                </div>
-                                <span className="text-gray-400">
-                                  Source: <strong className="text-white">{alert.sourceComponent}</strong> ({alert.subsystem})
-                                </span>
-                              </div>
+                      {isExpanded && (() => {
+                        const matchedAlertSops = (sops || []).filter(s =>
+                          s.associatedKey === alert.alertKey ||
+                          (s.category === 'ALERT' && s.subsystem.toLowerCase() === alert.subsystem.toLowerCase() && (s.siteId === currentSiteObj.id || s.siteId === 'ALL'))
+                        );
 
-                              <p className="text-xs text-gray-300 leading-relaxed bg-[#10141D] p-3 rounded-lg border border-[#212B3B]">
-                                {alert.description}
-                              </p>
-
-                              <div className="flex items-center justify-between pt-2 border-t border-[#232A39] text-xs">
-                                <div className="flex items-center gap-3 text-gray-400 text-[11px]">
-                                  {alert.acknowledgedBy && (
-                                    <span>Triage Lead: <strong className="text-white">{alert.acknowledgedBy}</strong></span>
-                                  )}
-                                  <span>Auto-Throttle: <strong className="text-emerald-400">Enabled</strong></span>
+                        return (
+                          <tr className="bg-[#131824] border-b border-[#232A39]">
+                            <td colSpan={8} className="p-3">
+                              <div className="bg-[#182030] rounded-xl p-3.5 border border-[#28354A] space-y-2.5">
+                                <div className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center gap-2">
+                                    <ShieldAlert className="w-4 h-4 text-[#FF5E00]" />
+                                    <span className="font-bold text-white">{alert.alertKey} Root Cause Analysis</span>
+                                  </div>
+                                  <span className="text-gray-400">
+                                    Source: <strong className="text-white">{alert.sourceComponent}</strong> ({alert.subsystem})
+                                  </span>
                                 </div>
 
-                                <div className="flex items-center gap-2">
-                                  {alert.status === 'FIRING' && (
+                                <p className="text-xs text-gray-300 leading-relaxed bg-[#10141D] p-3 rounded-lg border border-[#212B3B]">
+                                  {alert.description}
+                                </p>
+
+                                {/* Attached Alert SOPs */}
+                                {matchedAlertSops.length > 0 && (
+                                  <div className="p-2.5 rounded-lg bg-[#0F131D] border border-[#1E2536] space-y-1.5">
+                                    <div className="text-[10px] uppercase font-bold text-[#FF5E00] flex items-center gap-1.5">
+                                      <BookOpen className="w-3 h-3 text-[#FF5E00]" />
+                                      <span>Attached SOP Runbooks ({matchedAlertSops.length}):</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                      {matchedAlertSops.map(sop => (
+                                        <div key={sop.id} className="p-2 rounded bg-[#131924] border border-[#222B3D] flex items-center justify-between gap-2">
+                                          <div className="min-w-0">
+                                            <div className="text-xs font-bold text-white truncate">{sop.title}</div>
+                                            <div className="text-[10px] text-[#76839A] truncate">{sop.description}</div>
+                                          </div>
+                                          <a
+                                            href={sop.documentUrl}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="px-2 py-1 rounded bg-[#FF5E00] hover:bg-[#FF7522] text-white text-[10px] font-bold flex items-center gap-1 shrink-0"
+                                            title="Open SOP Document in new tab"
+                                          >
+                                            <span>Open SOP</span>
+                                            <ExternalLink className="w-2.5 h-2.5" />
+                                          </a>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex items-center justify-between pt-2 border-t border-[#232A39] text-xs">
+                                  <div className="flex items-center gap-3 text-gray-400 text-[11px]">
+                                    {alert.acknowledgedBy && (
+                                      <span>Triage Lead: <strong className="text-white">{alert.acknowledgedBy}</strong></span>
+                                    )}
+                                    <span>Auto-Throttle: <strong className="text-emerald-400">Enabled</strong></span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    {/* Attach SOP button directly from Alert Pool */}
                                     <button
-                                      onClick={() => silenceAlert(alert.id)}
-                                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#202738] hover:bg-[#2A344A] text-purple-300 text-xs font-bold border border-purple-500/30"
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openAttachSopModal({
+                                          category: 'ALERT',
+                                          siteId: currentSiteObj.id,
+                                          subsystem: alert.subsystem,
+                                          severity: alert.severity === 'CRITICAL' ? 'SEV1' : alert.severity === 'WARNING' ? 'SEV2' : 'SEV3',
+                                          associatedKey: alert.alertKey,
+                                          title: `${alert.title} SOP`,
+                                          description: alert.description
+                                        });
+                                      }}
+                                      className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#202738] hover:bg-[#2A344A] text-gray-200 hover:text-white text-xs font-bold border border-[#2B3548] transition-all"
+                                      title="Attach an SOP document to this alert"
                                     >
-                                      <BellOff className="w-3 h-3" />
-                                      <span>Silence (1hr)</span>
+                                      <BookOpen className="w-3 h-3 text-[#FF5E00]" />
+                                      <span>Attach SOP</span>
                                     </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleShareToSlack(alert)}
-                                    className="flex items-center gap-1 px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow"
-                                  >
-                                    <MessageSquare className="w-3 h-3" />
-                                    <span>Post to {siteIntelligence?.slackChannelName || 'Slack'}</span>
-                                  </button>
+
+                                    {alert.status === 'FIRING' && (
+                                      <button
+                                        onClick={() => silenceAlert(alert.id)}
+                                        className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#202738] hover:bg-[#2A344A] text-purple-300 text-xs font-bold border border-purple-500/30"
+                                      >
+                                        <BellOff className="w-3 h-3" />
+                                        <span>Silence (1hr)</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => handleShareToSlack(alert)}
+                                      className="flex items-center gap-1 px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow"
+                                    >
+                                      <MessageSquare className="w-3 h-3" />
+                                      <span>Post to {siteIntelligence?.slackChannelName || 'Slack'}</span>
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     </React.Fragment>
                   );
                 })

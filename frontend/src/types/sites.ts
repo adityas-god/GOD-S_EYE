@@ -477,3 +477,121 @@ export function generateDefaultSiteIntelligence(s: EnterpriseSite): SiteIntellig
     alerts
   };
 }
+
+export type SopCategory = 'ALERT' | 'SITE_INCIDENT' | 'GENERAL';
+
+export interface SiteSopAttachment {
+  id: string;
+  siteId: string; // 'ALL' or specific site id like 'rtp_sams_atl'
+  siteName: string;
+  siteCode: string;
+  category: SopCategory;
+  title: string;
+  description: string;
+  documentUrl: string;
+  subsystem: string;
+  severity: 'SEV1' | 'SEV2' | 'SEV3' | 'ALL';
+  associatedKey?: string;
+  author: string;
+  createdAt: string;
+  updatedAt?: string;
+  tags?: string[];
+}
+
+export const DEFAULT_SITE_SOPS: SiteSopAttachment[] = [
+  {
+    id: 'sop_butler_thermal_901',
+    siteId: 'rtp_sams_atl',
+    siteName: "Sam's ATL",
+    siteCode: 'SAM-ATL',
+    category: 'ALERT',
+    title: 'Butler AGV Drive Motor Over-Temperature Recovery Protocol',
+    description: 'Emergency procedure to safely throttle bot drive assembly #2, inspect wheel axis for debris, verify temperature drops below 65°C using infrared probe, and re-arm fleet dispatcher.',
+    documentUrl: 'https://docs.google.com/document/d/1Butler-Thermal-Recovery-SOP/preview',
+    subsystem: 'Butler Fleet',
+    severity: 'SEV1',
+    associatedKey: 'ALT-SAM-ATL-901',
+    author: 'Sarah Chen (Robotics Fleet Lead)',
+    createdAt: '2026-09-15 08:30 AM',
+    tags: ['Butler', 'Thermal', 'Safety', 'Motor']
+  },
+  {
+    id: 'sop_optics_lens_903',
+    siteId: 'rtp_sams_atl',
+    siteName: "Sam's ATL",
+    siteCode: 'SAM-ATL',
+    category: 'ALERT',
+    title: 'Optical Induction Scanner Focal Lens Cleaning & Calibration SOP',
+    description: 'Protocol for cleaning optical camera lens using 99% isopropanol lint-free wipes on Induct Line #4 and executing automated contrast test matrix in GreyMatter Platform.',
+    documentUrl: 'https://confluence.greyorange.com/display/OPS/Optical+Scanner+Calibration+SOP',
+    subsystem: 'Optics Scanner',
+    severity: 'SEV2',
+    associatedKey: 'ALT-SAM-ATL-903',
+    author: 'Marcus Vance (Lead Automation)',
+    createdAt: '2026-09-18 10:15 AM',
+    tags: ['Optics', 'Scanner', 'Induction', 'Camera']
+  },
+  {
+    id: 'sop_canbus_plc_3003',
+    siteId: 'rtp_sams_atl',
+    siteName: "Sam's ATL",
+    siteCode: 'SAM-ATL',
+    category: 'SITE_INCIDENT',
+    title: 'CAN-Bus Packet Jitter & PLC Transceiver Failover Procedure',
+    description: 'Diagnostic steps for investigating CRC parity frame drops on Sorter PLC bridge nodes. Covers swapping channel B transceiver to redundant optical bus with zero sorter downtime.',
+    documentUrl: 'https://confluence.greyorange.com/display/OPS/CAN-Bus+Jitter+Failover',
+    subsystem: 'Sorter Bridge',
+    severity: 'SEV3',
+    associatedKey: 'INC-SAM-ATL-3003',
+    author: 'Elena Rostova (Hardware Diagnostics)',
+    createdAt: '2026-09-20 02:45 PM',
+    tags: ['PLC', 'CAN-Bus', 'Bridge', 'Transceiver']
+  },
+  {
+    id: 'sop_scanner_degrade_3001',
+    siteId: 'rtp_sams_atl',
+    siteName: "Sam's ATL",
+    siteCode: 'SAM-ATL',
+    category: 'SITE_INCIDENT',
+    title: 'Barcode Scanner Head Degradation & Conveyor Reroute SOP',
+    description: 'SOP to manage barcode read accuracy drops below 85% on induct conveyors. Details how to trigger failover routing to Station 2 and replace optical sensor head module.',
+    documentUrl: 'https://confluence.greyorange.com/display/OPS/Scanner+Lens+Triage',
+    subsystem: 'Platform',
+    severity: 'SEV1',
+    associatedKey: 'INC-SAM-ATL-3001',
+    author: 'Devon Miller (Infrastructure SRE)',
+    createdAt: '2026-09-22 11:20 AM',
+    tags: ['Conveyor', 'Barcode', 'Platform', 'SEV1']
+  },
+  {
+    id: 'sop_battery_chg_906',
+    siteId: 'ALL',
+    siteName: 'Global (All Facilities)',
+    siteCode: 'GLOBAL',
+    category: 'ALERT',
+    title: 'Ranger AGV Fast-Charging Pin Contact & Voltage Ripple Inspection',
+    description: 'Standard maintenance procedure to test fast-charging pad ground contacts, measure RMS current jitter on pins, and replace worn copper contacts within 15-minute maintenance window.',
+    documentUrl: 'https://docs.google.com/document/d/1Charger-Pad-Maintenance/preview',
+    subsystem: 'Battery Systems',
+    severity: 'SEV2',
+    associatedKey: 'ALT-SAM-ATL-906',
+    author: 'Hardware Reliability Team',
+    createdAt: '2026-09-25 09:00 AM',
+    tags: ['Battery', 'Charger', 'Ranger', 'Power']
+  },
+  {
+    id: 'sop_shift_handover_gen',
+    siteId: 'ALL',
+    siteName: 'Global (All Facilities)',
+    siteCode: 'GLOBAL',
+    category: 'GENERAL',
+    title: 'Operations Shift Handover & Peak Volume Pre-Flight Checklist',
+    description: 'Comprehensive shift handover guide: verifying Ranger AGV fleet state, checking queue depth on message brokers, auditing open SEV1/2 Salesforce tickets, and verifying on-call escalation roster.',
+    documentUrl: 'https://docs.google.com/document/d/1Shift-Handover-Standard-Operating-Procedure/preview',
+    subsystem: 'Platform',
+    severity: 'ALL',
+    author: 'NOC Operations Governance',
+    createdAt: '2026-09-28 07:00 AM',
+    tags: ['Handover', 'Checklist', 'Governance', 'Operations']
+  }
+];
