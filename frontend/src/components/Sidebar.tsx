@@ -275,6 +275,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
             </div>
           </div>
+        ) : (
           <div 
             onClick={openSiteSlack}
             className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#0F1218] border border-[#1E2430] hover:border-[#2E3748] text-center gap-1.5 cursor-pointer transition-colors" 
