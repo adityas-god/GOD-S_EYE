@@ -174,10 +174,14 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
   const getDayBg = (sev: 'GREEN' | 'BLUE' | 'YELLOW' | 'RED') => {
     switch (sev) {
-      case 'RED': return 'bg-[#EF4444] text-white shadow-[0_2px_8px_rgba(239,68,68,0.35)] hover:scale-105';
-      case 'YELLOW': return 'bg-[#F59E0B] text-black font-extrabold shadow-[0_2px_8px_rgba(245,158,11,0.35)] hover:scale-105';
-      case 'BLUE': return 'bg-[#3B82F6] text-white shadow-[0_2px_8px_rgba(59,130,246,0.3)] hover:scale-105';
-      case 'GREEN': return 'bg-[#10B981] text-white shadow-[0_2px_8px_rgba(16,185,129,0.25)] hover:scale-105';
+      case 'RED':    // SEV 1: Orange
+        return 'bg-[#FF5E00] text-white font-bold rounded-lg hover:brightness-110';
+      case 'YELLOW': // SEV 2: Dark Grey
+        return 'bg-[#384252] text-gray-200 font-semibold border border-[#485366] rounded-lg hover:bg-[#434F61]';
+      case 'BLUE':   // SEV 3: Light Grey
+        return 'bg-[#707D93] text-white font-semibold border border-[#8796AC] rounded-lg hover:bg-[#7D8B9F]';
+      case 'GREEN':  // No ticket / Normal: Greyish white
+        return 'bg-[#131722] text-[#CBD5E1] border border-[#1E2432] rounded-lg hover:border-[#2D364A]';
     }
   };
 
@@ -193,14 +197,14 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
   const monthYearLabel = `${MONTH_NAMES[monthIndex]} ${year}`;
 
   return (
-    <div className="surface-card rounded-2xl p-2.5 sm:p-3 flex flex-col justify-between shadow-lg h-full min-h-0 font-mono border border-white/[0.06]">
+    <div className="surface-card rounded-xl p-2.5 sm:p-3 flex flex-col justify-between h-full min-h-0 font-mono border border-[#1E2430] bg-[#0F1218]">
       
       {/* 1. Header with Month Navigator & Real Navigation Controls */}
       <div>
-        <div className="flex items-center justify-between pb-1.5 border-b border-white/[0.06] gap-2">
+        <div className="flex items-center justify-between pb-1.5 border-b border-[#1E2430] gap-2">
           
           <div className="flex items-center gap-1.5 min-w-0">
-            <CalendarIcon className="w-3.5 h-3.5 text-[#FF5426] shrink-0" />
+            <CalendarIcon className="w-3.5 h-3.5 text-[#FF5E00] shrink-0" />
             <span className="font-bold text-xs uppercase tracking-wider text-white truncate">
               Site Calendar
             </span>
@@ -208,7 +212,7 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
           {/* REAL MONTH/YEAR NAVIGATOR */}
           <div className="flex items-center gap-1.5 shrink-0">
-            <div className="flex items-center gap-1 bg-[#13141B] px-2 py-0.5 rounded-full border border-white/[0.06]">
+            <div className="flex items-center gap-1 bg-[#131722] px-2 py-0.5 rounded-lg border border-[#1E2430]">
               <button 
                 onClick={handlePrevMonth}
                 className="text-[#7E879B] hover:text-white p-0.5 transition-colors"
@@ -232,7 +236,7 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
             <button 
               onClick={handleToday}
-              className="px-2.5 py-0.5 text-[9px] font-semibold bg-[#13141B] hover:bg-[#181A23] text-gray-300 hover:text-white rounded-full border border-white/[0.06] hover:border-[#FF5426]/40 transition-all"
+              className="px-2.5 py-0.5 text-[9px] font-semibold bg-[#131722] hover:bg-[#181D2B] text-gray-300 hover:text-white rounded-lg border border-[#1E2430] hover:border-[#FF5E00]/40 transition-all"
             >
               Today
             </button>
@@ -242,14 +246,14 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
 
         {/* 2. Facility Info Row */}
         <div className="flex items-center justify-between pt-1 text-[9px] text-[#76839A]">
-          <span className="truncate">Facility: <strong className="text-[#FF5426]">{currentSiteObj?.name || 'Selected Facility'}</strong> ({currentSiteObj?.code || 'SITE'})</span>
+          <span className="truncate">Facility: <strong className="text-[#FF5E00]">{currentSiteObj?.name || 'Selected Facility'}</strong> ({currentSiteObj?.code || 'SITE'})</span>
           <span className="shrink-0">Apex Sync: <strong className="text-emerald-400">Live</strong></span>
         </div>
 
         {/* 3. Days Header */}
-        <div className="grid grid-cols-7 gap-1 mt-0.5 mb-0.5 text-center">
+        <div className="grid grid-cols-7 gap-1 mt-1 mb-1 text-center">
           {daysHeader.map((d, i) => (
-            <span key={d} className={`text-[8.5px] font-bold ${i === 0 || i === 6 ? 'text-[#FF7A00]/90' : 'text-[#6C778D]'}`}>
+            <span key={d} className={`text-[8.5px] font-bold ${i === 0 || i === 6 ? 'text-[#FF5E00]' : 'text-[#76839A]'}`}>
               {d}
             </span>
           ))}
@@ -263,7 +267,7 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
               return (
                 <div
                   key={`${cell.month}-${cell.day}-${idx}`}
-                  className="h-5 rounded bg-[#10141D]/50 text-[#3C4556] flex items-center justify-center text-[9px] select-none font-medium"
+                  className="h-6 sm:h-7 rounded-lg bg-[#0C0F16] text-[#2C3444] border border-[#141923] flex items-center justify-center text-[9px] select-none font-medium"
                 >
                   {cell.day}
                 </div>
@@ -280,9 +284,9 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
               <button
                 key={dateKey}
                 onClick={() => handleDateClick(cell.day)}
-                className={`h-5 rounded flex items-center justify-center text-[9px] font-bold transition-all relative cursor-pointer ${getDayBg(sev)} ${
+                className={`h-6 sm:h-7 rounded-lg flex items-center justify-center text-[9.5px] transition-all relative cursor-pointer ${getDayBg(sev)} ${
                   isSelected
-                    ? 'ring-2 ring-white ring-offset-1 ring-offset-[#0B0E14] scale-105 z-10 font-black'
+                    ? 'ring-1 ring-white z-10 font-black'
                     : ''
                 }`}
                 title={`${dateKey} (${sev}): Click to open Salesforce tickets`}
@@ -295,11 +299,11 @@ export const OperationsCalendar: React.FC<OperationsCalendarProps> = ({ onSelect
       </div>
 
       {/* 5. Categorized Severity Legend */}
-      <div className="pt-1.5 border-t border-[#232A39] flex items-center justify-between text-[8px] sm:text-[8.5px] text-[#8694AC] select-none shrink-0">
-        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#EF4444]" /> Red (SEV1)</span>
-        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#F59E0B]" /> Amber (SEV2)</span>
-        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#3B82F6]" /> Blue (SEV3)</span>
-        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-[#10B981]" /> Green (OK)</span>
+      <div className="pt-2 border-t border-[#1E2430] flex items-center justify-between text-[8px] sm:text-[8.5px] text-[#8694AC] select-none shrink-0 font-mono">
+        <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-[#FF5E00]" /> SEV 1 (Critical)</span>
+        <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-[#384252] border border-[#556379]" /> SEV 2 (Major)</span>
+        <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-[#707D93]" /> SEV 3 (Minor)</span>
+        <span className="flex items-center gap-1.5"><span className="w-1.5 h-1.5 rounded-full bg-[#CBD5E1]" /> Green (Normal)</span>
       </div>
 
       {/* 6. Salesforce Tickets Tab Modal (Opens on date click with direct links!) */}

@@ -12,15 +12,23 @@ import { EditDashboardLinkModal } from './components/Admin/EditDashboardLinkModa
 import { SamsAtlDashboard } from './scenes/SamsAtlDashboard';
 import { SiteNotesView } from './components/SiteNotes/SiteNotesView';
 import { AlertPoolView } from './components/AlertPool/AlertPoolView';
+import { LoadingLogo } from './components/LoadingLogo';
 
 const DashboardView: React.FC = () => {
-  const { selectedDate, setSelectedDate } = useDashboard();
+  const { selectedDate, setSelectedDate, isLoadingSiteData } = useDashboard();
   const [activeNav, setActiveNav] = useState<string>('overview');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isAdminModalOpen, setIsAdminModalOpen] = useState<boolean>(false);
 
   return (
-    <div className="h-screen w-screen bg-[#090A0E] text-[#F3F4F6] flex flex-col font-sans selection:bg-[#FF5426] selection:text-white overflow-hidden">
+    <div className="h-screen w-screen bg-[#090A0E] text-[#F3F4F6] flex flex-col font-sans selection:bg-[#FF5E00] selection:text-white overflow-hidden relative">
+      {/* Loading Overlay with Official Brandmark */}
+      {isLoadingSiteData && (
+        <div className="absolute inset-0 bg-[#090A0E]/85 backdrop-blur-sm z-50 flex items-center justify-center">
+          <LoadingLogo label="Synchronizing GreyOrange Telemetry..." size="lg" />
+        </div>
+      )}
+
       {/* Top Navbar */}
       <Navbar onOpenAdminModal={() => setIsAdminModalOpen(true)} />
 

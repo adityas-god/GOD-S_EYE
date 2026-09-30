@@ -215,23 +215,24 @@ export const RecentTicketsTable: React.FC = () => {
       case 'SEV1':
       case 'CRITICAL':
         return (
-          <span className="px-1.5 py-0.2 rounded bg-red-500/15 text-red-400 border border-red-500/30 text-[9.5px] font-bold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-ping" />
+          <span className="px-1.5 py-0.2 rounded bg-[#FF5E00]/15 text-[#FF5E00] border border-[#FF5E00]/30 text-[9.5px] font-bold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#FF5E00]" />
             CRITICAL
           </span>
         );
       case 'SEV2':
       case 'WARNING':
+      case 'MAJOR':
         return (
-          <span className="px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 text-[9.5px] font-bold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+          <span className="px-1.5 py-0.2 rounded bg-[#384252]/40 text-[#D1D5DB] border border-[#384252] text-[9.5px] font-bold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#384252] border border-[#556379]" />
             WARNING
           </span>
         );
       default:
         return (
-          <span className="px-1.5 py-0.2 rounded bg-blue-500/15 text-blue-400 border border-blue-500/30 text-[9.5px] font-bold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+          <span className="px-1.5 py-0.2 rounded bg-[#707D93]/20 text-[#8E9BAC] border border-[#707D93]/30 text-[9.5px] font-bold flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-[#707D93]" />
             INFO
           </span>
         );
@@ -242,14 +243,14 @@ export const RecentTicketsTable: React.FC = () => {
     switch (status) {
       case 'OPEN':
       case 'FIRING':
-        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-rose-500/15 text-rose-400 border border-rose-500/30 font-bold">Firing</span>;
+        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#2A1518] text-[#F87171] border border-[#451C20] font-bold">Firing</span>;
       case 'IN_PROGRESS':
       case 'ACKNOWLEDGED':
-        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold">Ack'd</span>;
+        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#2A2015] text-[#FBBF24] border border-[#45321C] font-bold">Ack'd</span>;
       case 'RESOLVED':
-        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-bold">Resolved</span>;
+        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#152A1C] text-[#34D399] border border-[#1C4528] font-bold">Resolved</span>;
       case 'CLOSED':
-        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-gray-500/15 text-gray-400 border border-gray-500/30 font-bold">Closed</span>;
+        return <span className="text-[9.5px] px-1.5 py-0.2 rounded bg-[#1C2028] text-[#9CA3AF] border border-[#2B3240] font-bold">Closed</span>;
       default:
         return <span>{status}</span>;
     }
@@ -270,67 +271,65 @@ export const RecentTicketsTable: React.FC = () => {
   };
 
   return (
-    <div className="surface-card rounded-2xl p-2 sm:p-2.5 shadow-lg overflow-hidden h-full min-h-0 flex flex-col border border-white/[0.06] font-mono">
+    <div className="surface-card rounded-xl p-2 sm:p-2.5 overflow-hidden h-full min-h-0 flex flex-col border border-[#1E2430] bg-[#0F1218] font-mono">
       
       {/* Header & Controls Bar */}
-      <div className="shrink-0 flex flex-wrap items-center justify-between pb-1.5 border-b border-white/[0.06] gap-1.5">
+      <div className="shrink-0 flex flex-wrap items-center justify-between pb-1.5 border-b border-[#1E2430] gap-1.5">
         
         {/* Title + Active context badge + Mode switcher */}
         <div className="flex items-center gap-2">
           <span className="font-extrabold text-xs uppercase tracking-wider text-white flex items-center gap-1.5">
-            <Layers className="w-3.5 h-3.5 text-[#FF5426]" />
+            <Layers className="w-3.5 h-3.5 text-[#FF5E00]" />
             Incident Details
           </span>
 
-          <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#13141B] text-[#8C98AE] border border-white/[0.06]">
+          <span className="text-[9.5px] px-2 py-0.5 rounded-lg bg-[#131722] text-[#8C98AE] border border-[#1E2430]">
             {activeTab === 'alerts' 
               ? `${filteredSiteAlerts.length} alerts` 
-              : `${filteredIncidents.length} active`}
+              : `Active ${filteredIncidents.length}`}
           </span>
 
-          <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#FF5426]/15 text-[#FF5426] border border-[#FF5426]/30 font-bold flex items-center gap-1 truncate max-w-[130px]">
+          <span className="text-[9.5px] px-2.5 py-0.5 rounded-lg bg-[#FF5E00] text-white font-bold flex items-center gap-1 truncate max-w-[140px]">
             <MapPin className="w-3 h-3 shrink-0" />
             <span className="truncate">{currentSiteObj?.name || "Sam's ATL"}</span>
           </span>
 
           {selectedService && (
-            <span className="text-[9.5px] px-2 py-0.5 rounded-full bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30 font-bold">
+            <span className="text-[9.5px] px-2 py-0.5 rounded-lg bg-[#3B82F6]/15 text-[#3B82F6] border border-[#3B82F6]/30 font-bold">
               {selectedService.toUpperCase()}
             </span>
           )}
 
           {/* Toggle between Cases, Alert Pool, & Live Telemetry Panel */}
-          <div className="hidden sm:flex items-center bg-[#13141B] rounded-full border border-white/[0.06] p-0.5 text-[9.5px]">
+          <div className="hidden sm:flex items-center bg-[#131722] rounded-lg border border-[#1E2430] p-0.5 text-[9.5px]">
             <button
               onClick={() => setActiveTab('tickets')}
-              className={`px-2.5 py-0.5 rounded-full font-bold transition-all ${
-                activeTab === 'tickets' ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white shadow-[0_2px_10px_rgba(255,84,38,0.35)]' : 'text-gray-400 hover:text-white'
+              className={`px-2.5 py-0.5 rounded-md font-bold transition-all ${
+                activeTab === 'tickets' ? 'bg-[#18202D] text-white border border-[#2B3548]' : 'text-gray-400 hover:text-white'
               }`}
             >
-              Cases
+              Cases {filteredIncidents.length}
             </button>
             <button
               onClick={() => setActiveTab('alerts')}
-              className={`px-2.5 py-0.5 rounded-full font-bold transition-all flex items-center gap-1 ${
+              className={`px-2.5 py-0.5 rounded-md font-bold transition-all flex items-center gap-1 ${
                 activeTab === 'alerts' 
-                  ? 'bg-red-500 text-white shadow-[0_2px_10px_rgba(239,68,68,0.4)]' 
+                  ? 'bg-[#2A1518] text-red-300 border border-red-700/50' 
                   : 'text-gray-400 hover:text-white'
               }`}
             >
               <AlertTriangle className="w-2.5 h-2.5" />
               <span>Alert Pool</span>
               {activeAlertCount > 0 && (
-                <span className={`px-1 py-0.1 rounded-full text-[8.5px] font-extrabold ${
-                  activeTab === 'alerts' ? 'bg-black/30 text-white' : 'bg-red-500/20 text-red-400 border border-red-500/40'
-                }`}>
+                <span className="px-1 py-0.1 rounded text-[8.5px] font-extrabold bg-red-500/20 text-red-400 border border-red-500/40">
                   {activeAlertCount}
                 </span>
               )}
             </button>
             <button
               onClick={() => setActiveTab('telemetry')}
-              className={`px-2.5 py-0.5 rounded-full font-bold transition-all flex items-center gap-1 ${
-                activeTab === 'telemetry' ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white shadow-[0_2px_10px_rgba(255,84,38,0.35)]' : 'text-gray-400 hover:text-white'
+              className={`px-2.5 py-0.5 rounded-md font-bold transition-all flex items-center gap-1 ${
+                activeTab === 'telemetry' ? 'bg-[#18202D] text-white border border-[#2B3548]' : 'text-gray-400 hover:text-white'
               }`}
             >
               <Activity className="w-2.5 h-2.5" />
@@ -357,19 +356,19 @@ export const RecentTicketsTable: React.FC = () => {
                 placeholder="Search cases..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="bg-[#13141B] text-gray-200 text-[11px] pl-7 pr-3 py-1 rounded-full border border-white/[0.06] focus:outline-none focus:border-[#FF5426] w-28 sm:w-36 placeholder-[#545E73]"
+                className="bg-[#131722] text-gray-200 text-[11px] pl-7 pr-3 py-1 rounded-lg border border-[#1E2430] focus:outline-none focus:border-[#FF5E00] w-28 sm:w-36 placeholder-[#545E73]"
               />
             </div>
 
             <select
               value={filterSeverity}
               onChange={(e) => setFilterSeverity(e.target.value)}
-              className="bg-[#13141B] text-gray-300 text-[11px] px-3 py-1 rounded-full border border-white/[0.06] focus:outline-none focus:border-[#FF5426] cursor-pointer"
+              className="bg-[#131722] text-gray-300 text-[11px] px-3 py-1 rounded-lg border border-[#1E2430] focus:outline-none focus:border-[#FF5E00] cursor-pointer"
             >
               <option value="ALL">All Severities</option>
-              <option value="RED">🔴 Red</option>
-              <option value="AMBER">🟡 Amber</option>
-              <option value="BLUE">🔵 Blue</option>
+              <option value="SEV1">🟠 SEV 1 (Critical)</option>
+              <option value="SEV2">⚫ SEV 2 (Major)</option>
+              <option value="SEV3">⚪ SEV 3 (Minor)</option>
             </select>
           </div>
         )}
@@ -598,19 +597,19 @@ export const RecentTicketsTable: React.FC = () => {
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto relative mt-0.5">
           <table className="w-full text-left text-xs">
-            <thead className="sticky top-0 bg-[#121620] z-10 border-b border-[#1E2534] shadow-xs">
+            <thead className="sticky top-0 bg-[#0F1218] z-10 border-b border-[#1E2430]">
               <tr className="text-[#657187] text-[9.5px] uppercase">
-                <th className="py-1 px-2 font-semibold">Case ID</th>
-                <th className="py-1 px-2 font-semibold">Incident Summary</th>
-                <th className="py-1 px-2 font-semibold">Severity</th>
-                <th className="py-1 px-2 font-semibold">Service</th>
-                <th className="py-1 px-2 font-semibold">Status</th>
-                <th className="py-1 px-2 font-semibold">Assignee</th>
-                <th className="py-1 px-2 font-semibold">Time</th>
-                <th className="py-1 px-2 font-semibold text-right">Details</th>
+                <th className="py-1.5 px-2 font-semibold">Case ID</th>
+                <th className="py-1.5 px-2 font-semibold">Incident Summary</th>
+                <th className="py-1.5 px-2 font-semibold">Severity</th>
+                <th className="py-1.5 px-2 font-semibold">Service</th>
+                <th className="py-1.5 px-2 font-semibold">Status</th>
+                <th className="py-1.5 px-2 font-semibold">Assignee</th>
+                <th className="py-1.5 px-2 font-semibold">Time</th>
+                <th className="py-1.5 px-2 font-semibold text-right">Details</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1B2230]/70 text-gray-300">
+            <tbody className="divide-y divide-[#1E2430] text-gray-300">
               {filteredIncidents.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="py-6 text-center text-[#6A768D] text-xs">
@@ -625,11 +624,11 @@ export const RecentTicketsTable: React.FC = () => {
                     <React.Fragment key={t.id}>
                       <tr 
                         onClick={() => setExpandedTicketId(isExpanded ? null : t.id)}
-                        className={`hover:bg-[#1A212E]/70 transition-colors cursor-pointer group ${
-                          isExpanded ? 'bg-[#18202D]' : ''
+                        className={`hover:bg-[#141924] transition-colors cursor-pointer group ${
+                          isExpanded ? 'bg-[#141924]' : ''
                         }`}
                       >
-                        <td className="py-1.5 px-2 font-bold text-[#FF7A00] group-hover:underline text-[11px] whitespace-nowrap">
+                        <td className="py-1.5 px-2 font-bold text-[#FF5E00] group-hover:underline text-[11px] whitespace-nowrap">
                           {t.ticketKey}
                         </td>
                         <td className="py-1.5 px-2 text-white max-w-sm font-medium text-[11px]">

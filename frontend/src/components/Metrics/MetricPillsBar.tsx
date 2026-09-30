@@ -37,7 +37,7 @@ const METRICS: MetricConfig[] = [
     unit: 'Units/hr',  
     change: '+5.4%', 
     isPositive: true, 
-    color: '#FF5426', 
+    color: '#FF5E00', 
     data: [60, 72, 80, 75, 85, 78, 88, 82, 90, 85, 88, 92] 
   },
   { 
@@ -55,16 +55,16 @@ const METRICS: MetricConfig[] = [
     label: 'R2R',  
     value: '18s',   
     unit: 'Transit Latency',   
-    change: '-1.4s', 
+    change: '+1.4%', 
     isPositive: true, 
-    color: '#3B82F6', 
+    color: '#707D93', 
     data: [40, 45, 42, 50, 48, 44, 52, 46, 50, 43, 47, 45] 
   },
   { 
     key: 'KPI',  
-    label: 'KPI',  
+    label: 'WPI',  
     value: '99.4%', 
-    unit: 'Fulfillment SLA',       
+    unit: 'Fulfillment S.',       
     change: '+0.2%', 
     isPositive: true, 
     color: '#10B981', 
@@ -72,22 +72,22 @@ const METRICS: MetricConfig[] = [
   },
   { 
     key: 'DISK', 
-    label: 'Disk', 
+    label: 'DTSK', 
     value: '34%',   
     unit: 'Storage Used',   
-    change: '1.8 TB', 
+    change: '+1.8 TB', 
     isPositive: true, 
-    color: '#F59E0B', 
+    color: '#FF5E00', 
     data: [30, 32, 31, 33, 34, 33, 35, 34, 36, 35, 34, 35] 
   },
   { 
     key: 'MEM',  
-    label: 'Mem',  
+    label: 'MEM',  
     value: '62%',   
-    unit: 'Allocation Pool',    
-    change: '24.9 GB', 
+    unit: 'Allocation Pct.',    
+    change: '+24.9 GB', 
     isPositive: true, 
-    color: '#A855F7', 
+    color: '#FF5E00', 
     data: [55, 58, 60, 62, 61, 63, 62, 64, 63, 65, 62, 64] 
   },
 ];
@@ -192,33 +192,27 @@ export const MetricPillsBar: React.FC = () => {
           const ly = H - (m.data[m.data.length - 1] / 100) * H * 0.78 - H * 0.10;
 
           const ring = isSelected
-            ? 'border-[#FF5426] ring-1 ring-[#FF5426]/60 shadow-[0_0_15px_rgba(255,84,38,0.25)] bg-[#14151C]'
-            : 'border-white/[0.06] hover:border-[#FF5426]/30 bg-[#121318] hover:bg-[#161720]';
+            ? 'border-[#FF5E00] ring-1 ring-[#FF5E00] bg-[#131722]'
+            : 'border-[#1E2430] hover:border-[#2C3545] bg-[#0F1218] hover:bg-[#121620]';
 
           return (
             <div
               key={m.key}
               onClick={() => setActiveDashboardKey(m.key)}
-              className={`rounded-2xl border transition-all duration-150 cursor-pointer overflow-hidden p-2.5 flex flex-col justify-between group relative min-h-[118px] ${ring}`}
+              className={`rounded-xl border transition-all duration-150 cursor-pointer overflow-hidden p-2.5 flex flex-col justify-between group relative min-h-[118px] ${ring}`}
             >
-              {/* Top Accent Shimmer */}
-              <div 
-                className="absolute top-0 left-0 right-0 h-[2px] opacity-70 transition-opacity group-hover:opacity-100" 
-                style={{ background: `linear-gradient(90deg, transparent, ${m.color}, transparent)` }}
-              />
-
               {/* Header: Label Badge + Actions */}
               <div className="flex items-center justify-between z-10 shrink-0">
                 <div className="flex items-center gap-1.5">
                   <span
-                    className="text-[9.5px] font-black px-2 py-0.5 rounded-full shrink-0 uppercase tracking-wider"
+                    className="text-[9.5px] font-black px-2 py-0.5 rounded-lg shrink-0 uppercase tracking-wider"
                     style={{ backgroundColor: `${m.color}22`, color: m.color, border: `1px solid ${m.color}44` }}
                   >
                     {m.label}
                   </span>
 
                   {!isLiveMode && (
-                    <div className="flex items-center gap-0.5 text-[8px]">
+                    <div className="flex items-center gap-0.5 text-[8px] bg-emerald-500/10 px-1.5 py-0.2 rounded-full border border-emerald-500/20">
                       {m.isPositive ? (
                         <TrendingUp className="w-2.5 h-2.5 text-emerald-400" />
                       ) : (
@@ -237,7 +231,7 @@ export const MetricPillsBar: React.FC = () => {
                   <button
                     type="button"
                     onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="p-1 rounded-full bg-[#181A23] hover:bg-[#FF5426] text-gray-300 hover:text-white transition-colors"
+                    className="p-1 rounded bg-[#151923] hover:bg-[#FF5E00] text-gray-400 hover:text-white transition-colors"
                     title="Paste / Edit Grafana Link"
                   >
                     <Link className="w-2.5 h-2.5" />
@@ -292,10 +286,10 @@ export const MetricPillsBar: React.FC = () => {
                 <form 
                   onSubmit={(e) => handleSaveInline(e, m.key)} 
                   onClick={(e) => e.stopPropagation()}
-                  className="absolute inset-0 z-30 bg-[#0C1019] border border-[#FF7A00] rounded-xl p-2 flex flex-col justify-between shadow-2xl animate-in fade-in"
+                  className="absolute inset-0 z-30 bg-[#0F1218] border border-[#FF5E00] rounded-xl p-2 flex flex-col justify-between animate-in fade-in"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[9px] font-extrabold text-[#FF7A00] uppercase tracking-wider flex items-center gap-1">
+                    <span className="text-[9px] font-extrabold text-[#FF5E00] uppercase tracking-wider flex items-center gap-1">
                       <Link className="w-3 h-3" />
                       <span>Paste {m.label} Link</span>
                     </span>
@@ -313,7 +307,7 @@ export const MetricPillsBar: React.FC = () => {
                     value={pasteInput}
                     onChange={(e) => setPasteInput(e.target.value)}
                     placeholder="Paste Grafana URL or <iframe...>"
-                    className="w-full bg-[#06080D] border border-[#232C3D] focus:border-[#FF7A00] text-white text-[9.5px] rounded px-2 py-1 outline-none font-mono placeholder:text-gray-600"
+                    className="w-full bg-[#090A0E] border border-[#1E2430] focus:border-[#FF5E00] text-white text-[9.5px] rounded px-2 py-1 outline-none font-mono placeholder:text-gray-600"
                     autoFocus
                   />
 
@@ -340,7 +334,7 @@ export const MetricPillsBar: React.FC = () => {
                       <button
                         type="submit"
                         disabled={!pasteInput.trim()}
-                        className="px-2.5 py-0.5 rounded bg-[#FF7A00] hover:bg-[#FF8B21] text-white text-[8.5px] font-bold flex items-center gap-1 shadow-sm disabled:opacity-50"
+                        className="px-2.5 py-0.5 rounded bg-[#FF5E00] hover:bg-[#FF7522] text-white text-[8.5px] font-bold flex items-center gap-1 disabled:opacity-50"
                       >
                         <Sparkles className="w-2.5 h-2.5" />
                         <span>Render</span>
@@ -353,7 +347,7 @@ export const MetricPillsBar: React.FC = () => {
                 <div className="w-full flex-1 my-1 relative overflow-hidden rounded bg-[#060910] border border-[#1A2333] min-h-[48px]">
                   {loadingIframes[m.key] && (
                     <div className="absolute inset-0 z-10 bg-[#060910] flex items-center justify-center gap-1">
-                      <RefreshCw className="w-3 h-3 text-[#FF7A00] animate-spin" />
+                      <RefreshCw className="w-3 h-3 text-[#FF5E00] animate-spin" />
                       <span className="text-[7.5px] text-gray-400">Rendering...</span>
                     </div>
                   )}
@@ -412,26 +406,17 @@ export const MetricPillsBar: React.FC = () => {
               )}
 
               {/* Footer status dot */}
-              <div className="flex items-center justify-between text-[7.5px] text-gray-500 pt-1.5 border-t border-white/[0.06] shrink-0">
+              <div className="flex items-center justify-between text-[7.5px] text-gray-500 pt-1.5 border-t border-[#1E2430] shrink-0">
                 <span className="flex items-center gap-1">
                   <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: m.color }} />
                   <span className="text-gray-400 font-mono">Telemetry</span>
                 </span>
-                {hasUrl ? (
-                  <span 
-                    onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="text-[#FF5426] font-bold hover:underline cursor-pointer"
-                  >
-                    {isLiveMode ? 'Live Rendered' : 'Paste Link ✎'}
-                  </span>
-                ) : (
-                  <span 
-                    onClick={(e) => handleOpenPaste(e, m.key)}
-                    className="text-[#FF5426] font-bold hover:underline cursor-pointer"
-                  >
-                    Paste Link ✎
-                  </span>
-                )}
+                <span 
+                  onClick={(e) => handleOpenPaste(e, m.key)}
+                  className="text-[#FF5E00] font-bold hover:underline cursor-pointer flex items-center gap-0.5"
+                >
+                  {isLiveMode ? 'Live Rendered' : 'Paste Link →'}
+                </span>
               </div>
             </div>
           );

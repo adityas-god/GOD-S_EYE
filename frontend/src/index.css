@@ -5,25 +5,24 @@
 @layer base {
   :root {
     --bg-main: #090A0E;
-    --bg-card: #121318;
-    --bg-card-hover: #171821;
-    --bg-subtle: #0D0E13;
-    --border-main: #1F222C;
-    --border-light: #2A2E3B;
-    --orange-primary: #FF5426;
-    --orange-hover: #FF6B3D;
+    --bg-card: #0F1218;
+    --bg-card-hover: #141822;
+    --bg-subtle: #0D1017;
+    --border-main: #1E2430;
+    --border-light: #2B3444;
+    --orange-primary: #FF5E00;
+    --orange-hover: #FF7522;
+    --sev1-orange: #FF5E00;
+    --sev2-darkgrey: #384252;
+    --sev3-lightgrey: #707D93;
+    --noticket-greywhite: #CBD5E1;
   }
 
   body {
     background-color: #090A0E;
     color: #F3F4F6;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-    background-image: 
-      radial-gradient(circle at 92% 8%, rgba(255, 84, 38, 0.075) 0%, transparent 45%),
-      radial-gradient(circle at 8% 92%, rgba(255, 84, 38, 0.035) 0%, transparent 45%),
-      radial-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 100% 100%, 100% 100%, 24px 24px;
-    background-attachment: fixed;
+    background-image: none;
   }
 }
 
@@ -34,16 +33,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #0B0C10;
+  background: #0B0D12;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #232632;
+  background: #1E2430;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #FF5426;
+  background: #FF5E00;
 }
 
 /* Strictly hide all scrollbars on iframes and no-scrollbar containers */
@@ -59,63 +58,49 @@ iframe::-webkit-scrollbar, .no-scrollbar::-webkit-scrollbar {
   height: 0 !important;
 }
 
-/* Tactile Surface Classes */
+/* Precision Flat Industrial Surface Cards - NO GLOW OR LIGHTS */
 .surface-card {
-  background: linear-gradient(180deg, #13141B 0%, #101116 100%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 1rem;
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  background: #0F1218;
+  border: 1px solid #1E2430;
+  border-radius: 0.75rem;
+  box-shadow: none;
 }
 
 .surface-card-hover {
-  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .surface-card-hover:hover {
-  border-color: rgba(255, 84, 38, 0.4);
-  box-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.75), 0 0 15px rgba(255, 84, 38, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  border-color: #2D3748;
+  box-shadow: none;
 }
 
 .surface-inset {
-  background: #0B0C10;
-  border: 1px solid #1A1C24;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+  background: #0B0E14;
+  border: 1px solid #1A202C;
+  box-shadow: none;
 }
 
-/* Sleek Reference Design Components */
+/* Crisp Industrial Control Components */
 .pill-active {
-  background: linear-gradient(135deg, #FF5426 0%, #FF3D12 100%);
-  box-shadow: 0 4px 16px -2px rgba(255, 84, 38, 0.38);
+  background: #FF5E00;
   color: #FFFFFF;
+  box-shadow: none;
 }
 
 .pill-inactive {
-  background: #14151C;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #9AA1B2;
+  background: #131722;
+  border: 1px solid #1E2430;
+  color: #8C98AE;
 }
 
 .pill-inactive:hover {
-  background: #191B24;
+  background: #171C28;
   color: #FFFFFF;
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: #2B3444;
 }
 
 .icon-circle-orange {
-  background: linear-gradient(135deg, #FF5426 0%, #FF380D 100%);
-  box-shadow: 0 2px 10px rgba(255, 84, 38, 0.35);
-}
-
-/* Severity Tag Glows */
-.glow-sev1 {
-  box-shadow: 0 0 14px rgba(239, 68, 68, 0.25);
-}
-.glow-sev2 {
-  box-shadow: 0 0 14px rgba(245, 158, 11, 0.22);
-}
-.glow-sev3 {
-  box-shadow: 0 0 14px rgba(59, 130, 246, 0.22);
-}
-.glow-normal {
-  box-shadow: 0 0 14px rgba(16, 185, 129, 0.2);
+  background: #FF5E00;
+  box-shadow: none;
 }

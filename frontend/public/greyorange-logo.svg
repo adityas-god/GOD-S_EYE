@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 60" fill="none">
+  <!-- Stylized "g" Brand Glyph in GreyOrange Vibrant Brand Color -->
+  <g transform="translate(4, 2) scale(0.55)">
+    <!-- Top Ring with upper-right tab -->
+    <path 
+      fill-rule="evenodd" 
+      clip-rule="evenodd" 
+      d="M 50 16 C 32 16 17 31 17 49 C 17 67 32 82 50 82 C 60.5 82 69.8 77.2 76 69.8 C 78.2 67.2 77.8 63.3 75.2 61.1 C 72.6 58.9 68.7 59.3 66.5 61.9 C 62.4 66.8 56.6 69.7 50 69.7 C 38.6 69.7 29.3 60.4 29.3 49 C 29.3 37.6 38.6 28.3 50 28.3 C 60.1 28.3 68.6 35.7 70.3 45.6 L 75.8 45.6 C 79.2 45.6 82 42.8 82 39.4 C 82 34 78 29.1 72.8 25 C 66.3 19.9 58.4 16 50 16 Z" 
+      fill="#FF5E00"
+    />
+    <!-- Bottom Smile Bar -->
+    <path 
+      d="M 28 88 C 34.5 92.5 42 95 50 95 C 58 95 65.5 92.5 72 88 C 74.8 86 78.7 86.8 80.7 89.6 C 82.7 92.4 81.9 96.3 79.1 98.3 C 70.8 104.1 60.8 107 50 107 C 39.2 107 29.2 104.1 20.9 98.3 C 18.1 96.3 17.3 92.4 19.3 89.6 C 21.3 86.8 25.2 86 28 88 Z" 
+      fill="#FF5E00"
+    />
+  </g>
+  
+  <!-- Wordmark: "GreyOrange" in clean, bold typography -->
+  <text x="64" y="42" font-family="'Plus Jakarta Sans', system-ui, -apple-system, sans-serif" font-size="30" font-weight="800" letter-spacing="-0.5px">
+    <tspan fill="#FFFFFF">Grey</tspan><tspan fill="#FF5E00">Orange</tspan>
+  </text>
+</svg>

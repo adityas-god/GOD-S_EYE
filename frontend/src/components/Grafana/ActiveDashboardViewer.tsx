@@ -318,13 +318,13 @@ export const ActiveDashboardViewer: React.FC = () => {
   const proxiedUrl = toProxyUrl(currentUrl);
 
   return (
-    <div className="surface-card rounded-2xl p-2.5 sm:p-3 shadow-lg font-mono border border-white/[0.06] flex flex-col justify-between h-[360px] select-none">
+    <div className="surface-card rounded-xl p-2.5 sm:p-3 font-mono border border-[#1E2430] bg-[#0F1218] flex flex-col justify-between h-[360px] select-none">
       
       {/* Top Header Bar & URL Address Bar */}
-      <div className="shrink-0 flex flex-col gap-1.5 pb-2 border-b border-white/[0.06]">
+      <div className="shrink-0 flex flex-col gap-1.5 pb-2 border-b border-[#1E2430]">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
-            <Activity className="w-3.5 h-3.5 text-[#FF5426] animate-pulse shrink-0" />
+            <Activity className="w-3.5 h-3.5 text-[#FF5E00] shrink-0" />
             <span className="font-bold text-xs uppercase text-white tracking-wider truncate">
               {siteName} — {currentConfig.label} ({currentConfig.category}) Live Panel
             </span>

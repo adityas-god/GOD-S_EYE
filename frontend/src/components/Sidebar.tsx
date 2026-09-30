@@ -99,7 +99,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside 
-      className={`bg-[#0B0C10] border-r border-white/[0.06] flex flex-col justify-between shrink-0 select-none transition-all duration-300 ease-in-out relative z-20 h-full overflow-hidden ${
+      className={`bg-[#090A0E] border-r border-[#1E2430] flex flex-col justify-between shrink-0 select-none transition-all duration-300 ease-in-out relative z-20 h-full overflow-hidden ${
         isCollapsed ? 'w-16' : 'w-56 lg:w-60'
       }`}
     >
@@ -107,7 +107,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Top Section: Nav items + Collapse Toggle */}
       <div>
         {/* Header / Collapse Bar */}
-        <div className={`p-3 border-b border-white/[0.06] flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
+        <div className={`p-3 border-b border-[#1E2430] flex items-center ${isCollapsed ? 'justify-center' : 'justify-between'}`}>
           {!isCollapsed && (
             <span className="text-[10px] font-mono text-[#7A8396] uppercase tracking-wider font-semibold truncate">
               Operations Core
@@ -116,14 +116,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
           
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="p-1.5 rounded-lg text-[#7A869C] hover:text-white hover:bg-[#151720] border border-transparent hover:border-white/[0.06] transition-all"
+            className="p-1.5 rounded-lg text-[#7A869C] hover:text-white hover:bg-[#131722] border border-transparent hover:border-[#1E2430] transition-all"
             title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
             aria-label={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
           >
             {isCollapsed ? (
-              <ChevronRight className="w-4 h-4 text-[#FF5426]" />
+              <ChevronRight className="w-4 h-4 text-[#FF5E00]" />
             ) : (
-              <ChevronLeft className="w-4 h-4 text-[#FF5426]" />
+              <ChevronLeft className="w-4 h-4 text-[#FF5E00]" />
             )}
           </button>
         </div>
@@ -158,12 +158,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     : isWarRoom
                       ? 'text-blue-400 hover:text-white hover:bg-[#121824] border border-blue-900/30'
                       : isAlertPool && isActive
-                        ? 'bg-red-500 text-white font-bold shadow-[0_4px_16px_rgba(239,68,68,0.3)]'
+                        ? 'bg-red-500 text-white font-bold'
                         : isAlertPool && activeAlertCount > 0
                           ? 'text-red-400 hover:text-red-300 hover:bg-[#1F1418]'
                           : isActive
-                            ? 'bg-gradient-to-r from-[#FF5426] to-[#FF3508] text-white font-bold shadow-[0_4px_16px_rgba(255,84,38,0.32)]'
-                            : 'text-[#8E95A5] hover:text-white hover:bg-[#13141B]'
+                            ? 'bg-[#FF5E00] text-white font-bold rounded-lg'
+                            : 'text-[#8E95A5] hover:text-white hover:bg-[#131722]'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -226,25 +226,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Bottom GreyOrange Facility Telemetry Card with direct Slack launcher */}
-      <div className="p-2 border-t border-white/[0.06]">
+      <div className="p-2 border-t border-[#1E2430]">
         {!isCollapsed ? (
-          <div className="p-3 rounded-2xl bg-[#121319] border border-white/[0.06] shadow-lg space-y-2.5">
+          <div className="p-3 rounded-xl bg-[#0F1218] border border-[#1E2430] space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-mono text-[#7B8599] uppercase tracking-wider font-semibold">
                 Active Hub
               </span>
               <span className="flex items-center gap-1 text-[10px] font-mono text-emerald-400">
-                <Radio className="w-3 h-3 animate-pulse text-emerald-400" />
+                <Radio className="w-3 h-3 text-emerald-400" />
                 LIVE
               </span>
             </div>
 
             <div>
-              <div className="font-extrabold text-[#FF5426] text-sm tracking-tight truncate">
+              <div className="font-extrabold text-[#FF5E00] text-sm tracking-tight truncate">
                 {currentSiteObj.name}
               </div>
               <div className="flex items-center gap-1.5 text-[11px] text-[#8E95A5] font-mono mt-0.5">
-                <MapPin className="w-3 h-3 text-[#FF5426] shrink-0" />
+                <MapPin className="w-3 h-3 text-[#FF5E00] shrink-0" />
                 <span className="truncate">{currentSiteObj.code} • {currentSiteObj.region}</span>
               </div>
             </div>
@@ -252,7 +252,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {/* Direct Slack Channel Action Button */}
             <button
               onClick={openSiteSlack}
-              className="w-full flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-xl bg-[#111C17] hover:bg-[#15251F] border border-emerald-500/30 text-emerald-400 hover:text-emerald-200 text-[11px] font-semibold transition-all group shadow-sm"
+              className="w-full flex items-center justify-between gap-1.5 py-1.5 px-2.5 rounded-lg bg-[#111C17] hover:bg-[#15251F] border border-emerald-500/30 text-emerald-400 hover:text-emerald-200 text-[11px] font-semibold transition-all group"
               title={`Open Slack channel: ${siteIntelligence?.slackChannelName || '#ops-site'}`}
             >
               <div className="flex items-center gap-1.5 truncate">
@@ -263,9 +263,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </button>
 
             {/* Ranger Bot fleet micro-stat */}
-            <div className="pt-2 border-t border-white/[0.06] flex items-center justify-between text-[10px] font-mono text-[#788399]">
+            <div className="pt-2 border-t border-[#1E2430] flex items-center justify-between text-[10px] font-mono text-[#788399]">
               <div className="flex items-center gap-1">
-                <Bot className="w-3 h-3 text-[#FF5426]" />
+                <Bot className="w-3 h-3 text-[#FF5E00]" />
                 <span>142 Bots</span>
               </div>
               <div className="flex items-center gap-1 text-emerald-400">
@@ -275,9 +275,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#121319] border border-white/[0.06] text-center gap-1.5" title={`Active: ${currentSiteObj.name}`}>
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span className="text-[9px] font-mono font-bold text-[#FF5426] truncate max-w-[44px]">
+          <div className="flex flex-col items-center justify-center p-2 rounded-xl bg-[#0F1218] border border-[#1E2430] text-center gap-1.5" title={`Active: ${currentSiteObj.name}`}>
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span className="text-[9px] font-mono font-bold text-gray-200 truncate max-w-[44px]">
               {currentSiteObj.code}
             </span>
             <button 
