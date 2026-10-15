@@ -1,0 +1,122 @@
+name: Deploy Operations Dashboard
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Linux VM
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Deploy Docker Stack
+        env:
+          SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+          SF_CLIENT_SECRET: ${{ secrets.SF_CLIENT_SECRET }}
+          SF_INSTANCE_URL: ${{ secrets.SF_INSTANCE_URL }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+        run: |
+          set -e
+          echo "=========================================================="
+          echo "🚀 Starting Automated Deployment for Operations Dashboard"
+          echo "=========================================================="
+
+          # Project identification & dedicated VM path
+          PROJECT_NAME="GOD-S_EYE"
+          DEPLOY_DIR="/GOD-S_EYE"
+
+          # 1. Locate dedicated deployment directory on the VM
+          if [ ! -d "$DEPLOY_DIR" ]; then
+            if [ -d "/home/aditya_s_ctr_greyorange_com/$PROJECT_NAME" ]; then
+              DEPLOY_DIR="/home/aditya_s_ctr_greyorange_com/$PROJECT_NAME"
+            elif [ -d "$HOME/$PROJECT_NAME" ]; then
+              DEPLOY_DIR="$HOME/$PROJECT_NAME"
+            else
+              if [ -w "/" ]; then
+                DEPLOY_DIR="/$PROJECT_NAME"
+              else
+                DEPLOY_DIR="$HOME/$PROJECT_NAME"
+              fi
+              echo "Creating $DEPLOY_DIR and cloning repository..."
+              mkdir -p "$DEPLOY_DIR"
+            fi
+          fi
+
+          if [ ! -d "$DEPLOY_DIR/.git" ]; then
+            echo "Cloning repository into $DEPLOY_DIR..."
+            REPO_URL="${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-adityas-god/GOD-S_EYE}.git"
+            git clone "$REPO_URL" "$DEPLOY_DIR" || git clone "https://github.com/adityas-god/GOD-S_EYE.git" "$DEPLOY_DIR"
+          fi
+
+          cd "$DEPLOY_DIR"
+
+          # 2. Sync to latest main
+          echo "Syncing latest changes from origin/main..."
+          git fetch origin main
+          git reset --hard origin/main
+
+          # 3. Ensure .env exists with HOST_PORT defined
+          if [ ! -f .env ]; then
+            echo "Creating .env from .env.example..."
+            cp .env.example .env
+          fi
+
+          if ! grep -q "^HOST_PORT=" .env; then
+            echo "HOST_PORT=8081" >> .env
+          fi
+
+          # Optional: Inject GitHub Secrets if configured in Repository Settings
+          if [ -n "$SF_CLIENT_ID" ]; then
+            grep -q "^SF_CLIENT_ID=" .env && sed -i "s|^SF_CLIENT_ID=.*|SF_CLIENT_ID=${SF_CLIENT_ID}|" .env || echo "SF_CLIENT_ID=${SF_CLIENT_ID}" >> .env
+          fi
+          if [ -n "$SF_CLIENT_SECRET" ]; then
+            grep -q "^SF_CLIENT_SECRET=" .env && sed -i "s|^SF_CLIENT_SECRET=.*|SF_CLIENT_SECRET=${SF_CLIENT_SECRET}|" .env || echo "SF_CLIENT_SECRET=${SF_CLIENT_SECRET}" >> .env
+          fi
+          if [ -n "$SF_INSTANCE_URL" ]; then
+            grep -q "^SF_INSTANCE_URL=" .env && sed -i "s|^SF_INSTANCE_URL=.*|SF_INSTANCE_URL=${SF_INSTANCE_URL}|" .env || echo "SF_INSTANCE_URL=${SF_INSTANCE_URL}" >> .env
+          fi
+          if [ -n "$MONGODB_URI" ]; then
+            grep -q "^MONGODB_URI=" .env && sed -i "s|^MONGODB_URI=.*|MONGODB_URI=${MONGODB_URI}|" .env || echo "MONGODB_URI=${MONGODB_URI}" >> .env
+          fi
+
+          HOST_PORT=$(grep -E "^HOST_PORT=" .env | cut -d '=' -f2 | tr -d ' "\r\n')
+          HOST_PORT=${HOST_PORT:-8081}
+          echo "Host port configured: $HOST_PORT"
+
+          # 4. Clean shutdown and rebuild to completely replace the previous website
+          echo "Stopping previous containers..."
+          docker compose down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true
+
+          echo "Building new Docker images using host network..."
+          docker compose build --network host || docker compose build || docker-compose build
+
+          echo "Starting new Docker stack..."
+          docker compose up -d --remove-orphans || docker-compose up -d
+
+          # 5. Verify service health via loop for up to 60s
+          echo "Verifying health on http://127.0.0.1:${HOST_PORT}/health..."
+          HEALTHY=0
+          for i in $(seq 1 30); do
+            if curl -sf --connect-timeout 3 --max-time 5 "http://127.0.0.1:${HOST_PORT}/health"; then
+              echo -e "\n✅ Health check succeeded! New application is live on port ${HOST_PORT}."
+              HEALTHY=1
+              break
+            fi
+            echo "Waiting for health check... ($i/30)"
+            sleep 2
+          done
+
+          if [ "$HEALTHY" -ne 1 ]; then
+            echo "❌ Health check failed after 60s"
+            docker compose logs --tail=100
+            exit 1
+          fi
+
+          # 6. Check active containers
+          echo "=========================================================="
+          echo "Active Containers for Operations Dashboard:"
+          echo "=========================================================="
+          docker ps --filter "name=gods-eye"

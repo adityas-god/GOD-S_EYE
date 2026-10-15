@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1791804251519,
+      "tag": "0000_create_site_directory_and_admin_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791804559345,
+      "tag": "0001_restrict_role_check_to_signed_in_users",
+      "breakpoints": true
+    }
+  ]
+}

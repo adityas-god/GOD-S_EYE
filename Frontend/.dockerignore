@@ -1,0 +1,13 @@
+node_modules
+dist
+dist-ssr
+.output
+.vinxi
+.nitro
+.tanstack
+npm-debug.log*
+yarn-error.log*
+.git
+.gitignore
+.env
+.DS_Store

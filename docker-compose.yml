@@ -1,0 +1,56 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      network: host
+    container_name: gods-eye-backend
+    restart: unless-stopped
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - MONGODB_URI=${MONGODB_URI}
+      - MONGODB_DB_NAME=${MONGODB_DB_NAME:-operations_db}
+      - CLIENT_ORIGIN=${CLIENT_ORIGIN:-http://localhost:${HOST_PORT:-8081}}
+      - SF_LOGIN_URL=${SF_LOGIN_URL:-${SALESFORCE_LOGIN_URL:-https://login.salesforce.com}}
+      - SF_CLIENT_ID=${SF_CLIENT_ID:-${SALESFORCE_CLIENT_ID:-}}
+      - SF_CLIENT_SECRET=${SF_CLIENT_SECRET:-${SALESFORCE_CLIENT_SECRET:-}}
+      - SF_USERNAME=${SF_USERNAME:-${SALESFORCE_USERNAME:-}}
+      - SF_PASSWORD=${SF_PASSWORD:-${SALESFORCE_PASSWORD:-}}
+      - SF_SECURITY_TOKEN=${SF_SECURITY_TOKEN:-${SALESFORCE_SECURITY_TOKEN:-}}
+      - SF_INSTANCE_URL=${SF_INSTANCE_URL:-${SALESFORCE_INSTANCE_URL:-https://greyorangeorg.my.salesforce.com}}
+      - SF_API_VERSION=${SF_API_VERSION:-v59.0}
+      - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
+      - OPSGENIE_API_KEY=${OPSGENIE_API_KEY:-}
+    networks:
+      - gods-eye-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  frontend:
+    build:
+      context: ./Frontend
+      dockerfile: Dockerfile
+      network: host
+    container_name: gods-eye-frontend
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8081}:80"
+    networks:
+      - gods-eye-net
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  gods-eye-net:
+    name: gods-eye-net
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.28.10.0/24
