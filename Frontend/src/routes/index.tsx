@@ -277,18 +277,22 @@ function Index() {
     const items = activeBucket === 'cases' ? (sfOverview?.cases ?? []) : (sfOverview?.alerts ?? []);
     const set = new Set<string>();
     for (const c of items) {
-      const p = (c.Priority || 'P3 - Medium').trim();
+      const p = (c.Highest_Severity__c || c.Severity__c || c.Priority || 'P3 - Medium').trim();
       if (p) set.add(p);
     }
     return Array.from(set).sort();
   }, [activeBucket, sfOverview]);
 
-  // Strictly filter to ONLY current day's tickets with optional severity/priority filter
+  // Filter tickets with optional severity/priority filter
   const currentOrgTickets: SFCase[] = useMemo(() => {
     const items = activeBucket === 'cases' ? (sfOverview?.cases ?? []) : (sfOverview?.alerts ?? []);
-    const todayOnly = items.filter(isTicketFromToday);
+    // For live open cases, all active tickets in the org are included;
+    // For alerts, filter to today's alerts unless a specific severity filter is selected
+    const candidateTickets = activeBucket === 'alerts' && severityFilter === 'All'
+      ? items.filter(isTicketFromToday)
+      : items;
 
-    const filtered = todayOnly.filter(c => {
+    const filtered = candidateTickets.filter(c => {
       if (severityFilter === 'SEV 1 URGENT') {
         return detectSeverity(c) === 'sev1';
       }
@@ -296,7 +300,10 @@ function Index() {
         return detectSeverity(c) === 'sev2';
       }
       if (severityFilter !== 'All') {
-        return (c.Priority || 'P3 - Medium').trim() === severityFilter;
+        const p1 = (c.Priority || 'P3 - Medium').trim();
+        const p2 = (c.Highest_Severity__c || '').trim();
+        const p3 = (c.Severity__c || '').trim();
+        return p1 === severityFilter || p2 === severityFilter || p3 === severityFilter;
       }
       return true;
     });

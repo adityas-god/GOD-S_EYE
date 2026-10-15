@@ -56,6 +56,11 @@ export const DEFAULT_ALL_SITE_NAMES = [
 ];
 
 let tokenCache = null;
+let _lastSalesforceError = null;
+
+export function getLastSalesforceError() {
+  return _lastSalesforceError;
+}
 
 const CLOSED_STATUS_PATTERNS = [
   'closed',
@@ -573,10 +578,56 @@ export function detectSeverity(c) {
   if (impactPct >= 100) return 'sev1';
   if (impactPct >= 50) return 'sev2';
 
-  // Rule 2: Explicit severity / priority fields
-  const rawFields = [
-    c.Highest_Severity__c,
-    c.Severity__c,
+  const sub = String(c.Subject || c.subject || '').toUpperCase();
+
+  // Rule 2: Check primary authoritative severity field (Highest_Severity__c / Severity__c) FIRST
+  const primarySev = String(c.Highest_Severity__c || c.Severity__c || '').trim().toUpperCase();
+
+  if (primarySev) {
+    // Explicit Sev 1
+    if (
+      primarySev.includes('SEV 1') ||
+      primarySev.includes('SEV-1') ||
+      primarySev.includes('SEVERITY 1') ||
+      primarySev.includes('SEVERITY-1') ||
+      primarySev === 'P1' ||
+      primarySev.startsWith('P1 ') ||
+      primarySev.includes('P1 -')
+    ) {
+      return 'sev1';
+    }
+
+    // Explicit Sev 2
+    if (
+      primarySev.includes('SEV 2') ||
+      primarySev.includes('SEV-2') ||
+      primarySev.includes('SEVERITY 2') ||
+      primarySev.includes('SEVERITY-2') ||
+      primarySev === 'P2' ||
+      primarySev.startsWith('P2 ') ||
+      primarySev.includes('P2 -')
+    ) {
+      // If Highest_Severity__c explicitly says Urgent, it is ALWAYS Sev 2 Urgent
+      if (primarySev.includes('URGENT')) {
+        return 'sev2';
+      }
+      // If Highest_Severity__c explicitly says High / Low / Medium without Urgent, it is not Urgent
+      if (primarySev.includes('HIGH') || primarySev.includes('LOW') || primarySev.includes('MEDIUM')) {
+        return 'sev3';
+      }
+      // Check if secondary field or subject confirms Urgent
+      const anyUrgent = [c.Alert_Priority__c, c.Snow_Priority__c, c.Priority, c.priority, sub]
+        .filter(Boolean)
+        .some(v => String(v).toUpperCase().includes('URGENT'));
+      if (anyUrgent) {
+        return 'sev2';
+      }
+      return 'sev3';
+    }
+  }
+
+  // Rule 3: Secondary priority & severity fields
+  const secondaryFields = [
     c.Alert_Priority__c,
     c.Snow_Priority__c,
     c.Jira_Priority__c,
@@ -586,21 +637,37 @@ export function detectSeverity(c) {
     .filter(Boolean)
     .map(v => String(v).trim().toUpperCase());
 
-  const sub = String(c.Subject || c.subject || '').toUpperCase();
+  // Check if ticket is explicitly Sev 2 before doing Sev 1 checks (prevent Sev 2 from falling into Sev 1 due to "Critical" Priority)
+  const isExplicitSev2 =
+    secondaryFields.some(s =>
+      (s.includes('SEV 2') && s.includes('URGENT')) ||
+      (s.includes('SEV-2') && s.includes('URGENT')) ||
+      (s.includes('SEVERITY 2') && s.includes('URGENT')) ||
+      (s.includes('P2') && s.includes('URGENT')) ||
+      s === 'SEV 2 URGENT' ||
+      s === 'SEV 2 - URGENT' ||
+      s === 'P2 - URGENT' ||
+      s === 'P2 URGENT'
+    ) ||
+    /\[\s*(SEV[- ]*2\s*[- ]*URGENT|P2\s*[- ]*URGENT)\s*\]/i.test(sub) ||
+    /\b(SEV[- ]*2\s*[- ]*URGENT|P2\s*[- ]*URGENT)\b/i.test(sub);
 
-  // Check Sev 1 across severity/priority fields
-  for (const s of rawFields) {
+  if (isExplicitSev2) {
+    return 'sev2';
+  }
+
+  // Check Sev 1 in secondary fields or subject
+  for (const s of secondaryFields) {
     if (
       s.includes('SEV 1') ||
       s.includes('SEV-1') ||
       s.includes('SEVERITY 1') ||
       s.includes('SEVERITY-1') ||
-      s.includes('CRITICAL') ||
       s === 'P1' ||
       s.startsWith('P1 ') ||
-      s.startsWith('1 -') ||
-      s.startsWith('1-') ||
-      /\bP1\b/.test(s)
+      s.startsWith('P1-') ||
+      s.includes('P1 -') ||
+      s.includes('1 - CRITICAL')
     ) {
       return 'sev1';
     }
@@ -608,50 +675,21 @@ export function detectSeverity(c) {
 
   // Check Sev 1 in Subject
   if (
-    /\[\s*(SEV[- ]*1|P1|CRITICAL)\s*\]/i.test(sub) ||
+    /\[\s*(SEV[- ]*1|P1)\s*\]/i.test(sub) ||
     /\b(SEV[- ]*1|SEVERITY[- ]*1)\b/i.test(sub) ||
     /\b(SITE 100% DOWN|TOTAL FACILITY DOWN)\b/i.test(sub)
   ) {
     return 'sev1';
   }
 
-  // STRICT REQUIREMENT: DO NOT INCLUDE ANY SEV 2 HIGH CASES!
-  // If any field contains "HIGH" (e.g. "Sev 2 - High", "P2 - High", "Sev 2 High", "High"),
-  // it is explicitly a High ticket and must NEVER be counted as Sev 2 Urgent!
-  const hasHigh = rawFields.some(s => s.includes('HIGH')) || /\b(HIGH)\b/i.test(sub);
-  if (hasHigh) {
-    return 'sev3';
-  }
+  // Check Sev 2 combination (one field Sev 2 / P2 and another field Urgent)
+  const hasSev2 = secondaryFields.some(s =>
+    s.includes('SEV 2') || s.includes('SEV-2') || s.includes('SEVERITY 2') || s.startsWith('P2') || s === 'P2'
+  ) || /\b(SEV[- ]*2|P2)\b/i.test(sub);
 
-  // Check Sev 2 Urgent:
-  // Must explicitly be Sev 2 + Urgent (e.g. "Sev 2 - Urgent", "Sev 2 Urgent", "P2 - Urgent", "P2 Urgent")
-  // Or has both "SEV 2" / "P2" severity and "URGENT" priority.
-  // Plain "Urgent" in email subject does NOT make a ticket an incident!
-  const hasExplicitSev2Urgent =
-    rawFields.some(s =>
-      (s.includes('SEV 2') && s.includes('URGENT')) ||
-      (s.includes('SEV-2') && s.includes('URGENT')) ||
-      (s.includes('SEVERITY 2') && s.includes('URGENT')) ||
-      (s.includes('SEVERITY-2') && s.includes('URGENT')) ||
-      (s.includes('P2') && s.includes('URGENT')) ||
-      s === 'SEV 2 URGENT' ||
-      s === 'SEV 2 - URGENT' ||
-      s === 'P2 - URGENT' ||
-      s === 'P2 URGENT'
-    ) ||
-    /\[\s*(SEV[- ]*2\s*[- ]*URGENT|P2\s*[- ]*URGENT)\s*\]/i.test(sub);
+  const hasUrgent = secondaryFields.some(s => s.includes('URGENT')) || /\b(URGENT)\b/i.test(sub);
 
-  if (hasExplicitSev2Urgent) {
-    return 'sev2';
-  }
-
-  // Also check if one field is Sev 2 / P2 and another field is Urgent:
-  const hasSev2Field = rawFields.some(s =>
-    s.includes('SEV 2') || s.includes('SEV-2') || s.includes('SEVERITY 2') || s.includes('SEVERITY-2') || s.startsWith('P2') || s === 'P2'
-  );
-  const hasUrgentField = rawFields.some(s => s.includes('URGENT'));
-
-  if (hasSev2Field && hasUrgentField) {
+  if (hasSev2 && hasUrgent) {
     return 'sev2';
   }
 
@@ -938,17 +976,21 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     try {
       const res = await executeSOQL(primarySoql);
       raw = res.records || [];
+      _lastSalesforceError = null;
     } catch (errPrimary) {
       console.warn('[Salesforce] Primary SOQL notice, executing fallback query:', errPrimary.message);
       try {
         const resFallback = await executeSOQL(fallbackSoql);
         raw = resFallback.records || [];
+        _lastSalesforceError = null;
       } catch (errFallback) {
         console.warn('[Salesforce] Fallback SOQL notice, executing safe query:', errFallback.message);
         try {
           const resSafe = await executeSOQL(safeSoql);
           raw = resSafe.records || [];
+          _lastSalesforceError = null;
         } catch (errSafe) {
+          _lastSalesforceError = errSafe.message;
           console.error('[Salesforce] Safe SOQL query error:', errSafe.message);
           if (_backendCasesCache.cases.length > 0) return _backendCasesCache;
           return { cases: [], alerts: [] };
@@ -957,7 +999,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     }
 
     const mapRecord = (c) => {
-      const prio = c.Alert_Priority__c || c.Snow_Priority__c || c.Jira_Priority__c || c.Highest_Severity__c || c.Priority || 'P3 - Medium';
+      const prio = c.Highest_Severity__c || c.Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Jira_Priority__c || c.Priority || 'P3 - Medium';
       const cat = c.Category__c || c.Snow_Category__c || c.Type || 'Technical Support';
       const prod = c.Product_Type__c || inferProductLine(
         c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || c.Account?.Name || ''
@@ -1236,6 +1278,7 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
     alerts: liveAlerts,
     siteStats,
     timestamp: new Date().toISOString(),
+    error: _lastSalesforceError || null,
   };
 
   _overviewCache = { data: result, cachedAt: Date.now() };

@@ -1,13 +1,18 @@
 import { Router } from 'express';
 import { CaseRepository } from '../models/Case.js';
-import { fetchOpenCasesForSite, fetchLiveCasesOverview } from '../services/salesforce.service.js';
+import { fetchOpenCasesForSite, fetchLiveCasesOverview, getLastSalesforceError } from '../services/salesforce.service.js';
 
 const router = Router();
 
 router.get('/test-soql', async (req, res) => {
   try {
-    const overview = await fetchLiveCasesOverview();
-    res.json({ success: true, overview });
+    const overview = await fetchLiveCasesOverview(true);
+    const lastErr = getLastSalesforceError();
+    res.json({
+      success: !lastErr,
+      error: lastErr,
+      overview,
+    });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message, stack: err.stack });
   }

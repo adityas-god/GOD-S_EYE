@@ -14,14 +14,15 @@ import sitesRouter from './src/routes/sites.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
 
+import { getSfConfig, getSalesforceToken, getLastSalesforceError } from './src/services/salesforce.service.js';
+
 const app = express();
 const PORT = process.env.PORT || 5000;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:8080';
 
-// Enable CORS for frontend application
+// Enable CORS for frontend application (reflect origin or accept all allowed hosts)
 app.use(
   cors({
-    origin: [CLIENT_ORIGIN, 'http://localhost:8080', 'http://127.0.0.1:8080', 'http://localhost:5173'],
+    origin: true,
     credentials: true,
   })
 );
@@ -50,17 +51,36 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Detailed health check endpoint
-app.get('/api/health', (req, res) => {
+// Detailed health check endpoint with full Salesforce & MongoDB diagnostics
+app.get('/api/health', async (req, res) => {
+  const { instanceUrl, clientId, clientSecret } = getSfConfig();
+  const isSfConfigured = Boolean(clientId && clientSecret && instanceUrl);
+  let liveAuth = null;
+
+  if (req.query.test === 'true' || req.query.test_sf === 'true') {
+    try {
+      await getSalesforceToken();
+      liveAuth = { ok: true, message: 'Salesforce OAuth authentication succeeded' };
+    } catch (err) {
+      liveAuth = { ok: false, error: err.message };
+    }
+  }
+
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     database: {
       connected: isDbConnected(),
       provider: 'MongoDB',
+      uri_configured: Boolean(process.env.MONGODB_URI),
     },
     salesforce: {
-      instance: process.env.SF_INSTANCE_URL || 'configured',
+      configured: isSfConfigured,
+      instance: instanceUrl,
+      clientIdMasked: clientId ? `${clientId.slice(0, 6)}...${clientId.slice(-4)}` : 'MISSING',
+      clientSecretConfigured: Boolean(clientSecret),
+      lastError: getLastSalesforceError(),
+      liveAuth,
     },
   });
 });

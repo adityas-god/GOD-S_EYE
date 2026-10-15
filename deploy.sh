@@ -15,6 +15,13 @@ if ! grep -q "^HOST_PORT=" .env; then
   echo "HOST_PORT=8081" >> .env
 fi
 
+EXISTING_SF_CLIENT_ID=$(grep -E "^SF_CLIENT_ID=" .env 2>/dev/null | cut -d '=' -f2- | tr -d ' "\r\n')
+if [ -z "$EXISTING_SF_CLIENT_ID" ]; then
+  echo "⚠️ WARNING: SF_CLIENT_ID is not set in .env! Live Salesforce cases cannot be retrieved without credentials."
+else
+  echo "✅ SF_CLIENT_ID configured in .env."
+fi
+
 HOST_PORT=$(grep -E "^HOST_PORT=" .env | cut -d '=' -f2 | tr -d ' "\r\n')
 HOST_PORT=${HOST_PORT:-8081}
 echo "📍 Configured Host Port: $HOST_PORT"
@@ -49,6 +56,12 @@ if [ "$HEALTHY" -ne 1 ]; then
   docker compose logs --tail=100
   exit 1
 fi
+
+echo "=========================================================="
+echo "🔍 Live Application & Salesforce Connectivity Diagnostic:"
+echo "=========================================================="
+curl -s "http://127.0.0.1:${HOST_PORT}/api/health?test=true" || true
+echo ""
 
 echo "=========================================================="
 echo "✅ Active Containers:"

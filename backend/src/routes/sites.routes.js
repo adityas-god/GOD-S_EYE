@@ -67,7 +67,7 @@ async function ensureInitialSites(forceSync = false) {
           const id = `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
           const existing = await SiteRepository.findById(id);
           if (!existing) {
-            await SiteRepository.create({
+            await SiteRepository.upsert({
               id,
               name: s.name,
               product_line: s.product_line || null,

@@ -6,6 +6,9 @@ services:
       network: host
     container_name: gods-eye-backend
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - PORT=5000
       - NODE_ENV=production
@@ -22,6 +25,12 @@ services:
       - SF_API_VERSION=${SF_API_VERSION:-v59.0}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
       - OPSGENIE_API_KEY=${OPSGENIE_API_KEY:-}
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - NO_PROXY=${NO_PROXY:-}
+      - no_proxy=${no_proxy:-}
     networks:
       - gods-eye-net
     healthcheck:

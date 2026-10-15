@@ -203,7 +203,10 @@ function SiteDetail() {
       } else if (severityFilter === 'SEV 2 URGENT') {
         matchSeverity = detectSeverity(c) === 'sev2';
       } else if (severityFilter !== 'All') {
-        matchSeverity = priorityStr === severityFilter;
+        const p1 = priorityStr;
+        const p2 = (c.Highest_Severity__c || '').trim();
+        const p3 = (c.Severity__c || '').trim();
+        matchSeverity = p1 === severityFilter || p2 === severityFilter || p3 === severityFilter;
       }
 
       const prodStr = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS').trim();
