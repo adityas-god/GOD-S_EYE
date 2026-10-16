@@ -36,9 +36,12 @@ function resolveSite(sites: Site[] | undefined, idOrName: string): Site | undefi
   if (!sites || !idOrName) return undefined;
   const decoded = decodeURIComponent(idOrName).trim().toLowerCase();
   const slug = decoded.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const localMatch = decoded.match(/^local[- ]site[- ]0*(\d+)$/i) || decoded.match(/^(\d+)$/);
+  const targetPos = localMatch ? parseInt(localMatch[1], 10) : null;
 
   return sites.find(s => {
     if (s.id === idOrName || s.id.toLowerCase() === decoded) return true;
+    if (targetPos !== null && s.position === targetPos) return true;
     const sNameLower = s.name.trim().toLowerCase();
     if (sNameLower === decoded || sNameLower === idOrName.toLowerCase()) return true;
     const sSlug = s.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -300,7 +303,7 @@ function SiteDetail() {
 
         {activeTab !== 'monitoring' ? (
           <SiteRunbookPanel
-            siteId={site.id}
+            siteId={runbook.id || site.id}
             runbook={runbook}
             activeTab={activeTab}
             onBackToMonitoring={() => setActiveTab('monitoring')}

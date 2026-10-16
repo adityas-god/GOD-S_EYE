@@ -16,6 +16,11 @@ let _initialSyncAttempted = false;
 
 // Helper to seed or sync active sites from sites.json or embedded defaultSites
 async function ensureInitialSites(forceSync = false) {
+  if (_initialSyncAttempted && !forceSync) {
+    return;
+  }
+  _initialSyncAttempted = true;
+
   try {
     const candidatePaths = [
       path.resolve(__dirname, '../data/sites.json'),
@@ -44,7 +49,7 @@ async function ensureInitialSites(forceSync = false) {
 
     if (Array.isArray(sites) && sites.length > 0) {
       const count = await SiteRepository.count();
-      // If count is less than the authoritative 77 active sites, or forceSync is true, reset cleanly
+      // If count is less than the authoritative active sites, or forceSync is true, reset cleanly
       if (count < sites.length || forceSync) {
         const toInsert = sites.map((s, idx) => ({
           id: `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
@@ -62,11 +67,14 @@ async function ensureInitialSites(forceSync = false) {
         await SiteRepository.replaceAll(toInsert);
         console.log(`[Sites] Seeded exactly ${toInsert.length} active sites into MongoDB repository.`);
       } else {
-        // Ensure any newly added site (like Owens & Minor) is individually created if missing
+        // Fast batch check: avoid 77 individual round trips to remote database
+        const existingSites = await SiteRepository.findAll();
+        const existingKeys = new Set(existingSites.map(s => (s.name || '').trim().toLowerCase()));
         for (const s of sites) {
-          const id = `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
-          const existing = await SiteRepository.findById(id);
-          if (!existing) {
+          if (!s || !s.name) continue;
+          const key = s.name.trim().toLowerCase();
+          if (!existingKeys.has(key)) {
+            const id = `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
             await SiteRepository.upsert({
               id,
               name: s.name,
@@ -80,6 +88,7 @@ async function ensureInitialSites(forceSync = false) {
               is_down: false,
               source: 'authoritative_snapshot',
             });
+            existingKeys.add(key);
             console.log(`[Sites] Added missing site: ${s.name} (${id})`);
           }
         }

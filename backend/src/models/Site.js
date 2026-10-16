@@ -157,6 +157,62 @@ try {
   // Graceful fallback
 }
 
+export function buildSiteFilter(identifier) {
+  if (!identifier) return { _id: null };
+  const raw = String(identifier).trim();
+  const clean = decodeURIComponent(raw).trim();
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  const orConditions = [
+    { id: raw },
+    { id: clean },
+    { name: new RegExp(`^${escaped}$`, 'i') },
+    { salesforce_site_name: new RegExp(`^${escaped}$`, 'i') },
+    { account_name: new RegExp(`^${escaped}$`, 'i') },
+  ];
+
+  // Match local-site-0051, local site 0051, local-site-51, or numeric 51
+  const localMatch = clean.match(/^local[- ]site[- ]0*(\d+)$/i) || clean.match(/^(\d+)$/);
+  if (localMatch) {
+    const pos = parseInt(localMatch[1], 10);
+    if (!isNaN(pos)) {
+      orConditions.push({ position: pos });
+    }
+  }
+
+  // Match slug: e.g. "kenco-fairlife-phoenix-usa"
+  const slug = clean.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (slug) {
+    orConditions.push({ id: `sf-site-${slug}` });
+    orConditions.push({ id: slug });
+    orConditions.push({ opsgenie_tag: slug });
+  }
+
+  return { $or: orConditions };
+}
+
+function findInMemorySite(identifier) {
+  if (!identifier) return null;
+  const raw = String(identifier).trim();
+  const clean = decodeURIComponent(raw).trim().toLowerCase();
+  const slug = clean.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  let targetPos = null;
+  const localMatch = clean.match(/^local[- ]site[- ]0*(\d+)$/i) || clean.match(/^(\d+)$/);
+  if (localMatch) {
+    targetPos = parseInt(localMatch[1], 10);
+  }
+
+  for (const s of inMemorySites.values()) {
+    if (s.id.toLowerCase() === clean || s.id.toLowerCase() === raw.toLowerCase()) return s;
+    if (s.name.trim().toLowerCase() === clean) return s;
+    if (targetPos !== null && s.position === targetPos) return s;
+    const sSlug = (s.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (sSlug === slug || s.id === `sf-site-${slug}` || (s.opsgenie_tag && s.opsgenie_tag.toLowerCase() === slug)) return s;
+  }
+  return null;
+}
+
 export const SiteRepository = {
   async findAll() {
     let sites = [];
@@ -229,47 +285,16 @@ export const SiteRepository = {
 
   async findById(id) {
     if (!id) return null;
-    const cleanId = String(id).trim();
     if (isDbConnected()) {
-      let doc = await SiteModel.findOne({ id: cleanId }).lean();
-      if (!doc) {
-        // Fallback to name or slug match
-        doc = await SiteModel.findOne({
-          $or: [
-            { name: new RegExp(`^${cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-            { salesforce_site_name: new RegExp(`^${cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-          ],
-        }).lean();
-      }
+      const doc = await SiteModel.findOne(buildSiteFilter(id)).lean();
       return doc ? normalizeRunbook(doc) : null;
     }
-
-    let site = inMemorySites.get(cleanId);
-    if (!site) {
-      const lower = cleanId.toLowerCase();
-      for (const s of inMemorySites.values()) {
-        if (s.id.toLowerCase() === lower || s.name.trim().toLowerCase() === lower) {
-          site = s;
-          break;
-        }
-      }
-    }
-    return site ? normalizeRunbook(site) : null;
+    const mem = findInMemorySite(id);
+    return mem ? normalizeRunbook(mem) : null;
   },
 
   async findByName(name) {
-    if (!name) return null;
-    const clean = String(name).trim();
-    if (isDbConnected()) {
-      const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const doc = await SiteModel.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean();
-      return doc ? normalizeRunbook(doc) : null;
-    }
-    const lower = clean.toLowerCase();
-    for (const site of inMemorySites.values()) {
-      if (site.name.trim().toLowerCase() === lower) return normalizeRunbook(site);
-    }
-    return null;
+    return this.findById(name);
   },
 
   async upsert(siteData) {
@@ -371,30 +396,16 @@ export const SiteRepository = {
   async updateOpenCasesCount(siteIdentifier, count, isDown = false) {
     if (isDbConnected()) {
       await SiteModel.updateOne(
-        {
-          $or: [
-            { id: siteIdentifier },
-            { name: siteIdentifier },
-            { salesforce_account_id: siteIdentifier },
-            { salesforce_site_name: siteIdentifier },
-          ],
-        },
+        buildSiteFilter(siteIdentifier),
         { $set: { open_cases_count: count, is_down: isDown, last_synced_at: new Date() } }
       );
     } else {
-      for (const [id, site] of inMemorySites.entries()) {
-        if (
-          site.id === siteIdentifier ||
-          site.name === siteIdentifier ||
-          site.salesforce_account_id === siteIdentifier ||
-          site.salesforce_site_name === siteIdentifier
-        ) {
-          site.open_cases_count = count;
-          site.is_down = isDown;
-          site.last_synced_at = new Date();
-          inMemorySites.set(id, site);
-          break;
-        }
+      const site = findInMemorySite(siteIdentifier);
+      if (site) {
+        site.open_cases_count = count;
+        site.is_down = isDown;
+        site.last_synced_at = new Date();
+        inMemorySites.set(site.id, site);
       }
     }
   },
@@ -415,7 +426,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { monitoring_links: newLink } },
         { new: true }
       ).lean();
@@ -435,7 +446,7 @@ export const SiteRepository = {
   async updateMonitoringLink(siteId, linkId, linkUpdate) {
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }], 'monitoring_links.id': linkId },
+        { $and: [buildSiteFilter(siteId), { 'monitoring_links.id': linkId }] },
         {
           $set: {
             'monitoring_links.$.title': linkUpdate.title,
@@ -468,7 +479,7 @@ export const SiteRepository = {
   async deleteMonitoringLink(siteId, linkId) {
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $pull: { monitoring_links: { id: linkId } } },
         { new: true }
       ).lean();
@@ -495,7 +506,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $set: { zoom_call: update } },
         { new: true }
       ).lean();
@@ -524,7 +535,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { vm_ips: newVm } },
         { new: true }
       ).lean();
@@ -544,7 +555,7 @@ export const SiteRepository = {
   async updateVmIp(siteId, vmId, vmUpdate) {
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }], 'vm_ips.id': vmId },
+        { $and: [buildSiteFilter(siteId), { 'vm_ips.id': vmId }] },
         {
           $set: {
             'vm_ips.$.title': vmUpdate.title,
@@ -577,7 +588,7 @@ export const SiteRepository = {
   async deleteVmIp(siteId, vmId) {
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $pull: { vm_ips: { id: vmId } } },
         { new: true }
       ).lean();
@@ -603,7 +614,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $set: { slack: update } },
         { new: true }
       ).lean();
@@ -632,7 +643,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { deployments: { $each: [newDep], $position: 0 } } },
         { new: true }
       ).lean();
@@ -663,7 +674,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { handovers: { $each: [newHo], $position: 0 } } },
         { new: true }
       ).lean();
@@ -694,7 +705,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { site_configs: { $each: [newCfg], $position: 0 } } },
         { new: true }
       ).lean();
@@ -729,7 +740,7 @@ export const SiteRepository = {
 
     if (isDbConnected()) {
       const doc = await SiteModel.findOneAndUpdate(
-        { $or: [{ id: siteId }, { name: siteId }] },
+        buildSiteFilter(siteId),
         { $push: { site_configs: { $each: newConfigs, $position: 0 } } },
         { new: true }
       ).lean();
