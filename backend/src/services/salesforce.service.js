@@ -141,7 +141,10 @@ export function isDirTicket(c) {
 export function isImTicket(c) {
   if (!c) return false;
 
-  // 1. Any automated alert / opsgenie alert is an internal IM monitoring alert
+  // 1. Child / linked IM ticket automatically created under a parent ticket
+  if (c.ParentId || c.parent_id) return true;
+
+  // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
   if (isAlertCase(c)) return true;
 
   // 2. ServiceNow Incident ID prefix (IM... or INC...)
@@ -841,7 +844,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
   const fetchPromise = (async () => {
     const primarySoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c',
@@ -851,7 +854,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const fallbackSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
       'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c',
@@ -861,7 +864,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const safeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
@@ -869,7 +872,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const ultraSafeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
       'AccountId, Account_Name__c, Snow_Sitename__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
@@ -924,6 +927,8 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         case_id: c.Id,
         CaseNumber: c.CaseNumber,
         case_number: c.CaseNumber,
+        ParentId: c.ParentId || null,
+        parent_id: c.ParentId || null,
         Subject: c.Subject || 'No Subject',
         subject: c.Subject || 'No Subject',
         Status: c.Status,
@@ -1044,6 +1049,8 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
     case_id: c.Id,
     CaseNumber: c.CaseNumber,
     case_number: c.CaseNumber,
+    ParentId: c.ParentId || null,
+    parent_id: c.ParentId || null,
     Subject: c.Subject || 'No Subject',
     subject: c.Subject || 'No Subject',
     Status: c.Status,

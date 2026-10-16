@@ -30,6 +30,8 @@ export interface SFCase {
   Site_Name_Customer_Input__c?: string | null;
   Impacted_Sites__c?: string | null;
   Is_Site_100_Down__c?: boolean;
+  ParentId?: string | null;
+  parent_id?: string | null;
   product_line?: string | null;
   Account?: { Name: string } | null;
   [key: string]: unknown;
@@ -157,35 +159,38 @@ export function isDirTicket(c: SFCase): boolean {
 export function isImTicket(c: SFCase): boolean {
   if (!c) return false;
 
-  // 1. Any automated alert / opsgenie alert is an internal IM monitoring alert
+  // 1. Child / linked IM ticket automatically created under a parent ticket
+  if (c.ParentId || (c as Record<string, unknown>).parent_id) return true;
+
+  // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
   if (isAlertCase(c)) return true;
 
-  // 2. ServiceNow Incident ID prefix (IM... or INC...)
+  // 3. ServiceNow Incident ID prefix (IM... or INC...)
   const snowId = String(c.Snow_id__c || (c as Record<string, unknown>).snow_id || '').trim().toUpperCase();
   if (snowId.startsWith('IM') || snowId.startsWith('INC')) return true;
 
-  // 3. Explicit Type field
+  // 4. Explicit Type field
   const type = String(c.Type || (c as Record<string, unknown>).type || '').trim().toLowerCase();
   if (
     type === 'im' ||
-    type === 'incident' ||
     type.includes('incident management') ||
     type.includes('internal monitoring') ||
     type.startsWith('im ') ||
-    type.startsWith('im-')
+    type.startsWith('im-') ||
+    type.startsWith('im:')
   ) {
     return true;
   }
 
-  // 4. Category field
-  const cat = String(c.Category__c || c.category || c.Snow_Category__c || '').trim().toLowerCase();
+  // 5. Category field
+  const cat = String(c.Category__c || (c as Record<string, unknown>).category || c.Snow_Category__c || '').trim().toLowerCase();
   if (
     cat === 'im' ||
-    cat === 'incident' ||
     cat.includes('incident management') ||
     cat.includes('internal monitoring') ||
     cat.startsWith('im ') ||
-    cat.startsWith('im-')
+    cat.startsWith('im-') ||
+    cat.startsWith('im:')
   ) {
     return true;
   }
