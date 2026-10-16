@@ -710,6 +710,41 @@ export const SiteRepository = {
     }
     return null;
   },
+
+  // Batch insert site configs (Auto-parsed from multi-line env paste)
+  async addSiteConfigsBatch(siteId, cfgsArray, author = 'Admin', notes = null) {
+    if (!Array.isArray(cfgsArray) || cfgsArray.length === 0) {
+      return this.findById(siteId);
+    }
+
+    const newConfigs = cfgsArray.map(item => ({
+      id: new mongoose.Types.ObjectId().toString(),
+      config_key: item.config_key,
+      config_value: item.config_value,
+      created_at: new Date(),
+      updated_by: item.updated_by || author || 'Admin',
+      metadata: item.metadata || {},
+      notes: item.notes || notes || null,
+    }));
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { site_configs: { $each: newConfigs, $position: 0 } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.site_configs = site.site_configs || [];
+      site.site_configs.unshift(...newConfigs);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
 };
 
 function normalizeRunbook(site) {

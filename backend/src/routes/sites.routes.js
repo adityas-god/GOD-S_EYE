@@ -335,7 +335,17 @@ router.post('/:siteId/handovers', async (req, res) => {
 router.post('/:siteId/configs', async (req, res) => {
   try {
     const { siteId } = req.params;
-    const { config_key, config_value, updated_by, notes, metadata } = req.body;
+    const { config_key, config_value, updated_by, notes, metadata, configs } = req.body;
+
+    // Support batch insertion (e.g., auto-detected .env multi-line paste)
+    if (Array.isArray(configs) && configs.length > 0) {
+      const updatedSite = await SiteRepository.addSiteConfigsBatch(siteId, configs, updated_by, notes);
+      if (!updatedSite) {
+        return res.status(404).json({ success: false, error: 'Site not found' });
+      }
+      return res.json({ success: true, site: updatedSite });
+    }
+
     if (!config_key || config_value === undefined) {
       return res.status(400).json({ success: false, error: 'Config key and value are required' });
     }

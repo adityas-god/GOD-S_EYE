@@ -126,12 +126,6 @@ export function DashboardShell({
               Site monitoring
             </Button>
           )}
-
-          <Button variant="nav" onClick={() => setConnections(true)}>
-            <PlugZap />
-            Connections
-            <span className="connection-dot" />
-          </Button>
         </nav>
 
         {/* 6 OPERATIONAL RUNBOOK FEATURES IN SIDEBAR */}
@@ -271,13 +265,8 @@ export function DashboardShell({
               <span>Salesforce</span>
               <span className="source-dot" />
             </div>
-            <p>Awaiting connection</p>
+            <p>Live Monitoring</p>
           </div>
-          <Button variant="nav" onClick={() => setConnections(true)}>
-            <CircleHelp />
-            Connection details
-            <ArrowUpRight />
-          </Button>
           <div className="sidebar-foot">
             <span className="mini-brand">sitepulse.</span>
             <span>v1.0</span>

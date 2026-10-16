@@ -33,6 +33,7 @@ import {
   apiAddDeployment,
   apiAddHandover,
   apiAddSiteConfig,
+  apiAddSiteConfigsBatch,
 } from '@/lib/runbook';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -99,6 +100,9 @@ export function SiteRunbookPanel({
   const [cfgValue, setCfgValue] = useState('');
   const [cfgAuthor, setCfgAuthor] = useState('');
   const [cfgNotes, setCfgNotes] = useState('');
+  const [cfgPasteMode, setCfgPasteMode] = useState<'single' | 'bulk'>('single');
+  const [cfgBulkRaw, setCfgBulkRaw] = useState('');
+  const [cfgParsedPairs, setCfgParsedPairs] = useState<Array<{ key: string; value: string }>>([]);
 
   const handleCopy = (text: string, id: string) => {
     navigator.clipboard.writeText(text);
@@ -177,11 +181,54 @@ export function SiteRunbookPanel({
     setModalType('handover_add');
   };
 
+  // Auto-detect & parse .env format like Vercel / Render / Docker
+  const parseEnvText = (raw: string): Array<{ key: string; value: string }> => {
+    const lines = raw.split(/\r?\n/);
+    const results: Array<{ key: string; value: string }> = [];
+
+    for (const rawLine of lines) {
+      let line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+
+      // Strip export prefix if present
+      if (line.startsWith('export ')) {
+        line = line.replace(/^export\s+/, '').trim();
+      }
+
+      // Check for KEY=VALUE or KEY: VALUE
+      let sepIdx = line.indexOf('=');
+      if (sepIdx === -1) {
+        sepIdx = line.indexOf(':');
+      }
+
+      if (sepIdx !== -1) {
+        const k = line.substring(0, sepIdx).trim();
+        let v = line.substring(sepIdx + 1).trim();
+
+        // Strip surrounding matching quotes
+        if (
+          (v.startsWith('"') && v.endsWith('"')) ||
+          (v.startsWith("'") && v.endsWith("'"))
+        ) {
+          v = v.substring(1, v.length - 1);
+        }
+
+        if (k) {
+          results.push({ key: k, value: v });
+        }
+      }
+    }
+    return results;
+  };
+
   const openAddConfig = () => {
     setCfgKey('');
     setCfgValue('');
     setCfgAuthor('Admin');
     setCfgNotes('');
+    setCfgPasteMode('single');
+    setCfgBulkRaw('');
+    setCfgParsedPairs([]);
     setModalType('config_add');
   };
 
@@ -350,18 +397,38 @@ export function SiteRunbookPanel({
 
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!cfgKey.trim() || !cfgValue.trim()) return;
     setSaving(true);
     setErrorMsg(null);
     try {
-      const updated = await apiAddSiteConfig(siteId, {
-        config_key: cfgKey.trim(),
-        config_value: cfgValue.trim(),
-        updated_by: cfgAuthor.trim() || 'Admin',
-        notes: cfgNotes.trim() || undefined,
-      });
-      onRefresh(updated);
-      closeModal();
+      if (cfgPasteMode === 'bulk') {
+        const pairs = cfgParsedPairs.length > 0 ? cfgParsedPairs : parseEnvText(cfgBulkRaw);
+        if (pairs.length === 0) {
+          throw new Error('No valid KEY=VALUE environment variables detected.');
+        }
+        const updated = await apiAddSiteConfigsBatch(siteId, {
+          configs: pairs.map(p => ({
+            config_key: p.key,
+            config_value: p.value,
+            notes: cfgNotes.trim() || undefined,
+          })),
+          updated_by: cfgAuthor.trim() || 'Admin',
+          notes: cfgNotes.trim() || undefined,
+        });
+        onRefresh(updated);
+        closeModal();
+      } else {
+        if (!cfgKey.trim() || !cfgValue.trim()) {
+          throw new Error('Config key and value are required');
+        }
+        const updated = await apiAddSiteConfig(siteId, {
+          config_key: cfgKey.trim(),
+          config_value: cfgValue.trim(),
+          updated_by: cfgAuthor.trim() || 'Admin',
+          notes: cfgNotes.trim() || undefined,
+        });
+        onRefresh(updated);
+        closeModal();
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Operation failed');
     } finally {
@@ -1643,57 +1710,213 @@ export function SiteRunbookPanel({
               </form>
             )}
 
-            {/* FORM: CONFIG */}
+            {/* FORM: CONFIG (SINGLE OR BULK ENV AUTO-DETECT) */}
             {modalType === 'config_add' && (
               <form onSubmit={handleSaveConfig} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
-                    Config Key
-                  </label>
-                  <Input
-                    placeholder="e.g. MAX_CONCURRENT_TASKS"
-                    value={cfgKey}
-                    onChange={e => setCfgKey(e.target.value)}
-                    required
-                  />
+                {/* Mode Selector */}
+                <div
+                  style={{
+                    display: 'flex',
+                    background: 'var(--secondary)',
+                    padding: 3,
+                    borderRadius: 6,
+                    border: '1px solid var(--border)',
+                    gap: 4,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setCfgPasteMode('single')}
+                    style={{
+                      flex: 1,
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      border: 'none',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      background: cfgPasteMode === 'single' ? 'var(--card)' : 'transparent',
+                      color: cfgPasteMode === 'single' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                      boxShadow: cfgPasteMode === 'single' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    }}
+                  >
+                    Single Key / Value
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCfgPasteMode('bulk')}
+                    style={{
+                      flex: 1,
+                      padding: '6px 12px',
+                      borderRadius: 4,
+                      border: 'none',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      background: cfgPasteMode === 'bulk' ? 'var(--card)' : 'transparent',
+                      color: cfgPasteMode === 'bulk' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                      boxShadow: cfgPasteMode === 'bulk' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                    }}
+                  >
+                    Paste .env (Auto-detect)
+                  </button>
                 </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
-                    Config Value
-                  </label>
-                  <Input
-                    placeholder="e.g. 50"
-                    value={cfgValue}
-                    onChange={e => setCfgValue(e.target.value)}
-                    required
-                  />
+
+                {cfgPasteMode === 'single' ? (
+                  <>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
+                        Config Key
+                      </label>
+                      <Input
+                        placeholder="e.g. MAX_CONCURRENT_TASKS"
+                        value={cfgKey}
+                        onChange={e => {
+                          const val = e.target.value;
+                          // If user accidentally pastes a full KEY=VALUE or multi-line block into the key field, auto-switch to bulk!
+                          if (val.includes('=') || val.includes('\n')) {
+                            setCfgPasteMode('bulk');
+                            setCfgBulkRaw(val);
+                            setCfgParsedPairs(parseEnvText(val));
+                          } else {
+                            setCfgKey(val);
+                          }
+                        }}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
+                        Config Value
+                      </label>
+                      <Input
+                        placeholder="e.g. 50"
+                        value={cfgValue}
+                        onChange={e => setCfgValue(e.target.value)}
+                        required
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)' }}>
+                          Paste Environment Variables (.env / docker-compose / render / vercel)
+                        </label>
+                        {cfgParsedPairs.length > 0 && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontFamily: 'var(--font-mono)',
+                              background: 'var(--success)',
+                              color: '#ffffff',
+                              padding: '2px 8px',
+                              borderRadius: 4,
+                              fontWeight: 600,
+                            }}
+                          >
+                            ✓ {cfgParsedPairs.length} variables detected
+                          </span>
+                        )}
+                      </div>
+                      <textarea
+                        rows={7}
+                        placeholder={`# Paste your .env file or variables here (like Vercel / Render):
+DB_HOST=10.20.15.42
+MAX_CONCURRENCY=100
+API_SECRET="sk_live_xyz987"
+export CACHE_TTL=3600`}
+                        value={cfgBulkRaw}
+                        onChange={e => {
+                          const text = e.target.value;
+                          setCfgBulkRaw(text);
+                          setCfgParsedPairs(parseEnvText(text));
+                        }}
+                        style={{
+                          width: '100%',
+                          background: 'var(--card)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                          padding: '10px',
+                          color: 'var(--foreground)',
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 11.5,
+                          lineHeight: '1.5',
+                        }}
+                        required
+                      />
+                    </div>
+
+                    {/* Live Parsed Preview Table like Vercel */}
+                    {cfgParsedPairs.length > 0 && (
+                      <div
+                        style={{
+                          maxHeight: 160,
+                          overflowY: 'auto',
+                          borderRadius: 6,
+                          border: '1px solid var(--border)',
+                          background: 'var(--secondary)',
+                        }}
+                      >
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11, textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--muted-foreground)', fontSize: 9, fontFamily: 'var(--font-mono)' }}>
+                              <th style={{ padding: '6px 10px' }}>KEY</th>
+                              <th style={{ padding: '6px 10px' }}>VALUE</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {cfgParsedPairs.map((p, idx) => (
+                              <tr key={idx} style={{ borderBottom: idx < cfgParsedPairs.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                                <td style={{ padding: '5px 10px', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--blue)' }}>
+                                  {p.key}
+                                </td>
+                                <td style={{ padding: '5px 10px', fontFamily: 'var(--font-mono)', color: 'var(--foreground)' }}>
+                                  {p.value}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
+                      Logged By
+                    </label>
+                    <Input
+                      placeholder="e.g. Admin / SRE Lead"
+                      value={cfgAuthor}
+                      onChange={e => setCfgAuthor(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
+                      Notes (Optional)
+                    </label>
+                    <Input
+                      placeholder="e.g. Imported from staging config"
+                      value={cfgNotes}
+                      onChange={e => setCfgNotes(e.target.value)}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
-                    Logged By
-                  </label>
-                  <Input
-                    placeholder="e.g. Admin / SRE Lead"
-                    value={cfgAuthor}
-                    onChange={e => setCfgAuthor(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 500, color: 'var(--muted-foreground)', display: 'block', marginBottom: 6 }}>
-                    Notes (Optional)
-                  </label>
-                  <Input
-                    placeholder="e.g. Scaled for high peak morning workload"
-                    value={cfgNotes}
-                    onChange={e => setCfgNotes(e.target.value)}
-                  />
-                </div>
+
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
                   <Button type="button" variant="outline" onClick={closeModal} disabled={saving}>
                     Cancel
                   </Button>
-                  <Button type="submit" disabled={saving}>
-                    {saving ? 'Saving…' : 'Record Config'}
+                  <Button type="submit" disabled={saving || (cfgPasteMode === 'bulk' && cfgParsedPairs.length === 0)}>
+                    {saving
+                      ? 'Saving…'
+                      : cfgPasteMode === 'bulk'
+                      ? `Save ${cfgParsedPairs.length} Config${cfgParsedPairs.length === 1 ? '' : 's'}`
+                      : 'Record Config'}
                   </Button>
                 </div>
               </form>

@@ -295,10 +295,6 @@ function SiteDetail() {
                 Edit site
               </Button>
             )}
-            <Button variant="outline" onClick={() => setConnections(true)}>
-              <PlugZap />
-              Connections
-            </Button>
           </div>
         </div>
 

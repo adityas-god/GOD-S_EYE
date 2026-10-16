@@ -264,3 +264,21 @@ export async function apiAddSiteConfig(
   if (!json.success) throw new Error(json.error || 'Failed to add config');
   return json.site;
 }
+
+export async function apiAddSiteConfigsBatch(
+  siteId: string,
+  payload: {
+    configs: Array<{ config_key: string; config_value: string; notes?: string }>;
+    updated_by?: string;
+    notes?: string;
+  }
+): Promise<SiteRunbook> {
+  const res = await fetch(`/api/sites/${encodeURIComponent(siteId)}/configs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error || 'Failed to bulk add configs');
+  return json.site;
+}
