@@ -259,7 +259,7 @@ export const KNOWN_SITE_ALIASES = {
   'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
   'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta'],
   'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
   'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris'],
   'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond'],
@@ -545,11 +545,6 @@ export function getImpactPercentage(c) {
 export function detectSeverity(c) {
   if (!c) return 'sev3';
 
-  // Exclude IM, DIR, and automated alert tickets from Sev 1 / Sev 2 counts
-  if (isImTicket(c) || isDirTicket(c) || isAlertCase(c)) {
-    return 'sev3';
-  }
-
   // Rule 1: Site 100% Down is Sev 1
   if (Boolean(c.Is_Site_100_Down__c) || Boolean(c.is_site_down) || getImpactPercentage(c) >= 100) {
     return 'sev1';
@@ -558,12 +553,12 @@ export function detectSeverity(c) {
   // Rule 2: Collect all structured Salesforce severity and priority fields
   const structuredFields = [
     c.Highest_Severity__c,
-    c.Severity__c,
     c.Alert_Priority__c,
     c.Snow_Priority__c,
+    c.Snow_Urgency__c,
     c.Jira_Priority__c,
-    c.Priority,
-    c.priority,
+    c.Jira_Severity__c,
+    c.Automation_Priority__c,
   ]
     .filter(Boolean)
     .map(v => String(v).trim().toUpperCase());
@@ -586,10 +581,9 @@ export function detectSeverity(c) {
   }
 
   // Check Sev 2 Urgent across structured fields
-  // Must explicitly contain 'URGENT' in the severity/priority field itself!
-  // Plain 'Severity 2' or 'Sev 2 High' without 'URGENT' in the field is NOT Sev 2 Urgent.
+  // In GreyOrange Salesforce, 'Severity 2' / 'Sev 2' / 'P2' is Sev 2 Urgent
   for (const s of structuredFields) {
-    const isSev2 =
+    if (
       s.includes('SEV 2') ||
       s.includes('SEV-2') ||
       s.includes('SEVERITY 2') ||
@@ -597,9 +591,11 @@ export function detectSeverity(c) {
       s === 'P2' ||
       s.startsWith('P2 ') ||
       s.startsWith('P2-') ||
-      s.includes('P2 -');
-
-    if (isSev2 && s.includes('URGENT')) {
+      s.includes('P2 -') ||
+      s.includes('2 - URGENT') ||
+      s.includes('2 - HIGH') ||
+      s.includes('URGENT')
+    ) {
       return 'sev2';
     }
   }
@@ -854,38 +850,36 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
   const fetchPromise = (async () => {
     const primarySoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Snow_Priority__c, Jira_Priority__c, Highest_Severity__c,',
-      'Impact_Percentage__c, Type, Category__c, Snow_Category__c, Product_Type__c, Dev_Case_Assignee__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c,',
-      'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, RCA_Approval__c, Default_Ticket_For_Problem__c',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
+      'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
+      'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
     const fallbackSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Snow_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, ClosedDate, Description,',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
+      'Type, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c,',
-      'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, RCA_Approval__c, Default_Ticket_For_Problem__c',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
     const safeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, CreatedDate, LastModifiedDate, Description,',
+      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
     ].join(' ');
 
     const ultraSafeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Type, CreatedDate, LastModifiedDate, Description,',
-      'AccountId, Snow_Sitename__c, Customer_Location__c',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, Description,',
+      'AccountId, Account_Name__c, Snow_Sitename__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
@@ -925,12 +919,12 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     }
 
     const mapRecord = (c) => {
-      const prio = c.Highest_Severity__c || c.Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Jira_Priority__c || c.Priority || 'P3 - Medium';
-      const cat = c.Category__c || c.Snow_Category__c || c.Type || 'Technical Support';
-      const prod = c.Product_Type__c || inferProductLine(
-        c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || c.Account?.Name || ''
+      const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
+      const cat = c.Snow_Category__c || c.Type || 'Technical Support';
+      const prod = inferProductLine(
+        c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
       );
-      const assignee = c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue';
+      const assignee = c.Owner?.Name || 'GreyOrange Queue';
       const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
 
       return {
