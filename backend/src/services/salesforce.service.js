@@ -842,7 +842,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
   const fetchPromise = (async () => {
     const primarySoql = [
       'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
-      'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
+      'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c',
       'FROM Case',
@@ -852,7 +852,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const fallbackSoql = [
       'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
-      'Type, CreatedDate, LastModifiedDate, ClosedDate, Description,',
+      'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c',
       'FROM Case',
@@ -861,7 +861,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const safeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, CreatedDate, LastModifiedDate, Description,',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
@@ -869,7 +869,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const ultraSafeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, Description,',
+      'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, Description,',
       'AccountId, Account_Name__c, Snow_Sitename__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
@@ -912,7 +912,8 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     const mapRecord = (c) => {
       const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
       const cat = c.Snow_Category__c || c.Type || 'Technical Support';
-      const prod = inferProductLine(
+      const rawProd = (c.Product_Type__c || c.Parent_Product_Type__c || '').trim();
+      const prod = rawProd || inferProductLine(
         c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
       );
       const assignee = c.Owner?.Name || 'GreyOrange Queue';
@@ -941,9 +942,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         Category: cat,
         category: cat,
         Category__c: cat,
-        Product_Type__c: prod,
-        product_line: prod,
-        Product_Line: prod,
+        Product_Type__c: rawProd || prod,
+        Parent_Product_Type__c: c.Parent_Product_Type__c || null,
+        product_line: rawProd || prod,
+        Product_Line: rawProd || prod,
         Dev_Case_Assignee__c: assignee,
         Description: desc,
         description: desc,
@@ -1059,7 +1061,8 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
     Category__c: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
     category: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
     Product_Type__c: c.Product_Type__c || c.product_line || 'RMS',
-    product_line: c.Product_Type__c || c.product_line || 'RMS',
+    Parent_Product_Type__c: c.Parent_Product_Type__c || null,
+    product_line: c.product_line || c.Product_Type__c || 'RMS',
     Dev_Case_Assignee__c: c.Dev_Case_Assignee__c || 'GreyOrange Queue',
     Description: c.Description || null,
     description: c.Description || null,

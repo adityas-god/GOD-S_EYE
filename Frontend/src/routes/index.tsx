@@ -32,7 +32,7 @@ import { DashboardShell } from '@/components/dashboard-shell';
 import { ConnectionsDialog, DeleteSiteDialog, SiteEditor, SignInDialog } from '@/components/dashboard-dialogs';
 import { useAuth } from '@/components/auth-context';
 import { sitesQueryOptions, type Site } from '@/lib/sites';
-import { sfSyncOrgSites, sfFetchLiveCasesOverview, type SFCase, isAlertCase } from '@/integrations/salesforce/client';
+import { sfSyncOrgSites, sfFetchLiveCasesOverview, type SFCase, isAlertCase, detectSeverity } from '@/integrations/salesforce/client';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute('/')({
@@ -787,7 +787,7 @@ function Index() {
                     ? 'SEV 2 URGENT'
                     : c.Highest_Severity__c || c.Priority || 'Severity 3';
 
-                  const productDisplay = String(c.Product_Type__c || c.product_line || 'RMS');
+                  const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
                   const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
                   const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
                   const siteDisplay = String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
@@ -1154,7 +1154,7 @@ function Index() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Product Type</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Product_Type__c || selectedCase.product_line || 'RMS'}
+                  {selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || 'RMS'}
                 </p>
               </div>
               <div>

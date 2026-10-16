@@ -148,7 +148,7 @@ function SiteDetail() {
   const allAlerts: SFCase[] = sfData?.alerts ?? [];
   const activeItems: SFCase[] = activeBucket === 'cases' ? allCases : allAlerts;
 
-  const siteProductType = allCases.find(c => c.Product_Type__c)?.Product_Type__c || site?.product_line;
+  const siteProductType = site?.product_line || 'RMS';
 
   const uniqueStatuses = useMemo(() => {
     const set = new Set(activeItems.map(c => c.Status).filter(Boolean));
@@ -167,7 +167,7 @@ function SiteDetail() {
   const uniqueProducts = useMemo(() => {
     const set = new Set<string>();
     for (const c of activeItems) {
-      const prod = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS').trim();
+      const prod = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType).trim();
       if (prod) set.add(prod);
     }
     return Array.from(set).sort();
@@ -209,7 +209,7 @@ function SiteDetail() {
         matchSeverity = p1 === sfLower || p2 === sfLower || p3 === sfLower;
       }
 
-      const prodStr = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS').trim();
+      const prodStr = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType).trim();
       const matchProduct = productFilter === 'All' || prodStr.toLowerCase() === productFilter.toLowerCase();
 
       const catStr = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
@@ -835,7 +835,7 @@ function SiteDetail() {
                     ? 'SEV 2 URGENT'
                     : c.Highest_Severity__c || c.Priority || 'Severity 3';
 
-                  const productDisplay = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS');
+                  const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType);
                   const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
                   const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
 
@@ -1017,7 +1017,7 @@ function SiteDetail() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Product Type</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Product_Type__c || selectedCase.product_line || siteProductType || 'RMS'}
+                  {selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || siteProductType}
                 </p>
               </div>
               <div>
