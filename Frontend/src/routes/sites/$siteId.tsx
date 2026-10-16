@@ -198,9 +198,9 @@ function SiteDetail() {
 
       let matchSeverity = true;
       if (severityFilter === 'SEV 1 URGENT') {
-        matchSeverity = detectSeverity(c) === 'sev1';
+        matchSeverity = !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1';
       } else if (severityFilter === 'SEV 2 URGENT') {
-        matchSeverity = detectSeverity(c) === 'sev2';
+        matchSeverity = !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2';
       } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
@@ -280,16 +280,16 @@ function SiteDetail() {
         {/* Summary Metric Ribbon */}
         <div className="detail-summary">
           <div>
-            <Radio />
-            <span>Opsgenie alerts</span>
-            <strong>—</strong>
-          </div>
-          <div>
             <Cloud />
             <span>Salesforce cases</span>
             <strong style={{ color: allCases.length > 0 ? 'var(--soft-orange)' : 'var(--foreground)' }}>
               {sfLoading ? 'Loading…' : `${allCases.length} open`}
             </strong>
+          </div>
+          <div>
+            <Radio />
+            <span>Opsgenie alerts</span>
+            <strong>—</strong>
           </div>
           <div>
             <Shield />
@@ -314,73 +314,7 @@ function SiteDetail() {
           </div>
         </div>
 
-        {/* Panel 1: Opsgenie Alert Pool */}
-        <section className="data-panel">
-          <div className="data-panel-heading">
-            <div className="provider-symbol">
-              <Radio />
-            </div>
-            <div>
-              <span className="eyebrow">ALERT MANAGEMENT</span>
-              <h2>Opsgenie alert pool</h2>
-            </div>
-            <span className="pill">Not connected</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Refresh Opsgenie alerts"
-              title="Refresh Opsgenie alerts"
-              onClick={() => setConnections(true)}
-            >
-              <RefreshCw />
-            </Button>
-          </div>
-          <div className="data-panel-toolbar">
-            <div className="panel-search">
-              <Search />
-              <Input placeholder="Search alerts…" aria-label="Search alerts" disabled />
-            </div>
-            <span>All priorities</span>
-            <span>All statuses</span>
-          </div>
-          <div className="panel-table-head">
-            <span>ALERT</span>
-            <span>PRIORITY</span>
-            <span>STATUS</span>
-            <span>CREATED</span>
-          </div>
-          <div className="panel-scroll" tabIndex={0} aria-label="Opsgenie alerts scrollable panel">
-            <div className="source-empty">
-              <div className="empty-source-art">
-                <Radio />
-                <span />
-                <span />
-              </div>
-              <h3>Your alerts will appear here</h3>
-              <p>
-                {!user
-                  ? 'Sign in and connect Opsgenie to view this site’s alert pool.'
-                  : 'An Opsgenie API key and site tag are needed to load alerts.'}
-              </p>
-              <Button variant="outline" onClick={() => (!user ? setLogin(true) : setConnections(true))}>
-                {!user ? 'Sign in' : 'View connection details'}
-                <ArrowUpRight />
-              </Button>
-            </div>
-          </div>
-          <div className="panel-footer">
-            <span>0 alerts loaded</span>
-            <span>Source: Opsgenie</span>
-          </div>
-        </section>
-
-        {/* Jump link to Salesforce */}
-        <a className="next-panel" href="#salesforce">
-          Salesforce site data
-          <ArrowDown />
-        </a>
-
-        {/* Panel 2: Salesforce Live Cases / Alerts Panel */}
+        {/* Panel 1: Salesforce Live Cases / Alerts Panel */}
         <section className="data-panel" id="salesforce">
           <div className="data-panel-heading">
             <div className="provider-symbol salesforce-symbol" style={{ background: activeBucket === 'alerts' ? 'oklch(0.63 0.24 29 / 0.15)' : undefined }}>
@@ -657,10 +591,10 @@ function SiteDetail() {
                   </option>
                 )}
                 <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                  ● SEV 1 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev1').length})
+                  ● SEV 1 URGENT ({activeItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length})
                 </option>
                 <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                  ● SEV 2 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev2').length})
+                  ● SEV 2 URGENT ({activeItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length})
                 </option>
                 {uniqueSeverities
                   .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
@@ -979,6 +913,72 @@ function SiteDetail() {
               {filteredCases.length} of {activeItems.length} {activeBucket === 'cases' ? 'open cases' : 'alerts (opened + closed today)'} displayed
             </span>
             <span>Source: Salesforce Org (Live)</span>
+          </div>
+        </section>
+
+        {/* Jump link to Opsgenie */}
+        <a className="next-panel" href="#opsgenie">
+          Opsgenie alert pool
+          <ArrowDown />
+        </a>
+
+        {/* Panel 2: Opsgenie Alert Pool */}
+        <section className="data-panel" id="opsgenie">
+          <div className="data-panel-heading">
+            <div className="provider-symbol">
+              <Radio />
+            </div>
+            <div>
+              <span className="eyebrow">ALERT MANAGEMENT</span>
+              <h2>Opsgenie alert pool</h2>
+            </div>
+            <span className="pill">Not connected</span>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh Opsgenie alerts"
+              title="Refresh Opsgenie alerts"
+              onClick={() => setConnections(true)}
+            >
+              <RefreshCw />
+            </Button>
+          </div>
+          <div className="data-panel-toolbar">
+            <div className="panel-search">
+              <Search />
+              <Input placeholder="Search alerts…" aria-label="Search alerts" disabled />
+            </div>
+            <span>All priorities</span>
+            <span>All statuses</span>
+          </div>
+          <div className="panel-table-head">
+            <span>ALERT</span>
+            <span>PRIORITY</span>
+            <span>STATUS</span>
+            <span>CREATED</span>
+          </div>
+          <div className="panel-scroll" tabIndex={0} aria-label="Opsgenie alerts scrollable panel">
+            <div className="source-empty">
+              <div className="empty-source-art">
+                <Radio />
+                <span />
+                <span />
+              </div>
+              <h3>Your alerts will appear here</h3>
+              <p>
+                {!user
+                  ? 'Sign in and connect Opsgenie to view this site’s alert pool.'
+                  : 'An Opsgenie API key and site tag are needed to load alerts.'}
+              </p>
+              <Button variant="outline" onClick={() => (!user ? setLogin(true) : setConnections(true))}>
+                {!user ? 'Sign in' : 'View connection details'}
+                <ArrowUpRight />
+              </Button>
+            </div>
+          </div>
+          <div className="panel-footer">
+            <span>0 alerts loaded</span>
+            <span>Source: Opsgenie</span>
           </div>
         </section>
       </div>

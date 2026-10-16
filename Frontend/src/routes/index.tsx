@@ -32,7 +32,7 @@ import { DashboardShell } from '@/components/dashboard-shell';
 import { ConnectionsDialog, DeleteSiteDialog, SiteEditor, SignInDialog } from '@/components/dashboard-dialogs';
 import { useAuth } from '@/components/auth-context';
 import { sitesQueryOptions, type Site } from '@/lib/sites';
-import { sfSyncOrgSites, sfFetchLiveCasesOverview, type SFCase, isAlertCase, detectSeverity } from '@/integrations/salesforce/client';
+import { sfSyncOrgSites, sfFetchLiveCasesOverview, type SFCase, isAlertCase, detectSeverity, isImTicket, isDirTicket } from '@/integrations/salesforce/client';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute('/')({
@@ -294,10 +294,10 @@ function Index() {
 
     const filtered = candidateTickets.filter(c => {
       if (severityFilter === 'SEV 1 URGENT') {
-        return detectSeverity(c) === 'sev1';
+        return !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1';
       }
       if (severityFilter === 'SEV 2 URGENT') {
-        return detectSeverity(c) === 'sev2';
+        return !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2';
       }
       if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
@@ -595,20 +595,6 @@ function Index() {
           </div>
           <div className="metric">
             <span className="metric-label">
-              <Radio />
-              Opsgenie alerts
-            </span>
-            <div>
-              <strong className="metric-dash">—</strong>
-              <span>awaiting connection</span>
-            </div>
-            <div className="metric-foot">
-              <span className="source-dot" />
-              Source not connected
-            </div>
-          </div>
-          <div className="metric">
-            <span className="metric-label">
               <Cloud />
               Live Salesforce cases
             </span>
@@ -621,6 +607,20 @@ function Index() {
             <div className="metric-foot">
               <span className="source-dot" style={{ background: '#22c55e' }} />
               {activeSites.length} sites with open tickets
+            </div>
+          </div>
+          <div className="metric">
+            <span className="metric-label">
+              <Radio />
+              Opsgenie alerts
+            </span>
+            <div>
+              <strong className="metric-dash">—</strong>
+              <span>awaiting connection</span>
+            </div>
+            <div className="metric-foot">
+              <span className="source-dot" />
+              Source not connected
             </div>
           </div>
         </div>
