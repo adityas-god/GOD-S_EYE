@@ -59,7 +59,16 @@ jobs:
           git fetch origin main
           git reset --hard origin/main
 
-          # 3. Ensure .env exists with HOST_PORT defined
+          # 3. Ensure .env exists with credentials
+          # Check central master backup at /etc/gods_eye.env first
+          if [ -f "/etc/gods_eye.env" ]; then
+            EXISTING_SF_CLIENT_ID=$(grep -E "^SF_CLIENT_ID=" .env 2>/dev/null | cut -d '=' -f2- | tr -d ' "\r\n')
+            if [ ! -f .env ] || [ -z "$EXISTING_SF_CLIENT_ID" ]; then
+              echo "Loading credentials from /etc/gods_eye.env..."
+              cp /etc/gods_eye.env .env
+            fi
+          fi
+
           # If .env does not exist in $DEPLOY_DIR, check other known paths before falling back to .env.example
           if [ ! -f .env ]; then
             for candidate in "/home/aditya_s_ctr_greyorange_com/$PROJECT_NAME/.env" "$HOME/$PROJECT_NAME/.env" "/GOD-S_EYE/.env"; do
@@ -108,19 +117,25 @@ jobs:
             echo "✅ SF_CLIENT_SECRET is configured."
           fi
 
+          # Unset empty shell environment variables so they do NOT mask variables in .env during docker compose
+          [ -z "$SF_CLIENT_ID" ] && unset SF_CLIENT_ID
+          [ -z "$SF_CLIENT_SECRET" ] && unset SF_CLIENT_SECRET
+          [ -z "$SF_INSTANCE_URL" ] && unset SF_INSTANCE_URL
+          [ -z "$MONGODB_URI" ] && unset MONGODB_URI
+
           HOST_PORT=$(grep -E "^HOST_PORT=" .env | cut -d '=' -f2 | tr -d ' "\r\n')
           HOST_PORT=${HOST_PORT:-8081}
           echo "Host port configured: $HOST_PORT"
 
           # 4. Clean shutdown and rebuild to completely replace the previous website
           echo "Stopping previous containers..."
-          docker compose down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true
+          docker compose --env-file .env down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true
 
           echo "Building new Docker images using host network..."
-          docker compose build --network host || docker compose build || docker-compose build
+          docker compose --env-file .env build --network host || docker compose build || docker-compose build
 
           echo "Starting new Docker stack..."
-          docker compose up -d --remove-orphans || docker-compose up -d
+          docker compose --env-file .env up -d --remove-orphans || docker-compose up -d
 
           # 5. Verify service health via loop for up to 60s
           echo "Verifying health on http://127.0.0.1:${HOST_PORT}/health..."
