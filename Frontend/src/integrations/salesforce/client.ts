@@ -535,63 +535,46 @@ export function getImpactPercentage(c: SFCase): number {
 export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   if (!c) return 'sev3';
 
-  // Exclude IM, DIR, and automated alert tickets from Sev 1 / Sev 2 counts
-  if (isImTicket(c) || isDirTicket(c) || isAlertCase(c)) {
+  // Exclude automated alert tickets and DIR documentation tickets from Sev 1 / Sev 2 counts
+  if (isDirTicket(c) || isAlertCase(c)) {
     return 'sev3';
   }
 
   const raw = c as Record<string, unknown>;
+  const impact = getImpactPercentage(c);
 
-  // Rule 1: Site 100% Down is Sev 1
-  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || getImpactPercentage(c) >= 100) {
+  // Rule 1: 100% Impact or Site 100% Down or explicit Severity 1 is Sev 1
+  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || impact >= 100) {
     return 'sev1';
   }
 
-  // Rule 2: Collect all structured Salesforce severity and priority fields
+  const highestSev = String(raw.Highest_Severity__c || '').trim().toUpperCase();
+  if (
+    highestSev === 'SEVERITY 1' ||
+    highestSev === 'SEV 1' ||
+    highestSev === 'SEV-1' ||
+    highestSev === 'P1' ||
+    highestSev.includes('1 - CRITICAL')
+  ) {
+    return 'sev1';
+  }
+
+  // Rule 2: 50% or more (and below 100%) is Sev 2 Urgent
+  // Requirement: "50 or more is sev 2 urgent and 100 means sev 1 below 100 and greaterthan equal to 50 means sev 2 urgent"
+  if (impact >= 50 && impact < 100) {
+    return 'sev2';
+  }
+
+  // Also support explicit 'URGENT' tagging on Severity 2
   const structuredFields = [
     raw.Highest_Severity__c,
-    raw.Severity__c,
     raw.Alert_Priority__c,
-    raw.Snow_Priority__c,
-    raw.Jira_Priority__c,
-    raw.Priority,
-    raw.priority,
   ]
     .filter(Boolean)
     .map(v => String(v).trim().toUpperCase());
 
-  // Check Sev 1 across structured fields
   for (const s of structuredFields) {
-    if (
-      s.includes('SEV 1') ||
-      s.includes('SEV-1') ||
-      s.includes('SEVERITY 1') ||
-      s.includes('SEVERITY-1') ||
-      s === 'P1' ||
-      s.startsWith('P1 ') ||
-      s.startsWith('P1-') ||
-      s.includes('P1 -') ||
-      s.includes('1 - CRITICAL')
-    ) {
-      return 'sev1';
-    }
-  }
-
-  // Check Sev 2 Urgent across structured fields
-  // Must explicitly contain 'URGENT' in the severity/priority field itself!
-  // Plain 'Severity 2' or 'Sev 2 High' without 'URGENT' in the field is NOT Sev 2 Urgent.
-  for (const s of structuredFields) {
-    const isSev2 =
-      s.includes('SEV 2') ||
-      s.includes('SEV-2') ||
-      s.includes('SEVERITY 2') ||
-      s.includes('SEVERITY-2') ||
-      s === 'P2' ||
-      s.startsWith('P2 ') ||
-      s.startsWith('P2-') ||
-      s.includes('P2 -');
-
-    if (isSev2 && s.includes('URGENT')) {
+    if ((s.includes('SEV 2') || s.includes('SEVERITY 2') || s.includes('P2')) && s.includes('URGENT')) {
       return 'sev2';
     }
   }

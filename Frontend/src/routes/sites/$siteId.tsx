@@ -158,7 +158,7 @@ function SiteDetail() {
   const uniqueSeverities = useMemo(() => {
     const set = new Set<string>();
     for (const c of activeItems) {
-      const p = (c.Priority || 'P3 - Medium').trim();
+      const p = (c.Highest_Severity__c || c.Priority || '').trim();
       if (p) set.add(p);
     }
     return Array.from(set).sort();
@@ -196,17 +196,17 @@ function SiteDetail() {
 
       const matchStatus = statusFilter === 'All' || c.Status === statusFilter;
 
-      const priorityStr = (c.Priority || 'P3 - Medium').trim();
       let matchSeverity = true;
       if (severityFilter === 'SEV 1 URGENT') {
         matchSeverity = detectSeverity(c) === 'sev1';
       } else if (severityFilter === 'SEV 2 URGENT') {
         matchSeverity = detectSeverity(c) === 'sev2';
       } else if (severityFilter !== 'All') {
-        const p1 = priorityStr;
-        const p2 = (c.Highest_Severity__c || '').trim();
-        const p3 = (c.Severity__c || '').trim();
-        matchSeverity = p1 === severityFilter || p2 === severityFilter || p3 === severityFilter;
+        const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
+        const p2 = (c.Priority || '').trim().toLowerCase();
+        const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
+        const sfLower = severityFilter.toLowerCase();
+        matchSeverity = p1 === sfLower || p2 === sfLower || p3 === sfLower;
       }
 
       const prodStr = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS').trim();
@@ -657,16 +657,16 @@ function SiteDetail() {
                   </option>
                 )}
                 <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                  ● SEV 1 URGENT
+                  ● SEV 1 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev1').length})
                 </option>
                 <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                  ● SEV 2 URGENT
+                  ● SEV 2 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev2').length})
                 </option>
                 {uniqueSeverities
                   .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
                   .map(sev => (
                     <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
-                      {sev}
+                      {sev} ({activeItems.filter(c => (c.Highest_Severity__c === sev || c.Priority === sev)).length})
                     </option>
                   ))}
               </select>
@@ -819,15 +819,21 @@ function SiteDetail() {
                     ? 'status-investigating'
                     : 'status-other';
 
-                  const priorityStr = String(c.Priority || 'P3').toUpperCase();
-                  const priorityClass = priorityStr.includes('CRITICAL') || priorityStr.includes('P1')
+                  const sevType = detectSeverity(c);
+                  const isSev1Urgent = sevType === 'sev1';
+                  const isSev2Urgent = sevType === 'sev2';
+
+                  const priorityClass = isSev1Urgent
                     ? 'p-p1'
-                    : priorityStr.includes('HIGH') || priorityStr.includes('P2')
+                    : isSev2Urgent
                     ? 'p-p2'
-                    : priorityStr.includes('LOW') || priorityStr.includes('P4')
-                    ? 'p-p4'
                     : 'p-p3';
-                  const priorityDisplay = c.Priority || 'P3 - Medium';
+
+                  const priorityDisplay = isSev1Urgent
+                    ? 'SEV 1 URGENT'
+                    : isSev2Urgent
+                    ? 'SEV 2 URGENT'
+                    : c.Highest_Severity__c || c.Priority || 'Severity 3';
 
                   const productDisplay = String(c.Product_Type__c || c.product_line || siteProductType || 'RMS');
                   const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
@@ -854,9 +860,14 @@ function SiteDetail() {
                             {c.CaseNumber}
                             <ExternalLink style={{ width: 10, height: 10 }} />
                           </a>
-                          {isDown && (
-                            <span className="case-down-badge">
-                              Sev 1 Urgent
+                          {isSev1Urgent && (
+                            <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
+                              SEV 1 URGENT
+                            </span>
+                          )}
+                          {isSev2Urgent && (
+                            <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
+                              SEV 2 URGENT
                             </span>
                           )}
                         </div>
