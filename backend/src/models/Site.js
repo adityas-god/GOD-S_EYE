@@ -21,7 +21,75 @@ const siteSchema = new mongoose.Schema(
     open_cases_count: { type: Number, default: 0 },
     is_down: { type: Boolean, default: false },
     source: { type: String, default: 'salesforce' },
-    last_synced_at: { type: Date, default: Date.now },
+    // 1️⃣ MONITORING LINKS (Table format, editable)
+    monitoring_links: [
+      {
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        title: { type: String, required: true },
+        url: { type: String, required: true },
+        category: { type: String, default: 'General' },
+        updated_at: { type: Date, default: Date.now },
+      },
+    ],
+    // 2️⃣ ZOOM CALL (Live bridge or "No call in progress")
+    zoom_call: {
+      url: { type: String, default: null },
+      topic: { type: String, default: null },
+      is_active: { type: Boolean, default: false },
+      last_started_at: { type: Date, default: null },
+    },
+    // 3️⃣ VM IP LIST (Table format, editable)
+    vm_ips: [
+      {
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        title: { type: String, required: true },
+        ip_address: { type: String, required: true },
+        role: { type: String, default: 'Node' },
+        ssh_command: { type: String, default: null },
+        notes: { type: String, default: null },
+      },
+    ],
+    // 4️⃣ SLACK CHANNEL (Direct deep-link)
+    slack: {
+      channel_name: { type: String, default: null },
+      channel_url: { type: String, default: null },
+      is_configured: { type: Boolean, default: false },
+    },
+    // 5️⃣ SITE HANDOVERS & RECENT DEPLOYMENTS
+    deployments: [
+      {
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        version: { type: String, required: true },
+        deployed_at: { type: Date, default: Date.now },
+        deployed_by: { type: String, default: 'DevOps' },
+        status: { type: String, default: 'Success' },
+        notes: { type: String, default: null },
+      },
+    ],
+    handovers: [
+      {
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        created_at: { type: Date, default: Date.now },
+        author: { type: String, default: 'Shift Lead' },
+        shift: { type: String, default: 'Morning' },
+        commands_used: { type: String, default: '' },
+        what_is_working: { type: String, default: '' },
+        open_questions: { type: String, default: '' },
+        cautions: { type: String, default: '' },
+      },
+    ],
+    // 6️⃣ SITE CONFIGS (Timestamped History Log)
+    site_configs: [
+      {
+        id: { type: String, default: () => new mongoose.Types.ObjectId().toString() },
+        config_key: { type: String, required: true },
+        config_value: { type: String, required: true },
+        created_at: { type: Date, default: Date.now },
+        updated_by: { type: String, default: 'Admin' },
+        metadata: { type: mongoose.Schema.Types.Mixed, default: {} },
+        notes: { type: String, default: null },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -160,21 +228,46 @@ export const SiteRepository = {
   },
 
   async findById(id) {
+    if (!id) return null;
+    const cleanId = String(id).trim();
     if (isDbConnected()) {
-      return SiteModel.findOne({ id }).lean();
+      let doc = await SiteModel.findOne({ id: cleanId }).lean();
+      if (!doc) {
+        // Fallback to name or slug match
+        doc = await SiteModel.findOne({
+          $or: [
+            { name: new RegExp(`^${cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+            { salesforce_site_name: new RegExp(`^${cleanId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+          ],
+        }).lean();
+      }
+      return doc ? normalizeRunbook(doc) : null;
     }
-    return inMemorySites.get(id) || null;
+
+    let site = inMemorySites.get(cleanId);
+    if (!site) {
+      const lower = cleanId.toLowerCase();
+      for (const s of inMemorySites.values()) {
+        if (s.id.toLowerCase() === lower || s.name.trim().toLowerCase() === lower) {
+          site = s;
+          break;
+        }
+      }
+    }
+    return site ? normalizeRunbook(site) : null;
   },
 
   async findByName(name) {
-    const clean = String(name || '').trim();
+    if (!name) return null;
+    const clean = String(name).trim();
     if (isDbConnected()) {
       const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return SiteModel.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean();
+      const doc = await SiteModel.findOne({ name: new RegExp(`^${escaped}$`, 'i') }).lean();
+      return doc ? normalizeRunbook(doc) : null;
     }
     const lower = clean.toLowerCase();
     for (const site of inMemorySites.values()) {
-      if (site.name.trim().toLowerCase() === lower) return site;
+      if (site.name.trim().toLowerCase() === lower) return normalizeRunbook(site);
     }
     return null;
   },
@@ -185,7 +278,7 @@ export const SiteRepository = {
     const escapedName = cleanName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     if (isDbConnected()) {
-      // Check if site already exists by ID or by case-insensitive name
+      // Find existing by ID or name
       const existing = await SiteModel.findOne({
         $or: [
           { id: siteData.id },
@@ -194,18 +287,33 @@ export const SiteRepository = {
       });
 
       if (existing) {
-        Object.assign(existing, siteData, {
-          name: cleanName,
-          last_synced_at: new Date(),
-        });
-        return existing.save();
+        // Non-destructive update: ONLY update base metadata, NEVER wipe runbook arrays!
+        existing.name = cleanName;
+        if (siteData.product_line !== undefined) existing.product_line = siteData.product_line;
+        if (siteData.salesforce_account_id !== undefined) existing.salesforce_account_id = siteData.salesforce_account_id;
+        if (siteData.salesforce_site_name !== undefined) existing.salesforce_site_name = siteData.salesforce_site_name;
+        if (siteData.account_name !== undefined) existing.account_name = siteData.account_name;
+        if (siteData.opsgenie_tag !== undefined) existing.opsgenie_tag = siteData.opsgenie_tag;
+        if (siteData.position !== undefined) existing.position = siteData.position;
+        if (siteData.location !== undefined) existing.location = siteData.location;
+        existing.last_synced_at = new Date();
+        const saved = await existing.save();
+        return normalizeRunbook(saved.toObject ? saved.toObject() : saved);
       }
 
-      return SiteModel.create({
+      const created = await SiteModel.create({
         ...siteData,
         name: cleanName,
+        monitoring_links: siteData.monitoring_links || [],
+        zoom_call: siteData.zoom_call || { url: null, topic: null, is_active: false, last_started_at: null },
+        vm_ips: siteData.vm_ips || [],
+        slack: siteData.slack || { channel_name: null, channel_url: null, is_configured: false },
+        deployments: siteData.deployments || [],
+        handovers: siteData.handovers || [],
+        site_configs: siteData.site_configs || [],
         last_synced_at: new Date(),
       });
+      return normalizeRunbook(created.toObject ? created.toObject() : created);
     }
 
     const key = cleanName.toLowerCase();
@@ -217,9 +325,23 @@ export const SiteRepository = {
       }
     }
     const existing = inMemorySites.get(targetId) || {};
-    const updated = { ...existing, ...siteData, name: cleanName, id: targetId, last_synced_at: new Date() };
+    const updated = {
+      ...existing,
+      ...siteData,
+      name: cleanName,
+      id: targetId,
+      // Preserve existing runbooks in memory
+      monitoring_links: existing.monitoring_links || siteData.monitoring_links || [],
+      zoom_call: existing.zoom_call || siteData.zoom_call || { url: null, topic: null, is_active: false, last_started_at: null },
+      vm_ips: existing.vm_ips || siteData.vm_ips || [],
+      slack: existing.slack || siteData.slack || { channel_name: null, channel_url: null, is_configured: false },
+      deployments: existing.deployments || siteData.deployments || [],
+      handovers: existing.handovers || siteData.handovers || [],
+      site_configs: existing.site_configs || siteData.site_configs || [],
+      last_synced_at: new Date(),
+    };
     inMemorySites.set(targetId, updated);
-    return updated;
+    return normalizeRunbook(updated);
   },
 
   async bulkUpsert(sitesList) {
@@ -231,29 +353,12 @@ export const SiteRepository = {
     return results;
   },
 
+  // Non-destructive replaceAll: Seeds base sites without dropping user runbook data
   async replaceAll(sitesList) {
-    inMemorySites.clear();
     for (const s of sitesList) {
-      inMemorySites.set(s.id, s);
+      await this.upsert(s);
     }
-
-    if (isDbConnected()) {
-      try {
-        await SiteModel.deleteMany({});
-        if (sitesList && sitesList.length > 0) {
-          await SiteModel.insertMany(sitesList, { ordered: false });
-        }
-      } catch (err) {
-        console.warn(`[SiteRepository] replaceAll notice: ${err.message}. Ensuring all sites via upsert.`);
-        for (const s of sitesList) {
-          try {
-            await this.upsert(s);
-          } catch {}
-        }
-      }
-      return SiteModel.find().sort({ position: 1, name: 1 }).lean();
-    }
-    return sitesList;
+    return this.findAll();
   },
 
   async count() {
@@ -293,4 +398,330 @@ export const SiteRepository = {
       }
     }
   },
+
+  // ==========================================
+  // OPERATIONAL RUNBOOK CRUD METHODS
+  // ==========================================
+
+  // 1️⃣ MONITORING LINKS
+  async addMonitoringLink(siteId, link) {
+    const newLink = {
+      id: new mongoose.Types.ObjectId().toString(),
+      title: link.title,
+      url: link.url,
+      category: link.category || 'General',
+      updated_at: new Date(),
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { monitoring_links: newLink } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.monitoring_links = site.monitoring_links || [];
+      site.monitoring_links.push(newLink);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  async updateMonitoringLink(siteId, linkId, linkUpdate) {
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }], 'monitoring_links.id': linkId },
+        {
+          $set: {
+            'monitoring_links.$.title': linkUpdate.title,
+            'monitoring_links.$.url': linkUpdate.url,
+            'monitoring_links.$.category': linkUpdate.category || 'General',
+            'monitoring_links.$.updated_at': new Date(),
+          },
+        },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site && site.monitoring_links) {
+      const idx = site.monitoring_links.findIndex(l => l.id === linkId);
+      if (idx !== -1) {
+        site.monitoring_links[idx] = {
+          ...site.monitoring_links[idx],
+          ...linkUpdate,
+          updated_at: new Date(),
+        };
+        inMemorySites.set(site.id, site);
+        return normalizeRunbook(site);
+      }
+    }
+    return null;
+  },
+
+  async deleteMonitoringLink(siteId, linkId) {
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $pull: { monitoring_links: { id: linkId } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site && site.monitoring_links) {
+      site.monitoring_links = site.monitoring_links.filter(l => l.id !== linkId);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  // 2️⃣ ZOOM CALL
+  async updateZoomCall(siteId, zoomData) {
+    const update = {
+      url: zoomData.url || null,
+      topic: zoomData.topic || null,
+      is_active: Boolean(zoomData.is_active),
+      last_started_at: zoomData.is_active ? new Date() : (zoomData.last_started_at || null),
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $set: { zoom_call: update } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.zoom_call = update;
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  // 3️⃣ VM IP LIST
+  async addVmIp(siteId, vm) {
+    const newVm = {
+      id: new mongoose.Types.ObjectId().toString(),
+      title: vm.title,
+      ip_address: vm.ip_address,
+      role: vm.role || 'Node',
+      ssh_command: vm.ssh_command || `ssh ${vm.ip_address}`,
+      notes: vm.notes || null,
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { vm_ips: newVm } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.vm_ips = site.vm_ips || [];
+      site.vm_ips.push(newVm);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  async updateVmIp(siteId, vmId, vmUpdate) {
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }], 'vm_ips.id': vmId },
+        {
+          $set: {
+            'vm_ips.$.title': vmUpdate.title,
+            'vm_ips.$.ip_address': vmUpdate.ip_address,
+            'vm_ips.$.role': vmUpdate.role || 'Node',
+            'vm_ips.$.ssh_command': vmUpdate.ssh_command || `ssh ${vmUpdate.ip_address}`,
+            'vm_ips.$.notes': vmUpdate.notes || null,
+          },
+        },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site && site.vm_ips) {
+      const idx = site.vm_ips.findIndex(v => v.id === vmId);
+      if (idx !== -1) {
+        site.vm_ips[idx] = {
+          ...site.vm_ips[idx],
+          ...vmUpdate,
+        };
+        inMemorySites.set(site.id, site);
+        return normalizeRunbook(site);
+      }
+    }
+    return null;
+  },
+
+  async deleteVmIp(siteId, vmId) {
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $pull: { vm_ips: { id: vmId } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site && site.vm_ips) {
+      site.vm_ips = site.vm_ips.filter(v => v.id !== vmId);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  // 4️⃣ SLACK
+  async updateSlack(siteId, slackData) {
+    const update = {
+      channel_name: slackData.channel_name || null,
+      channel_url: slackData.channel_url || null,
+      is_configured: Boolean(slackData.channel_name || slackData.channel_url),
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $set: { slack: update } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.slack = update;
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  // 5️⃣ DEPLOYMENTS & HANDOVERS
+  async addDeployment(siteId, dep) {
+    const newDep = {
+      id: new mongoose.Types.ObjectId().toString(),
+      version: dep.version,
+      deployed_at: dep.deployed_at ? new Date(dep.deployed_at) : new Date(),
+      deployed_by: dep.deployed_by || 'DevOps',
+      status: dep.status || 'Success',
+      notes: dep.notes || null,
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { deployments: { $each: [newDep], $position: 0 } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.deployments = site.deployments || [];
+      site.deployments.unshift(newDep);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  async addHandover(siteId, ho) {
+    const newHo = {
+      id: new mongoose.Types.ObjectId().toString(),
+      created_at: new Date(),
+      author: ho.author || 'Shift Lead',
+      shift: ho.shift || 'Morning',
+      commands_used: ho.commands_used || '',
+      what_is_working: ho.what_is_working || '',
+      open_questions: ho.open_questions || '',
+      cautions: ho.cautions || '',
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { handovers: { $each: [newHo], $position: 0 } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.handovers = site.handovers || [];
+      site.handovers.unshift(newHo);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
+
+  // 6️⃣ SITE CONFIGS
+  async addSiteConfig(siteId, cfg) {
+    const newCfg = {
+      id: new mongoose.Types.ObjectId().toString(),
+      config_key: cfg.config_key,
+      config_value: cfg.config_value,
+      created_at: new Date(),
+      updated_by: cfg.updated_by || 'Admin',
+      metadata: cfg.metadata || {},
+      notes: cfg.notes || null,
+    };
+
+    if (isDbConnected()) {
+      const doc = await SiteModel.findOneAndUpdate(
+        { $or: [{ id: siteId }, { name: siteId }] },
+        { $push: { site_configs: { $each: [newCfg], $position: 0 } } },
+        { new: true }
+      ).lean();
+      return doc ? normalizeRunbook(doc) : null;
+    }
+
+    const site = await this.findById(siteId);
+    if (site) {
+      site.site_configs = site.site_configs || [];
+      site.site_configs.unshift(newCfg);
+      inMemorySites.set(site.id, site);
+      return normalizeRunbook(site);
+    }
+    return null;
+  },
 };
+
+function normalizeRunbook(site) {
+  if (!site) return null;
+  return {
+    ...site,
+    monitoring_links: Array.isArray(site.monitoring_links) ? site.monitoring_links : [],
+    zoom_call: site.zoom_call || { url: null, topic: null, is_active: false, last_started_at: null },
+    vm_ips: Array.isArray(site.vm_ips) ? site.vm_ips : [],
+    slack: site.slack || { channel_name: null, channel_url: null, is_configured: false },
+    deployments: Array.isArray(site.deployments) ? site.deployments : [],
+    handovers: Array.isArray(site.handovers) ? site.handovers : [],
+    site_configs: Array.isArray(site.site_configs) ? site.site_configs : [],
+  };
+}

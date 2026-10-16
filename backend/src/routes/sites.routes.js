@@ -158,6 +158,203 @@ router.get('/:siteId', async (req, res) => {
   }
 });
 
+// ==========================================
+// 1️⃣ MONITORING LINKS CRUD
+// ==========================================
+
+router.post('/:siteId/links', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { title, url, category } = req.body;
+    if (!title || !url) {
+      return res.status(400).json({ success: false, error: 'Title and URL are required' });
+    }
+    const updatedSite = await SiteRepository.addMonitoringLink(siteId, { title, url, category });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/:siteId/links/:linkId', async (req, res) => {
+  try {
+    const { siteId, linkId } = req.params;
+    const { title, url, category } = req.body;
+    const updatedSite = await SiteRepository.updateMonitoringLink(siteId, linkId, { title, url, category });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site or link not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/:siteId/links/:linkId', async (req, res) => {
+  try {
+    const { siteId, linkId } = req.params;
+    const updatedSite = await SiteRepository.deleteMonitoringLink(siteId, linkId);
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 2️⃣ VM IP LIST CRUD
+// ==========================================
+
+router.post('/:siteId/vms', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { title, ip_address, role, ssh_command, notes } = req.body;
+    if (!title || !ip_address) {
+      return res.status(400).json({ success: false, error: 'Title and IP address are required' });
+    }
+    const updatedSite = await SiteRepository.addVmIp(siteId, { title, ip_address, role, ssh_command, notes });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.put('/:siteId/vms/:vmId', async (req, res) => {
+  try {
+    const { siteId, vmId } = req.params;
+    const { title, ip_address, role, ssh_command, notes } = req.body;
+    const updatedSite = await SiteRepository.updateVmIp(siteId, vmId, { title, ip_address, role, ssh_command, notes });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site or VM not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.delete('/:siteId/vms/:vmId', async (req, res) => {
+  try {
+    const { siteId, vmId } = req.params;
+    const updatedSite = await SiteRepository.deleteVmIp(siteId, vmId);
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 3️⃣ ZOOM & SLACK CRUD
+// ==========================================
+
+router.patch('/:siteId/zoom', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { url, topic, is_active } = req.body;
+    const updatedSite = await SiteRepository.updateZoomCall(siteId, { url, topic, is_active });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.patch('/:siteId/slack', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { channel_name, channel_url } = req.body;
+    const updatedSite = await SiteRepository.updateSlack(siteId, { channel_name, channel_url });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 4️⃣ DEPLOYMENTS & HANDOVERS
+// ==========================================
+
+router.post('/:siteId/deployments', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { version, deployed_by, status, notes, deployed_at } = req.body;
+    if (!version) {
+      return res.status(400).json({ success: false, error: 'Version is required' });
+    }
+    const updatedSite = await SiteRepository.addDeployment(siteId, { version, deployed_by, status, notes, deployed_at });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/:siteId/handovers', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { author, shift, commands_used, what_is_working, open_questions, cautions } = req.body;
+    const updatedSite = await SiteRepository.addHandover(siteId, {
+      author,
+      shift,
+      commands_used,
+      what_is_working,
+      open_questions,
+      cautions,
+    });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ==========================================
+// 5️⃣ SITE CONFIGS
+// ==========================================
+
+router.post('/:siteId/configs', async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { config_key, config_value, updated_by, notes, metadata } = req.body;
+    if (!config_key || config_value === undefined) {
+      return res.status(400).json({ success: false, error: 'Config key and value are required' });
+    }
+    const updatedSite = await SiteRepository.addSiteConfig(siteId, {
+      config_key,
+      config_value,
+      updated_by,
+      notes,
+      metadata,
+    });
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 /**
  * GET /api/sites/:siteId/cases
  * Fetch all open cases that are NOT on hold for a specific site

@@ -20,6 +20,7 @@ import {
   Clock,
   Layers,
   User,
+  Terminal,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,8 @@ import { ConnectionsDialog, SiteEditor, SignInDialog } from '@/components/dashbo
 import { sitesQueryOptions } from '@/lib/sites';
 import { useAuth } from '@/components/auth-context';
 import { sfFetchCasesForSite, isAlertCase, detectSeverity, isImTicket, isDirTicket, type SFCase } from '@/integrations/salesforce/client';
+import { SiteRunbookPanel, type RunbookTabKey } from '@/components/site-runbook-panel';
+import { fetchSiteRunbook, defaultRunbook, type SiteRunbook } from '@/lib/runbook';
 
 function resolveSite(sites: Site[] | undefined, idOrName: string): Site | undefined {
   if (!sites || !idOrName) return undefined;
@@ -96,6 +99,23 @@ function SiteDetail() {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts'>('cases');
+
+  // Fetch full operational runbook (monitoring links, zoom, VMs, slack, handovers, configs)
+  const { data: runbookData, refetch: refetchRunbook } = useQuery({
+    queryKey: ['site-runbook', site?.id || siteId],
+    queryFn: () => fetchSiteRunbook(site?.id || siteId),
+    enabled: Boolean(site?.id || siteId),
+    staleTime: 15_000,
+  });
+
+  const [runbook, setRunbook] = useState<SiteRunbook>(defaultRunbook);
+  const [activeTab, setActiveTab] = useState<'monitoring' | RunbookTabKey>('monitoring');
+
+  useEffect(() => {
+    if (runbookData) {
+      setRunbook(runbookData);
+    }
+  }, [runbookData]);
 
   // Fetch all open cases & alerts (opened + closed today) for this site
   const {
@@ -237,7 +257,12 @@ function SiteDetail() {
   const sev2Count = allCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
 
   return (
-    <DashboardShell detail>
+    <DashboardShell
+      detail
+      siteRunbook={runbook}
+      activeTab={activeTab}
+      onOpenRunbookTab={(tab) => setActiveTab(tab)}
+    >
       <div className="page-wrap detail-wrap">
         <Link to="/" className="back-link">
           <ArrowLeft />
@@ -276,6 +301,20 @@ function SiteDetail() {
             </Button>
           </div>
         </div>
+
+        {activeTab !== 'monitoring' ? (
+          <SiteRunbookPanel
+            siteId={site.id}
+            runbook={runbook}
+            activeTab={activeTab}
+            onBackToMonitoring={() => setActiveTab('monitoring')}
+            onRefresh={(updated) => {
+              setRunbook(updated);
+              refetchRunbook();
+            }}
+          />
+        ) : (
+          <>
 
         {/* Summary Metric Ribbon */}
         <div className="detail-summary">
@@ -981,6 +1020,8 @@ function SiteDetail() {
             <span>Source: Opsgenie</span>
           </div>
         </section>
+        </>
+        )}
       </div>
 
       {/* Case Details Dialog Modal */}

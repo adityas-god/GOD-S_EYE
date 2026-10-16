@@ -14,6 +14,13 @@ import {
   PanelLeftClose,
   Sun,
   Moon,
+  Link2,
+  Video,
+  Server,
+  MessageSquare,
+  History,
+  Settings,
+  Activity,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -21,8 +28,22 @@ import { useAuth } from './auth-context';
 import { ConnectionsDialog, SignInDialog } from './dashboard-dialogs';
 import { useQuery } from '@tanstack/react-query';
 import { sitesQueryOptions } from '@/lib/sites';
+import type { SiteRunbook } from '@/lib/runbook';
+import type { RunbookTabKey } from '@/components/site-runbook-panel';
 
-export function DashboardShell({ children, detail = false }: { children: ReactNode; detail?: boolean }) {
+export function DashboardShell({
+  children,
+  detail = false,
+  siteRunbook,
+  onOpenRunbookTab,
+  activeTab = 'monitoring',
+}: {
+  children: ReactNode;
+  detail?: boolean;
+  siteRunbook?: SiteRunbook;
+  onOpenRunbookTab?: (tab: 'monitoring' | RunbookTabKey) => void;
+  activeTab?: 'monitoring' | RunbookTabKey;
+}) {
   const { data: sites } = useQuery(sitesQueryOptions());
   const actualSitesCount = sites?.length ?? 78;
   const [login, setLogin] = useState(false);
@@ -76,10 +97,12 @@ export function DashboardShell({ children, detail = false }: { children: ReactNo
           sitepulse<span className="brand-period">.</span>
         </Link>
         <div className="workspace">
-          <span className="workspace-icon">S</span>
+          <span className="workspace-icon">
+            {detail && siteRunbook?.name ? siteRunbook.name.charAt(0).toUpperCase() : 'S'}
+          </span>
           <div>
-            <strong>Operations workspace</strong>
-            <small>Site monitoring</small>
+            <strong>{detail && siteRunbook?.name ? siteRunbook.name : 'Operations workspace'}</strong>
+            <small>{detail && siteRunbook?.name ? 'Site Runbook & War-Room' : 'Site monitoring'}</small>
           </div>
         </div>
         <div className="nav-label">WORKSPACE</div>
@@ -87,16 +110,154 @@ export function DashboardShell({ children, detail = false }: { children: ReactNo
           <Button variant="nav" asChild className={!detail ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
-              Site overview
+              All sites
               <span className="nav-count">{actualSitesCount}</span>
             </Link>
           </Button>
+
+          {/* Site Monitoring (The 2 buckets: Salesforce cases & Opsgenie alerts) */}
+          {detail && (
+            <Button
+              variant="nav"
+              className={activeTab === 'monitoring' ? 'active' : ''}
+              onClick={() => onOpenRunbookTab?.('monitoring')}
+            >
+              <Activity />
+              Site monitoring
+            </Button>
+          )}
+
           <Button variant="nav" onClick={() => setConnections(true)}>
             <PlugZap />
             Connections
             <span className="connection-dot" />
           </Button>
         </nav>
+
+        {/* 6 OPERATIONAL RUNBOOK FEATURES IN SIDEBAR */}
+        {detail && siteRunbook && (
+          <>
+            <div className="nav-label" style={{ marginTop: 22 }}>SITE RUNBOOK</div>
+            <nav style={{ gap: 4 }}>
+              <Button
+                variant="nav"
+                className={activeTab === 'links' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('links')}
+                title="Direct dashboards & telemetry links"
+              >
+                <Link2 style={{ width: 14, height: 14 }} />
+                <span>Monitoring links</span>
+                {siteRunbook.monitoring_links.length > 0 && (
+                  <span className="nav-count">{siteRunbook.monitoring_links.length}</span>
+                )}
+              </Button>
+
+              <Button
+                variant="nav"
+                className={activeTab === 'zoom' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('zoom')}
+                title="Incident Zoom War-Room Bridge"
+                style={{
+                  background: siteRunbook.zoom_call?.is_active ? 'rgba(239, 68, 68, 0.12)' : undefined,
+                  color: siteRunbook.zoom_call?.is_active ? '#ef4444' : undefined,
+                }}
+              >
+                <Video style={{ width: 14, height: 14 }} />
+                <span>Zoom call</span>
+                {siteRunbook.zoom_call?.is_active ? (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      padding: '1.5px 5px',
+                      borderRadius: 3,
+                      background: '#ef4444',
+                      color: '#ffffff',
+                      fontSize: 8.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    LIVE
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      fontSize: 9,
+                      color: 'var(--muted-foreground)',
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    IDLE
+                  </span>
+                )}
+              </Button>
+
+              <Button
+                variant="nav"
+                className={activeTab === 'vms' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('vms')}
+                title="VM IPs & SSH Commands"
+              >
+                <Server style={{ width: 14, height: 14 }} />
+                <span>VM IP list</span>
+                {siteRunbook.vm_ips.length > 0 && (
+                  <span className="nav-count">{siteRunbook.vm_ips.length}</span>
+                )}
+              </Button>
+
+              <Button
+                variant="nav"
+                className={activeTab === 'slack' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('slack')}
+                title="Slack Operations Channel"
+              >
+                <MessageSquare style={{ width: 14, height: 14 }} />
+                <span>Slack channel</span>
+                {siteRunbook.slack?.is_configured ? (
+                  <span
+                    style={{
+                      marginLeft: 'auto',
+                      width: 6,
+                      height: 6,
+                      borderRadius: '50%',
+                      background: '#38bdf8',
+                    }}
+                    title="Slack connected"
+                  />
+                ) : null}
+              </Button>
+
+              <Button
+                variant="nav"
+                className={activeTab === 'handovers' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('handovers')}
+                title="Shift Handovers & Deployments"
+              >
+                <History style={{ width: 14, height: 14 }} />
+                <span>Handovers</span>
+                {(siteRunbook.handovers.length + siteRunbook.deployments.length) > 0 && (
+                  <span className="nav-count">
+                    {siteRunbook.handovers.length + siteRunbook.deployments.length}
+                  </span>
+                )}
+              </Button>
+
+              <Button
+                variant="nav"
+                className={activeTab === 'configs' ? 'active' : ''}
+                onClick={() => onOpenRunbookTab?.('configs')}
+                title="Timestamped Site Configs History"
+              >
+                <Settings style={{ width: 14, height: 14 }} />
+                <span>Site configs</span>
+                {siteRunbook.site_configs.length > 0 && (
+                  <span className="nav-count">{siteRunbook.site_configs.length}</span>
+                )}
+              </Button>
+            </nav>
+          </>
+        )}
         <div className="sidebar-bottom">
           <div className="source-health">
             <span className="nav-label">YOUR DATA SOURCES</span>
