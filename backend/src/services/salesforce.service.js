@@ -854,7 +854,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
   const fetchPromise = (async () => {
     const primarySoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Priority, Severity__c, Alert_Priority__c, Snow_Priority__c, Jira_Priority__c, Highest_Severity__c,',
+      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Snow_Priority__c, Jira_Priority__c, Highest_Severity__c,',
       'Impact_Percentage__c, Type, Category__c, Snow_Category__c, Product_Type__c, Dev_Case_Assignee__c, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c,',
@@ -865,7 +865,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const fallbackSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Priority, Alert_Priority__c, Snow_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, ClosedDate, Description,',
+      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Snow_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, ClosedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c,',
       'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, RCA_Approval__c, Default_Ticket_For_Problem__c',
@@ -875,9 +875,17 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const safeSoql = [
-      'SELECT Id, CaseNumber, Subject, Status, Priority, Alert_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, Description,',
+      'SELECT Id, CaseNumber, Subject, Status, Severity__c, Alert_Priority__c, Highest_Severity__c, Type, CreatedDate, LastModifiedDate, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c',
+      'FROM Case',
+      "WHERE Status != 'Closed'",
+      'ORDER BY LastModifiedDate DESC LIMIT 400',
+    ].join(' ');
+
+    const ultraSafeSoql = [
+      'SELECT Id, CaseNumber, Subject, Status, Type, CreatedDate, LastModifiedDate, Description,',
+      'AccountId, Snow_Sitename__c, Customer_Location__c',
       'FROM Case',
       "WHERE Status != 'Closed'",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
@@ -901,10 +909,17 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
           raw = resSafe.records || [];
           _lastSalesforceError = null;
         } catch (errSafe) {
-          _lastSalesforceError = errSafe.message;
-          console.error('[Salesforce] Safe SOQL query error:', errSafe.message);
-          if (_backendCasesCache.cases.length > 0) return _backendCasesCache;
-          return { cases: [], alerts: [] };
+          console.warn('[Salesforce] Safe SOQL notice, executing ultra-safe query:', errSafe.message);
+          try {
+            const resUltra = await executeSOQL(ultraSafeSoql);
+            raw = resUltra.records || [];
+            _lastSalesforceError = null;
+          } catch (errUltra) {
+            _lastSalesforceError = errUltra.message;
+            console.error('[Salesforce] All SOQL queries failed:', errUltra.message);
+            if (_backendCasesCache.cases.length > 0) return _backendCasesCache;
+            return { cases: [], alerts: [] };
+          }
         }
       }
     }
