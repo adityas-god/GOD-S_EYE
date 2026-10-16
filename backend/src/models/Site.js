@@ -113,6 +113,14 @@ export const SiteRepository = {
     for (const site of sites) {
       if (!site || !site.name) continue;
       const key = site.name.trim().toLowerCase();
+      // Ensure salesforce_account_id is always synced from authoritative snapshot
+      for (const memSite of inMemorySites.values()) {
+        if (memSite.name.trim().toLowerCase() === key && memSite.salesforce_account_id) {
+          site.salesforce_account_id = memSite.salesforce_account_id;
+          break;
+        }
+      }
+
       if (!seen.has(key)) {
         seen.set(key, site);
       } else {

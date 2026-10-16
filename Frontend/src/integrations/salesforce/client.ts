@@ -246,70 +246,84 @@ export function normalizeCanonical(str: string): string {
 }
 
 export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
-  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax'],
-  'Ikea': ['ikea', 'ikeaa', 'ikeaprod'],
-  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club'],
-  'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob'],
-  'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands'],
-  'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm'],
-  'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen'],
-  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express'],
-  'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania'],
+  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)'],
+  'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
+  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta'],
+  'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear'],
+  'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
+  'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris'],
+  'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond'],
+  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)'],
+  'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania', 'farmacia tei-romania'],
   'Nishiskawa': ['nishiskawa', 'nishikawa'],
-  'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13'],
-  'Mercado Libre(SP04)': ['meli sp04', 'mercado libre sp04', 'sp04'],
-  'Mercado Libre': ['meli', 'mercado libre', 'meli sc02', 'mercado libre sc02'],
-  'Kenco Fairlife(Phoenix, USA)': ['kenco fairlife', 'fairlife phoenix', 'fairlife'],
-  'Kenco-Jeff1': ['kenco jeff1', 'kenco jeffersonville', 'jeff1'],
-  'Kenco Goodyear': ['kenco goodyear', 'kenco goodyear arizona'],
-  'Kenco Kansas': ['kenco kansas', 'kenco kansas usa'],
-  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside'],
-  'Robinson USA (Dayton)': ['robinson usa dayton', 'robinson dayton', 'robinson usa', 'robinson tennessee'],
-  'Active Ants-NL': ['active ants nl', 'active ants netherlands'],
-  'Active Ants-UK Northampton': ['active ants uk northampton', 'active ants uk', 'active ants northampton'],
-  'Dish-USA (El Paso)': ['dish usa el paso', 'dish el paso', 'dish usa', 'dish'],
-  'Dorman Warsaw': ['dorman warsaw', 'dorman warsaw ky'],
+  'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13', 'mercado libre (mx13)_hidalgo-méxico', 'mercado libre (mx13)_hidalgo-mexico'],
+  'Mercado Libre(SP04)': ['meli sp04', 'mercado libre sp04', 'sp04', 'mercado libre(sp04)-cajamar(brazil)', 'mercado libre sp04 cajamar'],
+  'Mercado Libre': ['meli', 'mercado libre', 'meli sc02', 'mercado libre sc02', 'mercado libre(sp15)-cajamar(brazil)', 'meli sp15'],
+  'Kenco Fairlife(Phoenix, USA)': ['kenco fairlife', 'fairlife phoenix', 'fairlife', 'kenco fairlife(phoenix, usa)'],
+  'Kenco-Jeff1': ['kenco jeff1', 'kenco jeffersonville', 'jeff1', 'kenco-jeff1(jeffersonville, usa)'],
+  'Kenco Goodyear': ['kenco goodyear', 'kenco goodyear arizona', 'kenco-goodyear(arizona,usa)'],
+  'Kenco Kansas': ['kenco kansas', 'kenco kansas usa', 'kenco-kansas(usa)'],
+  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)'],
+  'Robinson USA (Dayton)': ['robinson usa dayton', 'robinson dayton', 'robinson usa', 'robinson tennessee', 'robinson-tennessee(usa)'],
+  'Active Ants-Belgium': ['active ants belgium', 'active ants-belgium'],
+  'Active Ants-Germany': ['active ants germany', 'active ants-germany'],
+  'Active Ants-NL': ['active ants nl', 'active ants netherlands', 'active ants-netherlands'],
+  'Active Ants-UK Northampton': ['active ants uk northampton', 'active ants uk', 'active ants northampton', 'active ants-uk(northampton)'],
+  'Adam Beverages': ['adam beverages', 'adams beverages', 'adam beverages-north carolina'],
+  'Cardinal Health Ontario': ['cardinal health', 'cardinal health ontario', 'cardinal health-ontario(california)'],
+  'Dish-USA (El Paso)': ['dish usa el paso', 'dish el paso', 'dish usa', 'dish', 'dish-usa (el paso)'],
+  'Dorman Warsaw': ['dorman warsaw', 'dorman warsaw ky', 'dorman-warsaw,ky(usa)'],
   'Dorman': ['dorman', 'dorman portland'],
-  'Ryder Whiplash': ['ryder whiplash', 'whiplash ohio', 'ryder whiplash ohio', 'whiplash'],
-  'Ryder Maryland': ['ryder maryland', 'ryder maryland usa', 'ryder ml', 'ryder md', 'ryderml', 'rydermd'],
-  'Owens & Minor': ['owens minor', 'owens & minor', 'owens and minor', 'owens & minors', 'owens minors', 'owens&minor', 'owens&minors', 'owens&monors', 'owens monors', 'owens monor'],
-  'H&M P1': ['hm p1', 'h&m p1', 'hm robbinsville', 'hm robbinsville project 1'],
-  'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms'],
-  'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilor luxottica atlanta'],
-  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus'],
-  'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico'],
-  'Walmart Mexico': ['walmart mexico', 'walmart mx'],
-  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod'],
-  'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster'],
-  'Goldbond': ['goldbond', 'goldbond israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden'],
-  'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon'],
-  'Coupang INC14': ['coupang inc14', 'coupang incheon 14'],
-  'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs'],
-  'Dillards': ['dillards', 'dillard', 'dillards arkansas', 'dillardprod'],
-  'EXOL': ['exol', 'exol jackson'],
-  'Flaconi': ['flaconi', 'flaconi berlin'],
-  'Fujirebio-Ambient': ['fujirebio ambient'],
-  'Fujirebio-Chill': ['fujirebio chill'],
-  'GXO-Apple': ['gxo apple'],
-  'GXO-Lacoste': ['gxo lacoste'],
-  'GXO-Nike': ['gxo nike', 'gxo nike bloomington'],
-  'GXO-Verizon': ['gxo verizon', 'gxo verizon dallas'],
-  'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo a&f arizona'],
-  'Jysk': ['jysk', 'jysk denmark'],
+  'Ryder Whiplash': ['ryder whiplash', 'whiplash ohio', 'ryder whiplash ohio', 'whiplash', 'ryder whiplash-ohio(usa)'],
+  'Ryder Maryland': ['ryder maryland', 'ryder maryland usa', 'ryder ml', 'ryder md', 'ryderml', 'rydermd', 'ryder-maryland(usa)', 'ryder-maryland'],
+  'Owens & Minor': ['owens minor', 'owens & minor', 'owens and minor', 'owens & minors', 'owens minors', 'owens&minor', 'owens&minors', 'owens&monors', 'owens monors', 'owens monor', 'owens&minor-georgia(usa)'],
+  'H&M P1': ['hm p1', 'h&m p1', 'hm robbinsville', 'hm robbinsville project 1', 'h&m(project1)-robbinsville(newjersey)'],
+  'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms', 'h&m (project1) _ rms'],
+  'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilorluxottica-fhr(california)', 'fhr luxottica', 'fhr'],
+  'Essilor Luxottica Atlanta': ['essilorluxottica atlanta (el-atl)', 'essilorluxottica atlanta', 'el-atl', 'el atl', 'essilor luxottica atlanta'],
+  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)'],
+  'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)'],
+  'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico'],
+  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
+  'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
+  'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)'],
+  'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
+  'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
+  'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
+  'Dillards': ['dillards', 'dillard', 'dillards arkansas', 'dillardprod', 'dillard\'s-arkansas(usa)'],
+  'EXOL': ['exol', 'exol jackson', 'exol-jackson'],
+  'Flaconi': ['flaconi', 'flaconi berlin', 'flaconi-berlin(germany)'],
+  'Fujirebio-Ambient': ['fujirebio ambient', 'fujirebio-ambient'],
+  'Fujirebio-Chill': ['fujirebio chill', 'fujirebio-chill'],
+  'GXO-Apple': ['gxo apple', 'gxo-apple'],
+  'GXO-Lacoste': ['gxo lacoste', 'gxo-lacoste'],
+  'GXO-Nike': ['gxo nike', 'gxo nike bloomington', 'gxo-nike-bloomington(california)'],
+  'GXO-Verizon': ['gxo verizon', 'gxo verizon dallas', 'gxo-verizon-dallas(texas,usa)'],
+  'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo a&f arizona', 'gxo-a&f-arizona(usa)'],
+  'Jysk': ['jysk', 'jysk denmark', 'jysk-denmark'],
   'Lixil': ['lixil'],
-  'Mitsubishi-Nippon': ['mitsubishi nippon'],
-  'Ricoh-Nike': ['ricoh nike', 'ricoh nike beaverton'],
-  'Stryker': ['stryker'],
-  'Trusco Saitama': ['trusco saitama'],
-  'Trusco Tohoku': ['trusco tohoku'],
-  'YKK': ['ykk', 'ykkprod'],
-  'Sodimac SBS': ['sodimac sbs', 'sbs'],
-  'Sodimac-Colombia-Funza-2': ['sodimac colombia funza 2', 'sodimac funza 2', 'funza 2'],
-  'Sodimac Colombia Arthur': ['sodimac colombia arthur', 'sodimac arthur'],
-  'Sodimac-Colombia': ['sodimac colombia'],
-  'Sodimac-FLR': ['sodimac flr', 'flr'],
+  'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon'],
+  'Ricoh-Nike': ['ricoh nike', 'ricoh nike beaverton', 'ricoh(nike)-beaverton(oregon,usa)'],
+  'Stryker': ['stryker', 'stryker-mahwah(newjersey,usa)'],
+  'Trusco Saitama': ['trusco saitama', 'trusco-saitama'],
+  'Trusco Tohoku': ['trusco tohoku', 'trusco-tohoku'],
+  'YKK': ['ykk', 'ykkprod', 'ykk-georgia(usa)'],
+  'Aritzia': ['aritzia', 'aritizia', 'aritzia-british columbia(canada)'],
+  'Sodimac SBS': ['sodimac sbs', 'sbs', 'sbs-chile'],
+  'Sodimac-Colombia-Funza-2': ['sodimac colombia funza 2', 'sodimac funza 2', 'funza 2', 'sodimac(funza-2)-colombia'],
+  'Sodimac Colombia Arthur': ['sodimac colombia arthur', 'sodimac arthur', 'sodimac(arthur)-colombia'],
+  'Sodimac-Colombia': ['sodimac colombia', 'sodimac(funza-1)-colombia', 'funza 1'],
+  'Sodimac-FLR': ['sodimac flr', 'flr', 'sodimac-flr'],
+  'Sodimac-CC1': ['sodimac cc1', 'sodimac(c&c-1)-arauco'],
+  'Sodimac-CC2': ['sodimac cc2', 'sodimac(c&c-2)-florida'],
+  'Sodimac-CC3': ['sodimac cc3', 'sodimac(c&c-3)-condes'],
+  'Sodimac-CC4': ['sodimac cc4', 'sodimac(c&c-4)-maipu'],
+  'Sodimac-CC5': ['sodimac cc5', 'sodimac(c&c-5)-puertomontt'],
+  'Sodimac-CC7': ['sodimac cc7', 'sodimac(c&c-7)-temuco'],
+  'Sodimac-CC8': ['sodimac cc8', 'sodimac(c&c-8)-talca'],
+  'Sodimac-CC9': ['sodimac cc9', 'sodimac(c&c-9)-biobio'],
 };
 
 export interface CompiledSite {
@@ -362,15 +376,45 @@ export function compileSiteIndex(siteList: Array<string | { name: string; salesf
 export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   if (!caseRecord || !compiledSites || compiledSites.length === 0) return null;
 
-  // Level 1: Site-specific ServiceNow and customer input fields
+  // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
+  const raw = caseRecord as Record<string, unknown>;
+  const accId = caseRecord.AccountId || raw.account_id;
+  if (accId) {
+    const targetId = String(accId);
+    const sitesWithAcc = compiledSites.filter(s => s.accountId === targetId);
+    if (sitesWithAcc.length === 1) {
+      return sitesWithAcc[0].originalName;
+    }
+  }
+
+  // Level 2: Account Name match (e.g. "Ryder-Maryland(USA)", "H&M(Ajax)-(Canada)", "Walmart-Mexico(Tepotzotlán)")
+  const rawAccountName = (caseRecord.Account_Name__c || raw.account_name || caseRecord.Account?.Name) as string | undefined;
+  if (rawAccountName) {
+    const accClean = normalizeCanonical(rawAccountName);
+    if (accClean) {
+      for (const site of compiledSites) {
+        if (accClean === site.clean || accClean.includes(site.clean) || site.clean.includes(accClean)) {
+          return site.originalName;
+        }
+      }
+      const accTokens = new Set(accClean.split(' '));
+      for (const site of compiledSites) {
+        if (site.tokens.length > 0 && site.tokens.every(t => accTokens.has(t))) {
+          return site.originalName;
+        }
+      }
+    }
+  }
+
+  // Level 3: Site-specific ServiceNow and customer input fields
   const siteSpecificTexts = [
     caseRecord.Snow_Sitename__c,
     caseRecord.Site_Name_Customer_Input__c,
     caseRecord.Impacted_Sites__c,
   ].filter(Boolean) as string[];
 
-  for (const raw of siteSpecificTexts) {
-    const textClean = normalizeCanonical(raw);
+  for (const rawText of siteSpecificTexts) {
+    const textClean = normalizeCanonical(rawText);
     if (!textClean) continue;
 
     for (const site of compiledSites) {
@@ -387,7 +431,19 @@ export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledS
     }
   }
 
-  // Level 2: Subject line (frequently contains site name e.g. "[Alert] IKEA..." or "HNM Canada...")
+  // Level 4: Customer Location check
+  if (caseRecord.Customer_Location__c) {
+    const locClean = normalizeCanonical(caseRecord.Customer_Location__c);
+    if (locClean && locClean.length > 3) {
+      for (const site of compiledSites) {
+        if (site.clean.includes(locClean) || locClean.includes(site.clean)) {
+          return site.originalName;
+        }
+      }
+    }
+  }
+
+  // Level 5: Fallback to Subject line ONLY if no account or site fields matched
   if (caseRecord.Subject) {
     const subjectClean = normalizeCanonical(caseRecord.Subject);
     if (subjectClean) {
@@ -402,49 +458,6 @@ export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledS
           return site.originalName;
         }
       }
-    }
-  }
-
-  // Level 3: Combined Account + Location
-  const combinedParts = [
-    caseRecord.Account_Name__c || caseRecord.Account?.Name,
-    caseRecord.Customer_Location__c,
-  ].filter(Boolean) as string[];
-
-  if (combinedParts.length > 0) {
-    const combinedClean = normalizeCanonical(combinedParts.join(' '));
-    const combinedTokens = new Set(combinedClean.split(' '));
-
-    for (const site of compiledSites) {
-      if (combinedClean === site.clean || combinedClean.includes(site.clean)) {
-        return site.originalName;
-      }
-    }
-    for (const site of compiledSites) {
-      if (site.tokens.length > 0 && site.tokens.every(t => combinedTokens.has(t))) {
-        return site.originalName;
-      }
-    }
-  }
-
-  // Level 4: Location-only
-  if (caseRecord.Customer_Location__c) {
-    const locClean = normalizeCanonical(caseRecord.Customer_Location__c);
-    if (locClean && locClean.length > 3) {
-      for (const site of compiledSites) {
-        if (site.clean.includes(locClean)) {
-          return site.originalName;
-        }
-      }
-    }
-  }
-
-  // Level 5: Account ID match ONLY IF exactly one site shares that account ID
-  if (caseRecord.AccountId) {
-    const accId = String(caseRecord.AccountId);
-    const sitesWithAcc = compiledSites.filter(s => s.accountId === accId);
-    if (sitesWithAcc.length === 1) {
-      return sitesWithAcc[0].originalName;
     }
   }
 
@@ -506,31 +519,18 @@ export function getImpactPercentage(c: SFCase): number {
     }
   }
 
-  // Parse patterns in Subject / Description (e.g. "100% impact", "50% impact", "impact: 50%")
-  const text = `${c.Subject || ''} ${c.Description || ''}`;
-  const pctMatch = text.match(/(\d{1,3})\s*%\s*(?:impact|down|outage)/i) || text.match(/(?:impact|down|outage)\s*[:=-]?\s*(\d{1,3})\s*%/i);
-  if (pctMatch) {
-    const parsed = parseInt(pctMatch[1], 10);
-    if (!isNaN(parsed)) return parsed;
-  }
-
-  if (/\b(100% down|site 100% down|site is 100% down|total site down|complete site down)\b/i.test(text)) {
-    return 100;
-  }
-
   return 0;
 }
 
 /**
  * Universal severity / priority detector.
  * Strict rules:
- * - Must be an incident (not an alert, not an IM ticket, not a DIR ticket).
- * - Impact percentage == 100 -> sev1
- * - Impact percentage >= 50 -> sev2
- * - Check severity fields (Highest_Severity__c, Severity__c, Alert_Priority__c, etc.):
- *   - Sev 1 / Critical / P1 -> sev1
- *   - Sev 2 / Urgent (NOT plain "High"!) -> sev2
- * - Plain "High" / "Low" priority alone DOES NOT make a ticket Sev 2 Urgent.
+ * - NEVER use Subject or Description free text to infer urgency or severity.
+ * - Only authoritative Salesforce structured severity/priority fields determine severity:
+ *     - Sev 1: Explicitly marked 'Sev 1' / 'Severity 1' / 'P1' / 'Critical' in severity fields, OR Is_Site_100_Down__c is true.
+ *     - Sev 2 Urgent: Explicitly marked 'Sev 2 - Urgent' / 'Sev 2 Urgent' / 'P2 - Urgent' in severity fields.
+ *     - Plain 'Severity 2', 'Sev 2', 'Sev 2 - High', 'Sev 2 High', 'P2 - High' are High non-urgent (sev3).
+ * - Excludes automated alerts, IM tickets, and DIR tickets.
  */
 export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   if (!c) return 'sev3';
@@ -540,92 +540,28 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     return 'sev3';
   }
 
-  // Rule 1: Impact percentage check
-  // Impact percentage >= 100 -> Sev 1 Urgent
-  // Impact percentage >= 50 -> Sev 2 Urgent
-  const impactPct = getImpactPercentage(c);
-  if (impactPct >= 100) return 'sev1';
-  if (impactPct >= 50) return 'sev2';
+  const raw = c as Record<string, unknown>;
 
-  const sub = String(c.Subject || '').toUpperCase();
-
-  // Rule 2: Check primary authoritative severity field (Highest_Severity__c / Severity__c) FIRST
-  const primarySev = String(c.Highest_Severity__c || c.Severity__c || '').trim().toUpperCase();
-
-  if (primarySev) {
-    // Explicit Sev 1
-    if (
-      primarySev.includes('SEV 1') ||
-      primarySev.includes('SEV-1') ||
-      primarySev.includes('SEVERITY 1') ||
-      primarySev.includes('SEVERITY-1') ||
-      primarySev === 'P1' ||
-      primarySev.startsWith('P1 ') ||
-      primarySev.includes('P1 -')
-    ) {
-      return 'sev1';
-    }
-
-    // Explicit Sev 2
-    if (
-      primarySev.includes('SEV 2') ||
-      primarySev.includes('SEV-2') ||
-      primarySev.includes('SEVERITY 2') ||
-      primarySev.includes('SEVERITY-2') ||
-      primarySev === 'P2' ||
-      primarySev.startsWith('P2 ') ||
-      primarySev.includes('P2 -')
-    ) {
-      // If Highest_Severity__c explicitly says Urgent, it is ALWAYS Sev 2 Urgent
-      if (primarySev.includes('URGENT')) {
-        return 'sev2';
-      }
-      // If Highest_Severity__c explicitly says High / Low / Medium without Urgent, it is not Urgent
-      if (primarySev.includes('HIGH') || primarySev.includes('LOW') || primarySev.includes('MEDIUM')) {
-        return 'sev3';
-      }
-      // Check if secondary field or subject confirms Urgent
-      const anyUrgent = [c.Alert_Priority__c, c.Snow_Priority__c, c.Priority, sub]
-        .filter(Boolean)
-        .some(v => String(v).toUpperCase().includes('URGENT'));
-      if (anyUrgent) {
-        return 'sev2';
-      }
-      return 'sev3';
-    }
+  // Rule 1: Site 100% Down is Sev 1
+  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || getImpactPercentage(c) >= 100) {
+    return 'sev1';
   }
 
-  // Rule 3: Secondary priority & severity fields
-  const secondaryFields = [
-    c.Alert_Priority__c,
-    c.Snow_Priority__c,
-    c.Jira_Priority__c,
-    c.Priority,
+  // Rule 2: Collect all structured Salesforce severity and priority fields
+  const structuredFields = [
+    raw.Highest_Severity__c,
+    raw.Severity__c,
+    raw.Alert_Priority__c,
+    raw.Snow_Priority__c,
+    raw.Jira_Priority__c,
+    raw.Priority,
+    raw.priority,
   ]
     .filter(Boolean)
     .map(v => String(v).trim().toUpperCase());
 
-  // Check if ticket is explicitly Sev 2 before doing Sev 1 checks (prevent Sev 2 from falling into Sev 1 due to "Critical" Priority)
-  const isExplicitSev2 =
-    secondaryFields.some(s =>
-      (s.includes('SEV 2') && s.includes('URGENT')) ||
-      (s.includes('SEV-2') && s.includes('URGENT')) ||
-      (s.includes('SEVERITY 2') && s.includes('URGENT')) ||
-      (s.includes('P2') && s.includes('URGENT')) ||
-      s === 'SEV 2 URGENT' ||
-      s === 'SEV 2 - URGENT' ||
-      s === 'P2 - URGENT' ||
-      s === 'P2 URGENT'
-    ) ||
-    /\[\s*(SEV[- ]*2\s*[- ]*URGENT|P2\s*[- ]*URGENT)\s*\]/i.test(sub) ||
-    /\b(SEV[- ]*2\s*[- ]*URGENT|P2\s*[- ]*URGENT)\b/i.test(sub);
-
-  if (isExplicitSev2) {
-    return 'sev2';
-  }
-
-  // Check Sev 1 in secondary fields or subject
-  for (const s of secondaryFields) {
+  // Check Sev 1 across structured fields
+  for (const s of structuredFields) {
     if (
       s.includes('SEV 1') ||
       s.includes('SEV-1') ||
@@ -641,24 +577,23 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     }
   }
 
-  // Check Sev 1 in Subject
-  if (
-    /\[\s*(SEV[- ]*1|P1)\s*\]/i.test(sub) ||
-    /\b(SEV[- ]*1|SEVERITY[- ]*1)\b/i.test(sub) ||
-    /\b(SITE 100% DOWN|TOTAL FACILITY DOWN)\b/i.test(sub)
-  ) {
-    return 'sev1';
-  }
+  // Check Sev 2 Urgent across structured fields
+  // Must explicitly contain 'URGENT' in the severity/priority field itself!
+  // Plain 'Severity 2' or 'Sev 2 High' without 'URGENT' in the field is NOT Sev 2 Urgent.
+  for (const s of structuredFields) {
+    const isSev2 =
+      s.includes('SEV 2') ||
+      s.includes('SEV-2') ||
+      s.includes('SEVERITY 2') ||
+      s.includes('SEVERITY-2') ||
+      s === 'P2' ||
+      s.startsWith('P2 ') ||
+      s.startsWith('P2-') ||
+      s.includes('P2 -');
 
-  // Check Sev 2 combination (one field Sev 2 / P2 and another field Urgent)
-  const hasSev2 = secondaryFields.some(s =>
-    s.includes('SEV 2') || s.includes('SEV-2') || s.includes('SEVERITY 2') || s.startsWith('P2') || s === 'P2'
-  ) || /\b(SEV[- ]*2|P2)\b/i.test(sub);
-
-  const hasUrgent = secondaryFields.some(s => s.includes('URGENT')) || /\b(URGENT)\b/i.test(sub);
-
-  if (hasSev2 && hasUrgent) {
-    return 'sev2';
+    if (isSev2 && s.includes('URGENT')) {
+      return 'sev2';
+    }
   }
 
   return 'sev3';

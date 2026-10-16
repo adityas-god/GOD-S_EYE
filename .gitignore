@@ -16,6 +16,10 @@ node_modules/
 *.p12
 credentials.json
 client_secret*.json
+extract-active-sites.*
+active_sites_receiving_tickets.*
+active-sites-*.txt
+active-sites-*.json
 !.env.example
 !**/.env.example
 

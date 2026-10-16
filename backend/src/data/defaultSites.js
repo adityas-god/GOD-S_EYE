@@ -84,11 +84,18 @@ export const defaultSites = [
     "position": 11
   },
   {
+    "name": "Essilor Luxottica Atlanta",
+    "product_line": "RIL",
+    "opsgenie_tag": "essilor-luxottica-atlanta",
+    "salesforce_account_id": "001OX00000y2YKnYAM",
+    "position": 12
+  },
+  {
     "name": "Essilor Luxottica -Columbus",
     "product_line": "RIL",
     "opsgenie_tag": "essilor-luxottica-columbus",
     "salesforce_account_id": "001OX00000qZLaoYAG",
-    "position": 12
+    "position": 13
   },
   {
     "name": "Ryder Maryland",
@@ -339,7 +346,7 @@ export const defaultSites = [
     "name": "Ikea",
     "product_line": "RMS",
     "opsgenie_tag": "ikea",
-    "salesforce_account_id": "001OX00000qYYCWYA4",
+    "salesforce_account_id": "001OX00000qZLb0YAG",
     "position": 48
   },
   {
@@ -395,7 +402,7 @@ export const defaultSites = [
     "name": "Mercado Libre",
     "product_line": "RIL",
     "opsgenie_tag": "mercado-libre",
-    "salesforce_account_id": "001OX00000yJ7ONYA0",
+    "salesforce_account_id": "001OX00000qZLb4YAG",
     "position": 56
   },
   {
@@ -507,7 +514,7 @@ export const defaultSites = [
     "name": "Sodimac-FLR",
     "product_line": "Case Pick",
     "opsgenie_tag": "sodimac-flr",
-    "salesforce_account_id": "001OX00000tdEQkYAM",
+    "salesforce_account_id": "001OX00000qZcbIYAS",
     "position": 72
   },
   {
@@ -549,7 +556,7 @@ export const defaultSites = [
     "name": "Owens & Minor",
     "product_line": "RMS",
     "opsgenie_tag": "owens-minor",
-    "salesforce_account_id": null,
+    "salesforce_account_id": "001OX00000qZcb9YAC",
     "position": 78
   }
 ];
