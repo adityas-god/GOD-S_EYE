@@ -2080,7 +2080,7 @@ export async function fetchHistoricalAlerts(forceRefresh = false, siteName = '')
     'Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Owner.Name',
     'FROM Case',
-    'WHERE CreatedDate >= LAST_N_DAYS:90',
+    'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
     `AND ${whereClause}`,
     'ORDER BY CreatedDate DESC LIMIT 2000',
   ].join(' ');
@@ -2095,7 +2095,7 @@ export async function fetchHistoricalAlerts(forceRefresh = false, siteName = '')
       const fallbackSoql = [
         'SELECT Id, CaseNumber, Subject, Status, CreatedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE CreatedDate >= LAST_N_DAYS:90',
+        'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
         `AND ${whereClause}`,
         'ORDER BY CreatedDate DESC LIMIT 1500',
       ].join(' ');
@@ -2171,22 +2171,22 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
   // Q1: Time-series volume distribution across the entire window
   let timeSeriesSoql = '';
   if (cfg.bucketType === 'hour') {
-    timeSeriesSoql = `SELECT HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND CreatedDate >= LAST_N_DAYS:1 GROUP BY HOUR_IN_DAY(CreatedDate), Status ORDER BY HOUR_IN_DAY(CreatedDate) ASC`;
+    timeSeriesSoql = `SELECT HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:1 OR CreatedDate = TODAY) GROUP BY HOUR_IN_DAY(CreatedDate), Status ORDER BY HOUR_IN_DAY(CreatedDate) ASC`;
   } else if (cfg.bucketType === '2hour') {
-    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND CreatedDate >= LAST_N_DAYS:2 GROUP BY DAY_ONLY(CreatedDate), HOUR_IN_DAY(CreatedDate), Status`;
+    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:2 OR CreatedDate = TODAY) GROUP BY DAY_ONLY(CreatedDate), HOUR_IN_DAY(CreatedDate), Status`;
   } else {
-    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND CreatedDate >= LAST_N_DAYS:${cfg.queryDays} GROUP BY DAY_ONLY(CreatedDate), Status ORDER BY DAY_ONLY(CreatedDate) ASC`;
+    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY) GROUP BY DAY_ONLY(CreatedDate), Status ORDER BY DAY_ONLY(CreatedDate) ASC`;
   }
 
   // Q2: Top alert signatures across the selected window
-  const topSignaturesSoql = `SELECT Subject, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND CreatedDate >= LAST_N_DAYS:${cfg.queryDays} GROUP BY Subject ORDER BY COUNT(Id) DESC LIMIT 50`;
+  const topSignaturesSoql = `SELECT Subject, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY) GROUP BY Subject ORDER BY COUNT(Id) DESC LIMIT 50`;
 
   // Q3: Full sample of detailed cases for real MTTR, SLA breach, auto-resolve metrics
   const detailedCasesSoql = [
     'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, Owner.Name',
     'FROM Case',
-    `WHERE ${whereClause} AND CreatedDate >= LAST_N_DAYS:${cfg.queryDays}`,
+    `WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY)`,
     'ORDER BY CreatedDate DESC LIMIT 1000',
   ].join(' ');
 
@@ -2525,7 +2525,7 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
     'FROM Case',
-    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
     'ORDER BY CreatedDate DESC LIMIT 2000',
   ].join(' ');
 
@@ -2535,7 +2535,14 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Snow_Sitename__c',
     'FROM Case',
-    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+    'ORDER BY CreatedDate DESC LIMIT 2000',
+  ].join(' ');
+
+  const standardSafe30dSoql = [
+    'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
+    'FROM Case',
+    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
     'ORDER BY CreatedDate DESC LIMIT 2000',
   ].join(' ');
 
@@ -2548,9 +2555,15 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
       const resSafe = await executeSOQL(ultraSafe30dSoql);
       rawCases = resSafe.records || [];
     } catch (errSafe) {
-      console.warn('[Salesforce] Red Zone ultra-safe 30-day SOQL notice, using cached live cases fallback:', errSafe.message);
-      const live = await fetchAllLiveCasesAndAlerts(false);
-      rawCases = [...(live.cases || []), ...(live.closed || [])];
+      console.warn('[Salesforce] Red Zone ultra-safe 30-day SOQL notice, executing standard query:', errSafe.message);
+      try {
+        const resStd = await executeSOQL(standardSafe30dSoql);
+        rawCases = resStd.records || [];
+      } catch (errStd) {
+        console.warn('[Salesforce] Red Zone standard 30-day SOQL notice, using cached live cases fallback:', errStd.message);
+        const live = await fetchAllLiveCasesAndAlerts(false);
+        rawCases = [...(live.cases || []), ...(live.closed || [])];
+      }
     }
   }
 

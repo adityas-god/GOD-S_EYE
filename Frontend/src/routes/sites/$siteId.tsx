@@ -22,6 +22,7 @@ import {
   User,
   Terminal,
   BarChart3,
+  Flame,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,7 @@ import { useAuth } from '@/components/auth-context';
 import {
   sfFetchCasesForSite,
   sfFetchAlertAnalytics,
+  sfFetchRedZoneSites,
   isAlertCase,
   detectSeverity,
   isImTicket,
@@ -191,6 +193,21 @@ function SiteDetail() {
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
   });
   const sfLoading = !sfData;
+
+  // Check if site is in Red Zone so dedicated Red Zone solid tag and breach info can be displayed
+  const { data: redZoneOverview } = useQuery({
+    queryKey: ['salesforce-red-zone'],
+    queryFn: () => sfFetchRedZoneSites(),
+    staleTime: 60_000,
+  });
+
+  const redZoneMatch = useMemo(() => {
+    if (!site?.name || !redZoneOverview?.redZoneSites) return null;
+    const nameLower = site.name.trim().toLowerCase();
+    return redZoneOverview.redZoneSites.find(
+      s => s.siteName.toLowerCase() === nameLower || s.siteId.toLowerCase() === nameLower
+    ) || null;
+  }, [site?.name, redZoneOverview?.redZoneSites]);
 
   // Real-time synchronization via Server-Sent Events from backend webhook listener
   useEffect(() => {
@@ -469,7 +486,27 @@ function SiteDetail() {
               {site.name}
               <span className="heading-dot">.</span>
             </h1>
-            <p className="detail-subtitle">
+            <p className="detail-subtitle" style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              {redZoneMatch && (
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    background: '#dc2626',
+                    color: '#ffffff',
+                    fontSize: 10,
+                    fontWeight: 800,
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    letterSpacing: '0.04em',
+                    lineHeight: 1,
+                    fontFamily: 'var(--font-mono)',
+                    boxShadow: '0 1px 3px rgba(220, 38, 38, 0.4)',
+                  }}
+                >
+                  RED ZONE
+                </span>
+              )}
               {siteProductLines.length > 0 && siteProductLines[0] !== 'Unassigned' && (
                 <>
                   <Building2 />
@@ -503,6 +540,66 @@ function SiteDetail() {
           />
         ) : (
           <>
+
+        {/* Prominent Red Zone Trigger & Tickets Received Banner */}
+        {redZoneMatch && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+              padding: '14px 18px',
+              marginBottom: 20,
+              background: 'color-mix(in srgb, var(--card) 92%, #ef4444 8%)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
+              borderRadius: 8,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 8,
+                  background: 'rgba(239, 68, 68, 0.18)',
+                  color: '#ef4444',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <Flame style={{ width: 20, height: 20 }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Red Zone Trigger &amp; Tickets Received
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#ef4444', marginTop: 2 }}>
+                  {redZoneMatch.reasons?.join(' • ') || 'Reliability Threshold Breached'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontFamily: 'var(--font-mono)' }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase' }}>7d Tickets Received</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
+                  {redZoneMatch.criteria1.sev1Count7d + redZoneMatch.criteria1.sev2Count7d} total ({redZoneMatch.criteria1.sev1Count7d} Sev-1, {redZoneMatch.criteria1.sev2Count7d} Sev-2)
+                </div>
+              </div>
+              <div style={{ height: 28, width: 1, background: 'rgba(239, 68, 68, 0.25)' }} />
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 10, color: 'var(--muted-foreground)', textTransform: 'uppercase' }}>14d MTBF</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--foreground)' }}>
+                  {redZoneMatch.criteria3.mtbfHours !== null ? `${redZoneMatch.criteria3.mtbfHours}h` : 'Healthy'}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary Metric Ribbon */}
         <div className="detail-summary">

@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
+  Shield,
   ShieldAlert,
   AlertTriangle,
   Clock,
@@ -163,7 +164,6 @@ function RedZonePage() {
   const [view, setView] = useState<'grid' | 'list'>('grid');
 
   // Site detail page states
-  const [chartMode, setChartMode] = useState<'timeline' | 'trend'>('timeline');
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const [ticketSearch, setTicketSearch] = useState('');
   const [ticketFilter, setTicketFilter] = useState<'all' | 'sev1' | 'sev2' | 'down' | 'active'>('all');
@@ -309,86 +309,28 @@ function RedZonePage() {
     return metrics;
   }, [currentSite]);
 
-  // Chart coordinates & multi-series metrics
+  // Minimalist Daily Incident Bar Chart Calculations (21-Day evaluation window)
   const chartW = 1000;
   const chartH = 160;
-  const padL = 48;
-  const padR = 48;
-  const padT = 20;
+  const padL = 44;
+  const padR = 24;
+  const padT = 24;
   const baseH = 125;
   const usableW = chartW - padL - padR;
   const usableH = baseH - padT;
 
   const maxChartIncident = useMemo(() => {
-    const maxVal = Math.max(
-      0,
-      ...siteDailyMetrics.map(m => Math.max(m.totalIncidents, m.sev1Count, m.sev2Count, m.resolvedCount))
-    );
-    return Math.max(2, maxVal);
+    const maxVal = Math.max(0, ...siteDailyMetrics.map(m => m.totalIncidents));
+    return Math.max(3, maxVal);
   }, [siteDailyMetrics]);
 
-  const maxChartDowntime = useMemo(() => {
-    const maxDt = Math.max(0, ...siteDailyMetrics.map(m => m.downtimeHours || 0));
-    return Math.max(4, Math.ceil(maxDt));
-  }, [siteDailyMetrics]);
-
-  const chartYSteps = useMemo(() => {
-    return [0, 1, 2, 3].map(step => {
-      const ratio = step / 3;
+  const barChartYSteps = useMemo(() => {
+    return [0, 0.5, 1].map(ratio => {
       const y = baseH - ratio * usableH;
       const val = Math.round(ratio * maxChartIncident);
-      const dtVal = Math.round(ratio * maxChartDowntime * 10) / 10;
-      return { y, val, dtVal };
+      return { y, val };
     });
-  }, [maxChartIncident, maxChartDowntime, baseH, usableH]);
-
-  const { totalPoints, sev1Points, sev2Points, resolvedPoints, dayCoords, downtimeBars } = useMemo(() => {
-    if (siteDailyMetrics.length === 0) {
-      return { totalPoints: [], sev1Points: [], sev2Points: [], resolvedPoints: [], dayCoords: [], downtimeBars: [] };
-    }
-    const tPts: Array<{ x: number; y: number }> = [];
-    const s1Pts: Array<{ x: number; y: number }> = [];
-    const s2Pts: Array<{ x: number; y: number }> = [];
-    const resPts: Array<{ x: number; y: number }> = [];
-    const coords: Array<{ x: number; metric: RedZoneDailyMetric }> = [];
-    const bars: Array<{ x: number; y: number; width: number; height: number; hours: number; metric: RedZoneDailyMetric }> = [];
-
-    const barW = Math.max(10, (usableW / siteDailyMetrics.length) * 0.45);
-
-    siteDailyMetrics.forEach((m, idx) => {
-      const x = padL + (idx / Math.max(1, siteDailyMetrics.length - 1)) * usableW;
-      const yTotal = baseH - (m.totalIncidents / maxChartIncident) * usableH;
-      const ySev1 = baseH - (m.sev1Count / maxChartIncident) * usableH;
-      const ySev2 = baseH - (m.sev2Count / maxChartIncident) * usableH;
-      const yResolved = baseH - (m.resolvedCount / maxChartIncident) * usableH;
-
-      tPts.push({ x, y: yTotal });
-      s1Pts.push({ x, y: ySev1 });
-      s2Pts.push({ x, y: ySev2 });
-      resPts.push({ x, y: yResolved });
-      coords.push({ x, metric: m });
-
-      if (m.downtimeHours > 0) {
-        const barH = (m.downtimeHours / maxChartDowntime) * (usableH * 0.9);
-        bars.push({
-          x: x - barW / 2,
-          y: baseH - barH,
-          width: barW,
-          height: barH,
-          hours: m.downtimeHours,
-          metric: m,
-        });
-      }
-    });
-
-    return { totalPoints: tPts, sev1Points: s1Pts, sev2Points: s2Pts, resolvedPoints: resPts, dayCoords: coords, downtimeBars: bars };
-  }, [siteDailyMetrics, maxChartIncident, maxChartDowntime, baseH, usableH, usableW]);
-
-  const totalLinePath = useMemo(() => createSmoothPath(totalPoints), [totalPoints]);
-  const totalAreaPath = useMemo(() => createSmoothAreaPath(totalPoints, baseH), [totalPoints, baseH]);
-  const sev1LinePath = useMemo(() => createSmoothPath(sev1Points), [sev1Points]);
-  const sev2LinePath = useMemo(() => createSmoothPath(sev2Points), [sev2Points]);
-  const resolvedLinePath = useMemo(() => createSmoothPath(resolvedPoints), [resolvedPoints]);
+  }, [maxChartIncident, baseH, usableH]);
 
   // Rich management insights calculations
   const managementInsights = useMemo(() => {
@@ -524,30 +466,38 @@ function RedZonePage() {
             <div className="page-heading">
               <div>
                 <div className="eyebrow" style={{ fontFamily: 'var(--font-mono)' }}>
-                  <span style={{ background: isBreach ? '#ef4444' : '#f59e0b' }} />
-                  OPERATIONAL RELIABILITY AUDIT &amp; INCIDENT ROOT CAUSE
+                  <span />
+                  OPERATIONAL RELIABILITY AUDIT
                 </div>
-                <h1
-                  style={{
-                    fontSize: 40,
-                    fontWeight: 700,
-                    letterSpacing: '-0.025em',
-                    margin: '12px 0 8px',
-                    fontFamily: 'var(--font-sans)',
-                  }}
-                >
+                <h1 style={{ fontFamily: 'var(--font-sans)', fontSize: 37, fontWeight: 500, margin: '12px 0 8px' }}>
                   {currentSite.siteName}
-                  <span className="heading-dot" style={{ color: isBreach ? '#ef4444' : '#f59e0b' }}>
-                    .
-                  </span>
+                  <span className="heading-dot">.</span>
                 </h1>
                 <div
                   className="detail-subtitle"
-                  style={{ flexWrap: 'wrap', gap: 10, fontSize: 12.5, fontFamily: 'var(--font-sans)' }}
+                  style={{ flexWrap: 'wrap', gap: 10, fontSize: 12, fontFamily: 'var(--font-sans)', alignItems: 'center' }}
                 >
                   <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      background: '#dc2626',
+                      color: '#ffffff',
+                      fontSize: 9.5,
+                      fontWeight: 700,
+                      padding: '2.5px 7px',
+                      borderRadius: 4,
+                      letterSpacing: '0.04em',
+                      lineHeight: 1,
+                      fontFamily: 'var(--font-mono)',
+                    }}
+                  >
+                    RED ZONE
+                  </span>
+
+                  <span
                     className={`rz-badge-pill ${isBreach ? 'rz-badge-breach' : 'rz-badge-cooling'}`}
-                    style={{ fontSize: 9.5, padding: '3px 8px' }}
+                    style={{ fontSize: 9.5, padding: '2.5px 7px' }}
                   >
                     {isBreach ? (
                       <>
@@ -557,14 +507,13 @@ function RedZonePage() {
                             height: 6,
                             borderRadius: '50%',
                             background: '#ef4444',
-                            boxShadow: '0 0 6px #ef4444',
                           }}
                         />
                         ACTIVE CRITERIA BREACH
                       </>
                     ) : (
                       <>
-                        <Clock style={{ width: 11, height: 11 }} />
+                        <Clock style={{ width: 10, height: 10 }} />
                         {currentSite.daysRemainingToExit}d TO EXIT PROBATION
                       </>
                     )}
@@ -580,7 +529,7 @@ function RedZonePage() {
                     </>
                   )}
 
-                  <span style={{ color: isBreach ? '#ef4444' : '#f59e0b', fontWeight: 500 }}>
+                  <span style={{ color: 'var(--muted-foreground)' }}>
                     {currentSite.reasons[0] || 'Reliability Threshold Breached'}
                   </span>
                 </div>
@@ -625,293 +574,143 @@ function RedZonePage() {
               </div>
             </div>
 
-            {/* 4-Pillar Detail Summary Ribbon */}
-            <div className="detail-summary" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-              <div>
-                <Flame
-                  style={{
-                    color: currentSite.criteria1.sev1Count7d >= 3 ? '#ef4444' : 'var(--muted-foreground)',
-                  }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                    7-Day Sev-1 Incidents
-                  </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-foreground)' }}>
-                    Threshold: 3 incidents
-                  </span>
-                </div>
-                <strong
-                  style={{
-                    color: currentSite.criteria1.sev1Count7d >= 3 ? '#ef4444' : 'var(--foreground)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 16,
-                  }}
-                >
-                  {currentSite.criteria1.sev1Count7d}{' '}
-                  {currentSite.criteria1.sev1Count7d >= 3 ? '(BREACH)' : '(OK)'}
+            {/* Reliability Breach Context Banner */}
+            <div className="connection-banner" style={{ marginTop: 22, marginBottom: 26 }}>
+              <div className="banner-symbol">
+                <Flame />
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <strong style={{ fontSize: 13, color: 'var(--foreground)' }}>
+                  {currentSite.reasons.join(' • ') || 'Reliability Threshold Breached'}
                 </strong>
+                <p style={{ color: 'var(--muted-foreground)', fontSize: 11, marginTop: 4 }}>
+                  Active operational reliability audit — monitoring qualifying failure incidents across the 21-day evaluation cycle.
+                </p>
               </div>
 
-              <div>
-                <AlertTriangle
-                  style={{
-                    color: currentSite.criteria1.sev2Count7d >= 5 ? '#f59e0b' : 'var(--muted-foreground)',
-                  }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                    7-Day Sev-2 Incidents
-                  </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-foreground)' }}>
-                    Threshold: 5 incidents
-                  </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20, fontFamily: 'var(--font-mono)' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)', textTransform: 'uppercase' }}>7d Tickets Received</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--foreground)' }}>
+                    {currentSite.criteria1.sev1Count7d + currentSite.criteria1.sev2Count7d} total
+                  </div>
+                  <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)' }}>
+                    ({currentSite.criteria1.sev2Count7d} Sev-2, {currentSite.criteria1.sev1Count7d} Sev-1)
+                  </div>
                 </div>
-                <strong
-                  style={{
-                    color: currentSite.criteria1.sev2Count7d >= 5 ? '#f59e0b' : 'var(--foreground)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 16,
-                  }}
-                >
-                  {currentSite.criteria1.sev2Count7d}{' '}
-                  {currentSite.criteria1.sev2Count7d >= 5 ? '(BREACH)' : '(OK)'}
-                </strong>
-              </div>
-
-              <div>
-                <Clock
-                  style={{
-                    color: currentSite.criteria3.met ? '#ef4444' : 'var(--muted-foreground)',
-                  }}
-                />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                    14-Day Site MTBF
-                  </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-foreground)' }}>
-                    Target: &ge; 36.0 hours
-                  </span>
+                <div style={{ height: 28, width: 1, background: 'var(--border)' }} />
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)', textTransform: 'uppercase' }}>14d Failure Count</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--foreground)' }}>
+                    {currentSite.criteria3.incidentCount14d} tickets
+                  </div>
+                  <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)' }}>
+                    {managementInsights?.totalDowntimeHours || 0}h total outage
+                  </div>
                 </div>
-                <strong
-                  style={{
-                    color: currentSite.criteria3.met ? '#ef4444' : 'var(--foreground)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: 16,
-                  }}
-                >
-                  {currentSite.criteria3.mtbfHours !== null ? `${currentSite.criteria3.mtbfHours}h` : 'Healthy'}
-                </strong>
-              </div>
-
-              <div>
-                <Timer style={{ color: 'var(--blue)' }} />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)' }}>
-                    Mean Resolution (MTTR)
-                  </span>
-                  <span style={{ fontSize: 9, color: 'var(--muted-foreground)' }}>
-                    Average closing time
-                  </span>
-                </div>
-                <strong style={{ color: 'var(--foreground)', fontFamily: 'var(--font-mono)', fontSize: 16 }}>
-                  {currentSite.meanTimeToResolveHours !== null &&
-                  currentSite.meanTimeToResolveHours !== undefined
-                    ? `${currentSite.meanTimeToResolveHours}h`
-                    : 'Active'}
-                </strong>
               </div>
             </div>
 
-            {/* ─── Executive Intelligence & Management Insights Grid ─── */}
-            <div className="rz-insights-grid">
-              {/* Card 1: Failure Cadence & Recurrence Velocity */}
-              <div className={`rz-insight-card ${isBreach ? 'alert-breach' : 'cooling-probation'}`}>
-                <div className="rz-insight-card-header">
-                  <span className="rz-insight-title">
-                    <Activity style={{ width: 13, height: 13, color: isBreach ? '#ef4444' : '#f59e0b' }} />
-                    Failure Cadence &amp; Pace
-                  </span>
-                  <span
-                    className="rz-insight-metric-tag"
-                    style={{
-                      background: isBreach ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-                      color: isBreach ? '#ef4444' : '#f59e0b',
-                      border: `1px solid ${isBreach ? 'rgba(239, 68, 68, 0.35)' : 'rgba(245, 158, 11, 0.35)'}`,
-                    }}
-                  >
-                    {managementInsights?.mtbfDeficitPct ? `-${managementInsights.mtbfDeficitPct}% Deficit` : 'Within Target'}
+            {/* Standard 4-Column Overview Metrics Grid */}
+            <div className="overview-metrics" style={{ marginTop: 0, marginBottom: 28 }}>
+              {/* Metric 1: 7-Day Incidents */}
+              <div className="metric">
+                <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                  <Flame />
+                  7-Day Incident Load
+                </span>
+                <div>
+                  <strong>
+                    {currentSite.criteria1.sev1Count7d + currentSite.criteria1.sev2Count7d}
+                  </strong>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>
+                    {currentSite.criteria1.sev2Count7d} Sev-2 • {currentSite.criteria1.sev1Count7d} Sev-1
                   </span>
                 </div>
-                <div>
-                  <div className="rz-insight-kpi">
-                    1 failure / {managementInsights?.failureCadenceHours || 36}h
-                  </div>
-                  <p className="rz-insight-sub" style={{ marginTop: 6 }}>
-                    Operating interval pace across {currentSite.criteria3.incidentCount14d} failure incidents in the last 14 days. MTBF benchmark target is &ge; 36.0h.
-                  </p>
+                <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                  <span className="source-dot" style={{ background: currentSite.criteria1.sev2Count7d >= 5 || currentSite.criteria1.sev1Count7d >= 3 ? 'var(--primary)' : 'var(--muted-foreground)' }} />
+                  Threshold: &lt; 5 Sev-2, &lt; 3 Sev-1
                 </div>
               </div>
 
-              {/* Card 2: Cumulative Downtime & Availability Loss */}
-              <div className="rz-insight-card">
-                <div className="rz-insight-card-header">
-                  <span className="rz-insight-title">
-                    <Timer style={{ width: 13, height: 13, color: 'var(--blue)' }} />
-                    Cumulative Downtime
-                  </span>
-                  <span
-                    className="rz-insight-metric-tag"
-                    style={{
-                      background: 'rgba(56, 189, 248, 0.12)',
-                      color: '#38bdf8',
-                      border: '1px solid rgba(56, 189, 248, 0.3)',
-                    }}
-                  >
-                    {managementInsights?.operationalAvailabilityPct}% Availability
+              {/* Metric 2: 14-Day Site MTBF */}
+              <div className="metric">
+                <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                  <Clock />
+                  14-Day Site MTBF
+                </span>
+                <div>
+                  <strong>
+                    {currentSite.criteria3.mtbfHours !== null ? `${currentSite.criteria3.mtbfHours}h` : 'Healthy'}
+                  </strong>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>
+                    1 failure / {managementInsights?.failureCadenceHours || 36}h pace
                   </span>
                 </div>
+                <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                  <span className="source-dot" style={{ background: currentSite.criteria3.met ? 'var(--primary)' : 'var(--muted-foreground)' }} />
+                  Benchmark target &ge; 36.0h
+                </div>
+              </div>
+
+              {/* Metric 3: Cumulative Downtime */}
+              <div className="metric">
+                <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                  <Timer />
+                  Cumulative Outage
+                </span>
                 <div>
-                  <div className="rz-insight-kpi">
+                  <strong>
                     {managementInsights?.totalDowntimeHours || 0} hrs
-                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--muted-foreground)' }}>
-                      total outage
-                    </span>
-                  </div>
-                  <p className="rz-insight-sub" style={{ marginTop: 6 }}>
-                    {managementInsights?.longestOutageIncident ? (
-                      <>
-                        Peak single downtime: <strong style={{ color: 'var(--foreground)' }}>{managementInsights.longestOutageIncident.durationHours}h</strong> on Case #{managementInsights.longestOutageIncident.caseNumber}.
-                      </>
-                    ) : (
-                      'No significant extended outages recorded during this cycle.'
-                    )}
-                  </p>
+                  </strong>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>
+                    {managementInsights?.operationalAvailabilityPct}% est. availability
+                  </span>
+                </div>
+                <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                  <span className="source-dot" />
+                  Peak single: {managementInsights?.longestOutageIncident ? `${managementInsights.longestOutageIncident.durationHours}h` : 'None'}
                 </div>
               </div>
 
-              {/* Card 3: Subsystem Domain Breakdown */}
-              <div className="rz-insight-card">
-                <div className="rz-insight-card-header">
-                  <span className="rz-insight-title">
-                    <Layers style={{ width: 13, height: 13, color: 'var(--foreground)' }} />
-                    Subsystem Impact Area
-                  </span>
-                  <span
-                    className="rz-insight-metric-tag"
-                    style={{
-                      background: 'var(--secondary)',
-                      color: 'var(--foreground)',
-                      border: '1px solid var(--border)',
-                    }}
-                  >
-                    Primary: {managementInsights?.dominantCategory || 'Fleet'}
-                  </span>
-                </div>
+              {/* Metric 4: 21-Day Trajectory */}
+              <div className="metric">
+                <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                  <Activity />
+                  21-Day Trajectory
+                </span>
                 <div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                      <span style={{ color: 'var(--muted-foreground)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <Cpu style={{ width: 12, height: 12, color: 'var(--blue)' }} />
-                        Robotics &amp; Fleet:
-                      </span>
-                      <strong>{managementInsights?.catCounts['Robotics & Hardware'] || 0}</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                      <span style={{ color: 'var(--muted-foreground)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <Server style={{ width: 12, height: 12, color: '#a855f7' }} />
-                        Software &amp; DB:
-                      </span>
-                      <strong>{managementInsights?.catCounts['Software & Database'] || 0}</strong>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-                      <span style={{ color: 'var(--muted-foreground)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                        <AlertTriangle style={{ width: 12, height: 12, color: '#ef4444' }} />
-                        System Outage:
-                      </span>
-                      <strong style={{ color: (managementInsights?.catCounts['System Outage'] || 0) > 0 ? '#ef4444' : undefined }}>
-                        {managementInsights?.catCounts['System Outage'] || 0}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Card 4: Management Exit Trajectory & Action Plan */}
-              <div className="rz-insight-card">
-                <div className="rz-insight-card-header">
-                  <span className="rz-insight-title">
-                    <CheckCircle2 style={{ width: 13, height: 13, color: '#22c55e' }} />
-                    21-Day Exit Trajectory
-                  </span>
-                  <span
-                    className="rz-insight-metric-tag"
-                    style={{
-                      background: 'rgba(34, 197, 94, 0.12)',
-                      color: '#22c55e',
-                      border: '1px solid rgba(34, 197, 94, 0.3)',
-                    }}
-                  >
-                    {currentSite.daysRemainingToExit}d Remaining
-                  </span>
-                </div>
-                <div>
-                  <div className="rz-insight-kpi">
+                  <strong>
                     {currentSite.daysSinceBreach} / 21d
-                    <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--muted-foreground)' }}>
-                      clean streak
-                    </span>
-                  </div>
-                  <p className="rz-insight-sub" style={{ marginTop: 6 }}>
-                    {isBreach
-                      ? 'Action Required: Active breach detected. Complete on-site diagnostics and resolve active tickets.'
-                      : `Cooling Phase: Maintain zero Sev-1 and < 5 Sev-2 incidents for ${currentSite.daysRemainingToExit} more consecutive days to automatically exit.`}
-                  </p>
+                  </strong>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>
+                    {isBreach ? 'Active breach detected' : `${currentSite.daysRemainingToExit} days remaining to exit`}
+                  </span>
+                </div>
+                <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                  <span className="source-dot" style={{ background: isBreach ? 'var(--primary)' : 'var(--success)' }} />
+                  {isBreach ? 'Criteria breach active' : 'Probation cooling in progress'}
                 </div>
               </div>
             </div>
 
-            {/* ─── Panel 1: Dual-Mode Telemetry & Ticket Lifespan Visualization ─── */}
+            {/* Minimalist 21-Day Incident Frequency Bar Graph */}
             <section className="data-panel" style={{ marginBottom: 28 }}>
               <div className="data-panel-heading">
-                <div className="provider-symbol salesforce-symbol" style={{ background: 'oklch(0.66 0.22 34 / 0.15)', color: '#ef4444' }}>
-                  {chartMode === 'timeline' ? <Clock style={{ color: '#ef4444' }} /> : <TrendingUp style={{ color: '#ef4444' }} />}
+                <div className="provider-symbol">
+                  <BarChart3 />
                 </div>
                 <div>
                   <span className="eyebrow" style={{ fontFamily: 'var(--font-mono)' }}>
-                    {chartMode === 'timeline' ? 'AUDITED INCIDENT LIFECYCLES' : '21-DAY INCIDENT FREQUENCY & TELEMETRY'}
+                    OPERATIONAL RELIABILITY TELEMETRY
                   </span>
                   <h2 style={{ fontFamily: 'var(--font-sans)', fontSize: 18, fontWeight: 600 }}>
-                    {chartMode === 'timeline'
-                      ? 'Ticket Lifespan, Arrival & Closing Times'
-                      : '21-Day Red Zone Incident Trend & Downtime Volume'}
+                    21-Day Daily Incident Frequency
                   </h2>
                 </div>
 
-                {/* Mode Switcher Tabs */}
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'flex', gap: 4, background: 'var(--secondary)', padding: 3, borderRadius: 6, border: '1px solid var(--border)' }}>
-                    <button
-                      type="button"
-                      className={`rz-pill-tab ${chartMode === 'timeline' ? 'active' : ''}`}
-                      onClick={() => setChartMode('timeline')}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                    >
-                      <Clock style={{ width: 11, height: 11 }} />
-                      Ticket Lifespan
-                    </button>
-                    <button
-                      type="button"
-                      className={`rz-pill-tab ${chartMode === 'trend' ? 'active' : ''}`}
-                      onClick={() => setChartMode('trend')}
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}
-                    >
-                      <TrendingUp style={{ width: 11, height: 11 }} />
-                      21-Day Trend
-                    </button>
-                  </div>
-
-                  {chartMode === 'trend' && hoveredDayIdx !== null && siteDailyMetrics[hoveredDayIdx] && (
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {hoveredDayIdx !== null && siteDailyMetrics[hoveredDayIdx] && (
                     <div
                       style={{
                         fontSize: 11,
@@ -928,525 +727,172 @@ function RedZonePage() {
                     >
                       <strong>{siteDailyMetrics[hoveredDayIdx].dayLabel}</strong>
                       <span>•</span>
-                      <span style={{ color: '#ef4444' }}>
-                        {siteDailyMetrics[hoveredDayIdx].sev1Count} Sev-1
+                      <span style={{ color: 'var(--foreground)' }}>
+                        {siteDailyMetrics[hoveredDayIdx].totalIncidents} tickets
                       </span>
-                      <span>•</span>
-                      <span style={{ color: '#f59e0b' }}>
-                        {siteDailyMetrics[hoveredDayIdx].sev2Count} Sev-2
+                      <span style={{ color: 'var(--muted-foreground)' }}>
+                        ({siteDailyMetrics[hoveredDayIdx].sev2Count} Sev-2, {siteDailyMetrics[hoveredDayIdx].sev1Count} Sev-1)
                       </span>
-                      <span>•</span>
-                      <span style={{ color: '#10b981' }}>{siteDailyMetrics[hoveredDayIdx].resolvedCount} Resolved</span>
-                      <span>•</span>
-                      <span style={{ color: '#a855f7' }}>{siteDailyMetrics[hoveredDayIdx].downtimeHours}h Outage</span>
+                      {siteDailyMetrics[hoveredDayIdx].downtimeHours > 0 && (
+                        <>
+                          <span>•</span>
+                          <span style={{ color: 'var(--primary)' }}>
+                            {siteDailyMetrics[hoveredDayIdx].downtimeHours}h downtime
+                          </span>
+                        </>
+                      )}
                     </div>
                   )}
 
-                  <span className="live-badge" style={{ fontFamily: 'var(--font-mono)' }}>
-                    <span className="live-pulse-dot" style={{ background: chartMode === 'timeline' ? '#22c55e' : '#ef4444' }} />
-                    {chartMode === 'timeline' ? `${allSiteIncidents.length} Monitored Lifecycles` : '21-Day Red Zone Cycle'}
+                  <span className="pill" style={{ fontFamily: 'var(--font-mono)' }}>
+                    {allSiteIncidents.length} Qualifying Incidents
                   </span>
                 </div>
               </div>
 
-              {/* View 1: Ticket Lifespan & Timeline (When It Came, Outage Duration, Closing Time, Actions) */}
-              {chartMode === 'timeline' ? (
-                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {allSiteIncidents.length > 0 ? (
-                    allSiteIncidents.map(inc => {
-                      const isExpanded = expandedTicketId === inc.id;
-                      const isSev1 = inc.severity === 'sev1';
-                      const isSev2 = inc.severity === 'sev2';
-                      const isClosed =
-                        inc.status?.toLowerCase().includes('closed') ||
-                        inc.status?.toLowerCase().includes('resolved') ||
-                        Boolean(inc.closedDate || inc.endTime);
+              <div style={{ padding: '20px 24px 14px' }}>
+                <div style={{ width: '100%', height: 160, position: 'relative' }}>
+                  <svg
+                    width="100%"
+                    height="100%"
+                    viewBox={`0 0 ${chartW} ${chartH}`}
+                    preserveAspectRatio="none"
+                    style={{ overflow: 'visible', display: 'block' }}
+                    onMouseLeave={() => setHoveredDayIdx(null)}
+                  >
+                    {/* Horizontal dashed grid lines with Y-axis count labels */}
+                    {barChartYSteps.map((step, i) => (
+                      <g key={i}>
+                        <line
+                          x1={padL}
+                          y1={step.y}
+                          x2={chartW - padR}
+                          y2={step.y}
+                          stroke="var(--border)"
+                          strokeDasharray="3 3"
+                          strokeWidth="1"
+                        />
+                        <text
+                          x={padL - 10}
+                          y={step.y + 3.5}
+                          textAnchor="end"
+                          fill="var(--muted-foreground)"
+                          fontSize="9"
+                          fontFamily="var(--font-mono)"
+                        >
+                          {step.val}
+                        </text>
+                      </g>
+                    ))}
+
+                    {/* Minimalist Bar Columns */}
+                    {siteDailyMetrics.map((m, idx) => {
+                      const totalDays = siteDailyMetrics.length;
+                      const slotW = usableW / totalDays;
+                      const barW = Math.max(14, Math.min(26, slotW * 0.55));
+                      const x = padL + idx * slotW + (slotW - barW) / 2;
+                      const barH = m.totalIncidents > 0 ? Math.max(4, (m.totalIncidents / maxChartIncident) * usableH) : 0;
+                      const y = baseH - barH;
+                      const isHovered = hoveredDayIdx === idx;
+                      const showLabel = idx % 3 === 0 || idx === totalDays - 1 || isHovered;
 
                       return (
-                        <div
-                          key={`lifespan-${inc.id || inc.caseNumber}`}
-                          style={{
-                            background: 'var(--card)',
-                            border: isExpanded ? '1px solid var(--foreground)' : '1px solid var(--border)',
-                            borderRadius: 8,
-                            padding: '14px 16px',
-                            transition: 'border-color 0.15s ease, background 0.15s ease',
-                          }}
+                        <g
+                          key={m.date}
+                          onMouseEnter={() => setHoveredDayIdx(idx)}
+                          style={{ cursor: 'pointer' }}
                         >
-                          {/* Top row: Ticket identity & Badges */}
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <a
-                                href={`https://greyorangeorg.my.salesforce.com/${inc.id}`}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="case-number-tag"
-                                title={`Open Case ${inc.caseNumber} in Salesforce`}
-                                style={{ fontSize: 11, fontWeight: 700 }}
-                              >
-                                Case #{inc.caseNumber}
-                                <ExternalLink style={{ width: 10, height: 10 }} />
-                              </a>
-
-                              {isSev1 ? (
-                                <span
-                                  className="case-priority-badge p-p1"
-                                  style={{ background: '#7f1d1d', color: '#fca5a5', border: '1px solid #ef4444' }}
-                                >
-                                  <Flame style={{ width: 10, height: 10 }} />
-                                  SEV 1
-                                </span>
-                              ) : isSev2 ? (
-                                <span
-                                  className="case-priority-badge p-p2"
-                                  style={{ background: '#78350f', color: '#fcd34d', border: '1px solid #f59e0b' }}
-                                >
-                                  <AlertTriangle style={{ width: 10, height: 10 }} />
-                                  SEV 2
-                                </span>
-                              ) : (
-                                <span className="case-priority-badge p-p3">
-                                  {inc.severity.toUpperCase()}
-                                </span>
-                              )}
-
-                              {inc.isSiteDown && (
-                                <span className="case-down-badge" style={{ fontSize: 9 }}>
-                                  100% SITE DOWN
-                                </span>
-                              )}
-
-                              {inc.productType && (
-                                <span
-                                  style={{
-                                    fontSize: 9.5,
-                                    fontFamily: 'var(--font-mono)',
-                                    padding: '2px 7px',
-                                    borderRadius: 4,
-                                    background: 'var(--secondary)',
-                                    border: '1px solid var(--border)',
-                                    color: 'var(--muted-foreground)',
-                                  }}
-                                >
-                                  {inc.productType}
-                                </span>
-                              )}
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              {isClosed ? (
-                                <span
-                                  className="case-status-badge"
-                                  style={{
-                                    background: 'rgba(34, 197, 94, 0.12)',
-                                    color: '#22c55e',
-                                    borderColor: 'rgba(34, 197, 94, 0.35)',
-                                  }}
-                                >
-                                  <CheckCircle2 style={{ width: 11, height: 11, marginRight: 4 }} />
-                                  Resolved &amp; Closed
-                                </span>
-                              ) : (
-                                <span
-                                  className="case-status-badge status-new"
-                                  style={{
-                                    background: 'rgba(239, 68, 68, 0.15)',
-                                    color: '#ef4444',
-                                    borderColor: 'rgba(239, 68, 68, 0.4)',
-                                  }}
-                                >
-                                  <span className="live-pulse-dot" style={{ marginRight: 4 }} />
-                                  {inc.status || 'Active Outage'}
-                                </span>
-                              )}
-
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setExpandedTicketId(isExpanded ? null : inc.id)}
-                                style={{ height: 26, padding: '0 8px', fontSize: 10.5, gap: 4, fontFamily: 'var(--font-sans)' }}
-                              >
-                                <span>{isExpanded ? 'Hide Narrative' : 'Actions & RCA'}</span>
-                                {isExpanded ? <ChevronUp style={{ width: 12, height: 12 }} /> : <ChevronDown style={{ width: 12, height: 12 }} />}
-                              </Button>
-                            </div>
-                          </div>
-
-                          {/* Subject */}
-                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)', marginBottom: 12, fontFamily: 'var(--font-sans)' }}>
-                            {inc.subject}
-                          </div>
-
-                          {/* The Visual Lifespan Journey Bar (When It Came -> Duration / Outage -> Closing Time) */}
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: 'minmax(180px, 1fr) auto minmax(180px, 1fr)',
-                              alignItems: 'center',
-                              gap: 12,
-                              background: 'var(--secondary)',
-                              padding: '10px 14px',
-                              borderRadius: 6,
-                              border: '1px solid var(--border)',
-                            }}
-                          >
-                            {/* Left: When It Came */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                              <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)', color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <Clock style={{ width: 10, height: 10, color: isSev1 ? '#ef4444' : '#f59e0b' }} />
-                                When It Came (Arrival)
-                              </span>
-                              <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--foreground)', fontFamily: 'var(--font-mono)' }}>
-                                {formatTimestamp(inc.createdDate)}
-                              </span>
-                              <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
-                                {formatRelativeTime(inc.createdDate)}
-                              </span>
-                            </div>
-
-                            {/* Center: Outage Span & Duration */}
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 160 }}>
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontFamily: 'var(--font-mono)',
-                                  fontWeight: 700,
-                                  color: inc.durationHours && inc.durationHours > 2 ? '#ef4444' : 'var(--foreground)',
-                                  background: 'var(--card)',
-                                  padding: '2px 8px',
-                                  borderRadius: 999,
-                                  border: '1px solid var(--border)',
-                                }}
-                              >
-                                <Timer style={{ width: 10, height: 10, display: 'inline', marginRight: 4, color: 'var(--blue)' }} />
-                                {inc.durationHours !== null && inc.durationHours !== undefined
-                                  ? `${inc.durationHours} hrs outage`
-                                  : 'Ongoing Active Outage'}
-                              </span>
-                              {/* Visual connector line */}
-                              <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isSev1 ? '#ef4444' : '#f59e0b' }} />
-                                <div style={{ flex: 1, height: 2, background: isClosed ? 'var(--border)' : 'linear-gradient(90deg, #ef4444, #f59e0b)' }} />
-                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isClosed ? '#22c55e' : '#ef4444' }} />
-                              </div>
-                            </div>
-
-                            {/* Right: Closing Time */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end', textAlign: 'right' }}>
-                              <span style={{ fontSize: 9.5, textTransform: 'uppercase', fontFamily: 'var(--font-mono)', color: 'var(--muted-foreground)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <CheckCircle2 style={{ width: 10, height: 10, color: isClosed ? '#22c55e' : 'var(--muted-foreground)' }} />
-                                Closing Time
-                              </span>
-                              <span style={{ fontSize: 11.5, fontWeight: 600, color: isClosed ? 'var(--foreground)' : '#f59e0b', fontFamily: 'var(--font-mono)' }}>
-                                {inc.closedDate || inc.endTime ? formatTimestamp(inc.closedDate || inc.endTime) : 'Still Active / In Progress'}
-                              </span>
-                              <span style={{ fontSize: 9.5, color: isClosed ? '#22c55e' : '#f59e0b', fontFamily: 'var(--font-mono)' }}>
-                                {isClosed ? 'Resolved & Restored' : 'Resolution Pending'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Inline Expanded Actions & RCA */}
-                          {isExpanded && (
-                            <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontWeight: 600,
-                                  textTransform: 'uppercase',
-                                  letterSpacing: '0.04em',
-                                  color: 'var(--muted-foreground)',
-                                  fontFamily: 'var(--font-mono)',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                }}
-                              >
-                                <FileText style={{ width: 11, height: 11 }} />
-                                Actions Taken &amp; Narrative Root Cause (Salesforce)
-                              </span>
-                              <div className="rz-desc-box">
-                                {inc.description || 'No detailed actions or narrative notes entered in Salesforce for this ticket.'}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    <div style={{ padding: '36px 20px', textAlign: 'center', color: 'var(--muted-foreground)', fontSize: 12 }}>
-                      No qualifying incidents recorded for this site.
-                    </div>
-                  )}
-                </div>
-              ) : (
-                /* View 2: Multi-Series 21-Day Incident Trend & Downtime Volume Graph */
-                <div style={{ padding: '18px 24px 12px' }}>
-                  <div style={{ width: '100%', height: chartH, position: 'relative' }}>
-                    <svg
-                      width="100%"
-                      height="100%"
-                      viewBox={`0 0 ${chartW} ${chartH}`}
-                      preserveAspectRatio="none"
-                      onMouseMove={e => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        const relX = (e.clientX - rect.left) / rect.width;
-                        const idx = Math.min(
-                          siteDailyMetrics.length - 1,
-                          Math.max(0, Math.round(relX * (siteDailyMetrics.length - 1)))
-                        );
-                        setHoveredDayIdx(idx);
-                      }}
-                      onMouseLeave={() => setHoveredDayIdx(null)}
-                      style={{ overflow: 'visible', cursor: 'crosshair', display: 'block' }}
-                    >
-                      <defs>
-                        <linearGradient id="rzSiteSev1Grad" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#ef4444" stopOpacity="0.2" />
-                          <stop offset="90%" stopColor="#ef4444" stopOpacity="0.02" />
-                          <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-                        </linearGradient>
-                      </defs>
-
-                      {/* Horizontal Grid with Dual Y-Axis Labels */}
-                      {chartYSteps.map((step, idx) => (
-                        <g key={idx}>
-                          <line
-                            x1={padL}
-                            y1={step.y}
-                            x2={chartW - padR}
-                            y2={step.y}
-                            stroke="var(--border)"
-                            strokeDasharray="3 3"
-                            strokeWidth="1"
-                            opacity={step.val === 0 ? 0.9 : 0.45}
+                          {/* Invisible wider hover hit-area */}
+                          <rect
+                            x={padL + idx * slotW}
+                            y={padT - 10}
+                            width={slotW}
+                            height={usableH + 20}
+                            fill="transparent"
                           />
-                          {/* Left Y-axis label: Incident count */}
-                          <text
-                            x={padL - 10}
-                            y={step.y + 3.5}
-                            textAnchor="end"
-                            fill="var(--muted-foreground)"
-                            fontSize="9.5"
-                            fontFamily="var(--font-mono)"
-                          >
-                            {step.val}
-                          </text>
-                          {/* Right Y-axis label: Outage Downtime hours */}
-                          <text
-                            x={chartW - padR + 10}
-                            y={step.y + 3.5}
-                            textAnchor="start"
-                            fill="#a855f7"
-                            fontSize="9"
-                            fontFamily="var(--font-mono)"
-                          >
-                            {step.dtVal}h
-                          </text>
-                        </g>
-                      ))}
 
-                      {/* Vertical Day Lines & X-Axis Labels */}
-                      {dayCoords.map((c, idx) => {
-                        const showLabel = idx % 2 === 0 || idx === dayCoords.length - 1 || hoveredDayIdx === idx;
-                        return (
-                          <g key={idx}>
+                          {/* Baseline indicator for 0-incident days */}
+                          {m.totalIncidents === 0 ? (
                             <line
-                              x1={c.x}
-                              y1={padT}
-                              x2={c.x}
+                              x1={x}
+                              y1={baseH}
+                              x2={x + barW}
                               y2={baseH}
                               stroke="var(--border)"
-                              strokeDasharray="2 3"
-                              strokeWidth="1"
-                              opacity={hoveredDayIdx === idx ? 0.8 : 0.25}
+                              strokeWidth="2"
+                              opacity={isHovered ? 1 : 0.6}
                             />
-                            {showLabel && (
+                          ) : (
+                            <>
+                              {/* Clean Minimalist Bar with rounded top */}
+                              <rect
+                                x={x}
+                                y={y}
+                                width={barW}
+                                height={barH}
+                                rx={3}
+                                fill={isHovered ? 'var(--soft-orange)' : 'var(--primary)'}
+                                opacity={isHovered ? 1 : 0.9}
+                              />
+
+                              {/* Incident count text on top of bar */}
                               <text
-                                x={c.x}
-                                y={baseH + 16}
+                                x={x + barW / 2}
+                                y={y - 5}
                                 textAnchor="middle"
-                                fill={hoveredDayIdx === idx ? 'var(--foreground)' : 'var(--muted-foreground)'}
-                                fontSize="9"
+                                fill={isHovered ? 'var(--foreground)' : 'var(--muted-foreground)'}
+                                fontSize="9.5"
                                 fontFamily="var(--font-mono)"
-                                fontWeight={hoveredDayIdx === idx ? 'bold' : 'normal'}
+                                fontWeight={isHovered ? '700' : '500'}
                               >
-                                {c.metric.dayLabel}
+                                {m.totalIncidents}
                               </text>
-                            )}
-                          </g>
-                        );
-                      })}
+                            </>
+                          )}
 
-                      {/* Downtime Volume Bars */}
-                      {downtimeBars.map((bar, idx) => (
-                        <rect
-                          key={`bar-${idx}`}
-                          x={bar.x}
-                          y={bar.y}
-                          width={bar.width}
-                          height={bar.height}
-                          rx={3}
-                          fill="rgba(168, 85, 247, 0.28)"
-                          stroke="#a855f7"
-                          strokeWidth="1"
-                          opacity={hoveredDayIdx !== null && dayCoords[hoveredDayIdx]?.x === bar.x + bar.width / 2 ? 1 : 0.8}
-                        />
-                      ))}
-
-                      {/* Sev-1 Area Gradient */}
-                      {sev1LinePath && <path d={createSmoothAreaPath(sev1Points, baseH)} fill="url(#rzSiteSev1Grad)" />}
-
-                      {/* Resolved Incidents Curve (Emerald) */}
-                      {resolvedLinePath && (
-                        <path
-                          d={resolvedLinePath}
-                          fill="none"
-                          stroke="#10b981"
-                          strokeWidth="2.0"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          opacity="0.85"
-                        />
-                      )}
-
-                      {/* Sev-2 Incidents Curve (Amber Dashed) */}
-                      {sev2LinePath && (
-                        <path
-                          d={sev2LinePath}
-                          fill="none"
-                          stroke="#f59e0b"
-                          strokeWidth="2.2"
-                          strokeDasharray="4 2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      )}
-
-                      {/* Sev-1 Incidents Curve (Crimson Solid) */}
-                      {sev1LinePath && (
-                        <path
-                          d={sev1LinePath}
-                          fill="none"
-                          stroke="#ef4444"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      )}
-
-                      {/* Data Point Markers on Lines */}
-                      {dayCoords.map((c, idx) => {
-                        const m = c.metric;
-                        const ySev1 = baseH - (m.sev1Count / maxChartIncident) * usableH;
-                        const ySev2 = baseH - (m.sev2Count / maxChartIncident) * usableH;
-                        const yRes = baseH - (m.resolvedCount / maxChartIncident) * usableH;
-
-                        return (
-                          <g key={`markers-${idx}`}>
-                            {m.resolvedCount > 0 && (
-                              <circle
-                                cx={c.x}
-                                cy={yRes}
-                                r={hoveredDayIdx === idx ? 5 : 3.5}
-                                fill="#10b981"
-                                stroke="var(--card)"
-                                strokeWidth="1.5"
-                              />
-                            )}
-                            {m.sev2Count > 0 && (
-                              <circle
-                                cx={c.x}
-                                cy={ySev2}
-                                r={hoveredDayIdx === idx ? 5.5 : 3.5}
-                                fill="#f59e0b"
-                                stroke="var(--card)"
-                                strokeWidth="1.5"
-                              />
-                            )}
-                            {m.sev1Count > 0 && (
-                              <g>
-                                <circle
-                                  cx={c.x}
-                                  cy={ySev1}
-                                  r={hoveredDayIdx === idx ? 6 : 4}
-                                  fill="#ef4444"
-                                  stroke="var(--card)"
-                                  strokeWidth="2"
-                                />
-                                <circle
-                                  cx={c.x}
-                                  cy={ySev1}
-                                  r={8.5}
-                                  fill="none"
-                                  stroke="#ef4444"
-                                  strokeWidth="1.2"
-                                  strokeDasharray="2 2"
-                                  opacity="0.85"
-                                />
-                              </g>
-                            )}
-                          </g>
-                        );
-                      })}
-
-                      {/* Crosshair on Hover */}
-                      {hoveredDayIdx !== null && dayCoords[hoveredDayIdx] && (
-                        <line
-                          x1={dayCoords[hoveredDayIdx].x}
-                          y1={padT}
-                          x2={dayCoords[hoveredDayIdx].x}
-                          y2={baseH}
-                          stroke="var(--foreground)"
-                          strokeWidth="1.2"
-                          strokeDasharray="3 3"
-                          opacity="0.8"
-                        />
-                      )}
-                    </svg>
-                  </div>
-
-                  {/* Multi-Metric Legend with Left & Right Axis Keys */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 16,
-                      fontSize: 10,
-                      fontFamily: 'var(--font-mono)',
-                      color: 'var(--muted-foreground)',
-                      padding: '12px 0 6px',
-                      flexWrap: 'wrap',
-                      borderTop: '1px solid var(--border)',
-                      marginTop: 14,
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ef4444' }} />
-                        Sev-1 Incidents (&ge; 3 enters Red Zone)
-                      </span>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#f59e0b' }} />
-                        Sev-2 Incidents (&ge; 5 enters Red Zone)
-                      </span>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} />
-                        Resolved Cases
-                      </span>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <span style={{ width: 10, height: 8, borderRadius: 2, background: 'rgba(168, 85, 247, 0.4)', border: '1px solid #a855f7' }} />
-                        Outage Downtime Bars (Right Axis)
-                      </span>
-                    </div>
-
-                    <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)' }}>
-                      Left Axis = Incident Counts • Right Axis = Outage Hours
-                    </span>
-                  </div>
+                          {/* X-Axis Date Label */}
+                          {showLabel && (
+                            <text
+                              x={x + barW / 2}
+                              y={baseH + 16}
+                              textAnchor="middle"
+                              fill={isHovered ? 'var(--foreground)' : 'var(--muted-foreground)'}
+                              fontSize="9"
+                              fontFamily="var(--font-mono)"
+                              fontWeight={isHovered ? '700' : '400'}
+                            >
+                              {m.dayLabel}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
+                  </svg>
                 </div>
-              )}
+
+                {/* Minimalist Legend Footer */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    paddingTop: 14,
+                    marginTop: 10,
+                    borderTop: '1px solid var(--border)',
+                    fontSize: 9.5,
+                    fontFamily: 'var(--font-mono)',
+                    color: 'var(--muted-foreground)',
+                  }}
+                >
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--primary)' }} />
+                    Daily Incident Volume (Sev-1, Sev-2, Sev-3)
+                  </span>
+                  <span>
+                    Audit thresholds: &lt; 5 Sev-2 / 7d • &lt; 3 Sev-1 / 7d • MTBF &ge; 36.0h
+                  </span>
+                </div>
+              </div>
             </section>
 
             {/* ─── Panel 2: Qualifying Salesforce Incidents Table ─── */}
@@ -1607,26 +1053,12 @@ function RedZonePage() {
                           {/* Severity Badge */}
                           <div>
                             {isSev1 ? (
-                              <span
-                                className="case-priority-badge p-p1"
-                                style={{
-                                  background: '#7f1d1d',
-                                  color: '#fca5a5',
-                                  border: '1px solid #ef4444',
-                                }}
-                              >
+                              <span className="case-priority-badge p-p1">
                                 <Flame style={{ width: 10, height: 10 }} />
                                 SEV 1
                               </span>
                             ) : isSev2 ? (
-                              <span
-                                className="case-priority-badge p-p2"
-                                style={{
-                                  background: '#78350f',
-                                  color: '#fcd34d',
-                                  border: '1px solid #f59e0b',
-                                }}
-                              >
+                              <span className="case-priority-badge p-p2">
                                 <AlertTriangle style={{ width: 10, height: 10 }} />
                                 SEV 2
                               </span>
@@ -1640,27 +1072,13 @@ function RedZonePage() {
                           {/* Status Badge */}
                           <div>
                             {isClosed ? (
-                              <span
-                                className="case-status-badge"
-                                style={{
-                                  background: 'rgba(34, 197, 94, 0.15)',
-                                  color: '#22c55e',
-                                  borderColor: 'rgba(34, 197, 94, 0.4)',
-                                }}
-                              >
+                              <span className="case-status-badge">
                                 <CheckCircle2 style={{ width: 10, height: 10, marginRight: 4 }} />
                                 Closed
                               </span>
                             ) : (
-                              <span
-                                className="case-status-badge status-new"
-                                style={{
-                                  background: 'rgba(239, 68, 68, 0.15)',
-                                  color: '#ef4444',
-                                  borderColor: 'rgba(239, 68, 68, 0.4)',
-                                }}
-                              >
-                                <span className="live-pulse-dot" style={{ marginRight: 4 }} />
+                              <span className="case-status-badge status-new">
+                                <span className="source-dot" style={{ background: 'var(--primary)', marginRight: 4 }} />
                                 {inc.status || 'Active'}
                               </span>
                             )}
@@ -1683,7 +1101,7 @@ function RedZonePage() {
                                 <span style={{ fontWeight: 600, color: 'var(--foreground)', fontFamily: 'var(--font-mono)' }}>
                                   {formatTimestamp(inc.closedDate || inc.endTime)}
                                 </span>
-                                <span style={{ fontSize: 9.5, color: 'var(--success)', fontFamily: 'var(--font-mono)' }}>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                   Resolved
                                 </span>
                               </>
@@ -1693,19 +1111,19 @@ function RedZonePage() {
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: 4,
-                                  color: '#f59e0b',
+                                  color: 'var(--soft-orange)',
                                   fontSize: 9.5,
                                   fontWeight: 600,
                                   fontFamily: 'var(--font-mono)',
-                                  background: 'rgba(245, 158, 11, 0.12)',
+                                  background: 'var(--orange-surface)',
                                   padding: '2px 7px',
                                   borderRadius: 4,
-                                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                                  border: '1px solid var(--border)',
                                   width: 'fit-content',
                                 }}
                               >
                                 <Clock style={{ width: 10, height: 10 }} />
-                                ACTIVE / OPEN
+                                ACTIVE
                               </span>
                             )}
                           </div>
@@ -1802,7 +1220,7 @@ function RedZonePage() {
                               </div>
                               <div className="rz-meta-item">
                                 <span className="rz-meta-label">Site Status Impact</span>
-                                <span className="rz-meta-value" style={{ color: inc.isSiteDown ? '#ef4444' : '#22c55e' }}>
+                                <span className="rz-meta-value" style={{ color: inc.isSiteDown ? 'var(--primary)' : 'var(--foreground)' }}>
                                   {inc.isSiteDown ? '100% Site Down' : 'Partial / Degraded Operations'}
                                 </span>
                               </div>
@@ -2073,7 +1491,7 @@ function RedZonePage() {
 
                 return (
                   <article
-                    className={`site-card ${isBreach ? 'site-card-paper site-card-highlight-red' : 'site-card-paper site-card-highlight-yellow'}`}
+                    className="site-card"
                     key={site.siteName}
                     style={{ position: 'relative' }}
                   >
@@ -2098,28 +1516,32 @@ function RedZonePage() {
 
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                           <span
-                            className={`rz-badge-pill ${isBreach ? 'rz-badge-breach' : 'rz-badge-cooling'}`}
-                            title={isBreach ? 'Active entry criteria breach' : 'In 21-day clean exit streak'}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              background: '#dc2626',
+                              color: '#ffffff',
+                              fontSize: 10,
+                              fontWeight: 800,
+                              padding: '3px 8px',
+                              borderRadius: 4,
+                              letterSpacing: '0.04em',
+                              lineHeight: 1,
+                              fontFamily: 'var(--font-mono)',
+                              boxShadow: '0 1px 3px rgba(220, 38, 38, 0.4)',
+                            }}
                           >
-                            {isBreach ? (
-                              <>
-                                <span
-                                  style={{
-                                    width: 5,
-                                    height: 5,
-                                    borderRadius: '50%',
-                                    background: '#ef4444',
-                                  }}
-                                />
-                                ACTIVE BREACH
-                              </>
-                            ) : (
-                              <>
-                                <Clock style={{ width: 10, height: 10 }} />
-                                {site.daysRemainingToExit}d TO EXIT
-                              </>
-                            )}
+                            RED ZONE
                           </span>
+                          {!isBreach && (
+                            <span
+                              className="rz-badge-pill rz-badge-cooling"
+                              style={{ fontSize: 9.5 }}
+                            >
+                              <Clock style={{ width: 10, height: 10 }} />
+                              {site.daysRemainingToExit}d TO EXIT
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -2147,15 +1569,14 @@ function RedZonePage() {
                           />
                           <span
                             style={{
-                              color: isBreach ? '#ef4444' : '#f59e0b',
+                              color: 'var(--muted-foreground)',
                               fontWeight: 500,
                               overflow: 'hidden',
                               textOverflow: 'ellipsis',
                               whiteSpace: 'nowrap',
                             }}
-                            title={site.reasons[0] || 'Reliability threshold breached'}
                           >
-                            {site.reasons[0] || 'Reliability threshold breached'}
+                            {site.location || 'Operational Site'}
                           </span>
                         </div>
 
@@ -2173,34 +1594,6 @@ function RedZonePage() {
 
                       {/* Metric stats row matching Sitepulse card bottom */}
                       <div className="site-card-bottom" style={{ fontFamily: 'var(--font-mono)' }}>
-                        <span title="Sev-1 Incidents in last 7 days (Threshold: 3)">
-                          <Flame
-                            style={{
-                              width: 11,
-                              height: 11,
-                              color: sev1Breached ? '#ef4444' : 'var(--muted-foreground)',
-                            }}
-                          />
-                          <span>7d Sev-1</span>
-                          <b style={{ color: sev1Breached ? '#ef4444' : 'var(--foreground)' }}>
-                            {site.criteria1.sev1Count7d}
-                          </b>
-                        </span>
-
-                        <span title="Sev-2 Incidents in last 7 days (Threshold: 5)">
-                          <Flame
-                            style={{
-                              width: 11,
-                              height: 11,
-                              color: sev2Breached ? '#ef4444' : 'var(--muted-foreground)',
-                            }}
-                          />
-                          <span>7d Sev-2</span>
-                          <b style={{ color: sev2Breached ? '#ef4444' : 'var(--foreground)' }}>
-                            {site.criteria1.sev2Count7d}
-                          </b>
-                        </span>
-
                         <span title="Individual Site MTBF in last 14 days (Threshold: < 36h)">
                           <Clock
                             style={{
@@ -2212,6 +1605,20 @@ function RedZonePage() {
                           <span>MTBF</span>
                           <b style={{ color: mtbfBreached ? '#ef4444' : 'var(--foreground)' }}>
                             {site.criteria3.mtbfHours !== null ? `${site.criteria3.mtbfHours}h` : '—'}
+                          </b>
+                        </span>
+
+                        <span title="Consecutive Clean Streak (Exit Target: 21 days)">
+                          <CheckCircle2
+                            style={{
+                              width: 11,
+                              height: 11,
+                              color: site.daysSinceBreach >= 21 ? 'var(--success)' : 'var(--muted-foreground)',
+                            }}
+                          />
+                          <span>Clean Streak</span>
+                          <b style={{ color: 'var(--foreground)' }}>
+                            {site.daysSinceBreach} / 21d
                           </b>
                         </span>
 

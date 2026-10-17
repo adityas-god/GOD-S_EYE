@@ -591,21 +591,11 @@ function Index() {
     const hasSev1 = sev1Count > 0;
     const hasSev2 = sev2Count > 0;
     const hasUrgent = hasSev1 || hasSev2;
-
-    // Any site with Sev 1 Urgent, Sev 2 Urgent, or site down goes RED!
-    // Top sites with standard non-urgent issues get subtle yellow tint.
-    const isTop4 = top4IssueSiteIds.has(site.id);
-    let highlightColor: 'red' | 'orange' | 'yellow' | 'green' | null = null;
-
-    if (sev1Count > 0 || sev2Count > 0 || site.is_down) {
-      highlightColor = 'red';
-    } else if (isTop4 && (hasAlerts || hasCases)) {
-      highlightColor = 'yellow';
-    }
+    const isUrgentThresholdMet = hasUrgent || Boolean(site.is_down);
 
     return (
       <article
-        className={`site-card ${highlightColor ? `site-card-paper site-card-highlight-${highlightColor}` : ''}`}
+        className={`site-card ${isUrgentThresholdMet ? 'site-card-paper site-card-highlight-red' : ''}`}
         key={site.id}
       >
         <Button asChild variant="site">
