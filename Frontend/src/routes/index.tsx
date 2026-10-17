@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react';
+import { createPortal } from 'react-dom';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useSuspenseQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -26,6 +27,7 @@ import {
   Clock,
   CheckCircle2,
   ShieldAlert,
+  Check,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +35,7 @@ import { DashboardShell } from '@/components/dashboard-shell';
 import { ConnectionsDialog, DeleteSiteDialog, SiteEditor, SignInDialog } from '@/components/dashboard-dialogs';
 import { useAuth } from '@/components/auth-context';
 import { sitesQueryOptions, type Site } from '@/lib/sites';
+import { updateSiteProductLines } from '@/lib/sites.functions';
 import {
   sfSyncOrgSites,
   sfFetchLiveCasesOverview,
@@ -116,6 +119,9 @@ function Index() {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [activeAddSite, setActiveAddSite] = useState<EnrichedSite | null>(null);
+  const [popoverCoords, setPopoverCoords] = useState<{ top: number; right: number } | null>(null);
+  const [customProductInput, setCustomProductInput] = useState('');
 
   // Fetch live cases stats across the entire org (excludes alerts & solved/on-hold)
   const {
@@ -224,11 +230,11 @@ function Index() {
       const sev2Count = stats ? (stats.sev2Count ?? 0) : 0;
       const sev3Count = stats ? (stats.sev3Count ?? 0) : 0;
 
-      const productLines = (stats?.product_lines && stats.product_lines.length > 0)
-        ? stats.product_lines
-        : (site.product_lines && site.product_lines.length > 0)
-        ? site.product_lines
-        : site.product_line ? site.product_line.split(',').map(x => x.trim()).filter(Boolean) : ['RMS'];
+      const productLines = (site.product_lines !== undefined)
+        ? (Array.isArray(site.product_lines) ? site.product_lines : [])
+        : (site.product_line
+        ? site.product_line.split(',').map(x => x.trim()).filter(Boolean)
+        : (stats?.product_lines && stats.product_lines.length > 0 ? stats.product_lines : ['RMS']));
 
       return {
         ...site,
@@ -666,6 +672,126 @@ function Index() {
     });
   }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId]);
 
+  const handleRemoveProduct = async (site: EnrichedSite, prodToRemove: string) => {
+    const currentLines = (site.product_lines && site.product_lines.length > 0)
+      ? site.product_lines
+      : (site.product_line ? site.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+
+    const newLines = currentLines.filter(p => p.toLowerCase() !== prodToRemove.toLowerCase());
+
+    // Optimistic cache update for ['sites']
+    queryClient.setQueryData<Site[]>(['sites'], (old = []) => {
+      return old.map(s => {
+        if (s.id === site.id || s.name.trim().toLowerCase() === site.name.trim().toLowerCase()) {
+          return {
+            ...s,
+            product_lines: newLines,
+            product_line: newLines.join(', '),
+          };
+        }
+        return s;
+      });
+    });
+
+    // Optimistic update for ['salesforce-overview']
+    queryClient.setQueryData<any>(['salesforce-overview'], (old: any) => {
+      if (!old || !old.siteStats) return old;
+      const key = site.name.trim().toLowerCase();
+      const existingStat = old.siteStats[key];
+      if (!existingStat) return old;
+      return {
+        ...old,
+        siteStats: {
+          ...old.siteStats,
+          [key]: {
+            ...existingStat,
+            product_lines: newLines,
+            product_line: newLines.join(', '),
+          },
+        },
+      };
+    });
+
+    toast.success(`Removed ${prodToRemove} from ${site.name}`);
+
+    try {
+      const ok = await updateSiteProductLines(site.id, newLines);
+      if (!ok) {
+        toast.error(`Failed to persist removal to server, re-syncing`);
+        void queryClient.invalidateQueries({ queryKey: ['sites'] });
+      }
+    } catch (err) {
+      toast.error(`Error saving changes: ${(err as Error).message}`);
+      void queryClient.invalidateQueries({ queryKey: ['sites'] });
+    }
+  };
+
+  const handleAddProduct = async (site: EnrichedSite, newProdRaw: string) => {
+    const newProd = newProdRaw.trim();
+    if (!newProd) return;
+
+    const currentLines = (site.product_lines && site.product_lines.length > 0)
+      ? site.product_lines
+      : (site.product_line ? site.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+
+    if (currentLines.some(p => p.toLowerCase() === newProd.toLowerCase())) {
+      toast.info(`${newProd} is already added to ${site.name}`);
+      setActiveAddSite(null);
+      setPopoverCoords(null);
+      return;
+    }
+
+    const newLines = [...currentLines, newProd];
+    setActiveAddSite(null);
+    setPopoverCoords(null);
+
+    // Optimistic cache update for ['sites']
+    queryClient.setQueryData<Site[]>(['sites'], (old = []) => {
+      return old.map(s => {
+        if (s.id === site.id || s.name.trim().toLowerCase() === site.name.trim().toLowerCase()) {
+          return {
+            ...s,
+            product_lines: newLines,
+            product_line: newLines.join(', '),
+          };
+        }
+        return s;
+      });
+    });
+
+    // Optimistic update for ['salesforce-overview']
+    queryClient.setQueryData<any>(['salesforce-overview'], (old: any) => {
+      if (!old || !old.siteStats) return old;
+      const key = site.name.trim().toLowerCase();
+      const existingStat = old.siteStats[key];
+      if (!existingStat) return old;
+      return {
+        ...old,
+        siteStats: {
+          ...old.siteStats,
+          [key]: {
+            ...existingStat,
+            product_lines: newLines,
+            product_line: newLines.join(', '),
+          },
+        },
+      };
+    });
+
+    toast.success(`Added ${newProd} to ${site.name}`);
+
+    try {
+      const ok = await updateSiteProductLines(site.id, newLines);
+      if (!ok) {
+        toast.error(`Failed to persist to server, re-syncing`);
+        void queryClient.invalidateQueries({ queryKey: ['sites'] });
+      }
+    } catch (err) {
+      toast.error(`Error saving changes: ${(err as Error).message}`);
+      void queryClient.invalidateQueries({ queryKey: ['sites'] });
+    }
+  };
+
   const renderSiteCard = (site: EnrichedSite, i: number) => {
     const casesCount = site.open_cases_count ?? 0;
     const alertsCount = site.open_alerts_count ?? 0;
@@ -680,7 +806,7 @@ function Index() {
 
     return (
       <article
-        className={`site-card ${isUrgentThresholdMet ? 'site-card-paper site-card-highlight-red' : ''}`}
+        className={`site-card ${isUrgentThresholdMet ? 'site-card-paper site-card-highlight-red' : ''} ${activeAddSite?.id === site.id ? 'active-popover' : ''}`}
         key={site.id}
       >
         <Button asChild variant="site">
@@ -786,32 +912,93 @@ function Index() {
               <ArrowUpRight />
             </div>
 
-            {/* Dynamic Product Badges: Displays all active/assigned product lines */}
-            {((site.product_lines && site.product_lines.length > 0) || site.product_line) && (
-              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4, marginBottom: 8 }}>
+            {/* Dynamic Product Badges: List view allows interactive add/delete; Grid (square boxes) view displays clean static badges only */}
+            {view === 'list' ? (
+              <div
+                className="site-product-badges-container"
+                style={{
+                  display: 'flex',
+                  gap: 4,
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  margin: 0,
+                  position: 'relative',
+                }}
+                onClick={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
                 {(site.product_lines && site.product_lines.length > 0
                   ? site.product_lines
-                  : site.product_line ? site.product_line.split(',').map(p => p.trim()).filter(Boolean) : ['RMS']
+                  : site.product_line ? site.product_line.split(',').map(p => p.trim()).filter(Boolean) : []
                 ).map(prod => (
                   <span
                     key={prod}
-                    className="case-product-pill"
-                    style={{
-                      fontSize: 9.5,
-                      padding: '1.5px 6px',
-                      borderRadius: 4,
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.12)',
-                      color: '#cbd5e1',
-                      fontFamily: 'var(--font-mono)',
-                      fontWeight: 600,
-                      lineHeight: 1.2,
+                    className="case-product-pill site-product-pill-editable"
+                    title="Double-click to remove"
+                    onClick={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDoubleClick={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void handleRemoveProduct(site, prod);
                     }}
                   >
                     {prod}
                   </span>
                 ))}
+
+                {/* Minimalistic soft add button (list view only) */}
+                <button
+                  type="button"
+                  className="soft-product-add-btn"
+                  title="Add product type"
+                  onClick={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (activeAddSite?.id === site.id) {
+                      setActiveAddSite(null);
+                      setPopoverCoords(null);
+                    } else {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const popoverHeight = 175;
+                      const rightOffset = Math.max(12, window.innerWidth - rect.right);
+                      const topOffset = rect.bottom + popoverHeight > window.innerHeight
+                        ? Math.max(12, rect.top - popoverHeight - 6)
+                        : rect.bottom + 6;
+                      setPopoverCoords({ top: topOffset, right: rightOffset });
+                      setActiveAddSite(site);
+                      setCustomProductInput('');
+                    }
+                  }}
+                  onDoubleClick={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                >
+                  <Plus style={{ width: 10, height: 10 }} />
+                </button>
               </div>
+            ) : (
+              /* Grid / Square boxes view: Purely static product pills, NO edit options or add buttons */
+              ((site.product_lines && site.product_lines.length > 0) || site.product_line) && (
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4, marginBottom: 8 }}>
+                  {(site.product_lines && site.product_lines.length > 0
+                    ? site.product_lines
+                    : site.product_line ? site.product_line.split(',').map(p => p.trim()).filter(Boolean) : []
+                  ).map(prod => (
+                    <span
+                      key={prod}
+                      className="case-product-pill"
+                    >
+                      {prod}
+                    </span>
+                  ))}
+                </div>
+              )
             )}
 
             <div className="site-card-subtitle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -1810,6 +1997,112 @@ function Index() {
           </div>
         </section>
       </div>
+
+      {/* Portaled Product Types Popover: 100% immune to card containment / overflow clipping */}
+      {activeAddSite && typeof document !== 'undefined' && createPortal(
+        <>
+          <div
+            className="product-popover-backdrop"
+            onClick={e => {
+              e.preventDefault();
+              e.stopPropagation();
+              setActiveAddSite(null);
+              setPopoverCoords(null);
+            }}
+          />
+          <div
+            className="site-product-popover"
+            style={{
+              position: 'fixed',
+              top: popoverCoords?.top ?? 120,
+              right: popoverCoords?.right ?? 24,
+              zIndex: 99999,
+            }}
+            onClick={e => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+          >
+            <div className="site-product-popover-title">
+              <span>Add Product ({activeAddSite.name})</span>
+              <button
+                type="button"
+                className="popover-close-btn"
+                onClick={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setActiveAddSite(null);
+                  setPopoverCoords(null);
+                }}
+                title="Close"
+              >
+                <X style={{ width: 11, height: 11 }} />
+              </button>
+            </div>
+
+            <div className="product-popover-presets">
+              {['RMS', 'RIL', 'RA', 'Case Pick', 'TTP', 'RTP', 'gStore'].map(type => {
+                const curLines = activeAddSite.product_lines || (activeAddSite.product_line ? activeAddSite.product_line.split(',').map(x => x.trim()) : []);
+                const alreadyHas = curLines.some(p => p.toLowerCase() === type.toLowerCase());
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    disabled={alreadyHas}
+                    className={`product-popover-opt ${alreadyHas ? 'already-added' : ''}`}
+                    onClick={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!alreadyHas) {
+                        void handleAddProduct(activeAddSite, type);
+                        setActiveAddSite(null);
+                        setPopoverCoords(null);
+                      }
+                    }}
+                    title={alreadyHas ? `${type} already added` : `Add ${type}`}
+                  >
+                    <span>{type}</span>
+                    {alreadyHas && <Check style={{ width: 9, height: 9, marginLeft: 2 }} />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <form
+              onSubmit={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (customProductInput.trim()) {
+                  void handleAddProduct(activeAddSite, customProductInput.trim());
+                  setCustomProductInput('');
+                  setActiveAddSite(null);
+                  setPopoverCoords(null);
+                }
+              }}
+              style={{ display: 'flex', gap: 4, marginTop: 8 }}
+            >
+              <input
+                type="text"
+                value={customProductInput}
+                onChange={e => setCustomProductInput(e.target.value)}
+                placeholder="Custom type..."
+                className="product-popover-input"
+                autoFocus
+                onClick={e => e.stopPropagation()}
+              />
+              <button
+                type="submit"
+                disabled={!customProductInput.trim()}
+                className="product-popover-submit"
+                onClick={e => e.stopPropagation()}
+              >
+                Add
+              </button>
+            </form>
+          </div>
+        </>,
+        document.body
+      )}
 
       <SiteEditor key={String(editor)} open={editor} onOpenChange={setEditor} />
       <DeleteSiteDialog site={deleteSite} onClose={() => setDeleteSite(null)} />
