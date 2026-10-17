@@ -123,9 +123,10 @@ function Index() {
     refetch: refetchOverview,
   } = useQuery({
     queryKey: ['salesforce-overview'],
-    queryFn: () => sfFetchLiveCasesOverview(),
-    staleTime: 30_000,
-    refetchInterval: 60_000, // automatic background refresh every 60 seconds
+    queryFn: () => sfFetchLiveCasesOverview(false),
+    staleTime: 10_000,
+    refetchInterval: 30_000, // automatic live background refresh every 30 seconds
+    refetchOnWindowFocus: true, // auto-refresh whenever browser tab is focused
   });
 
   const refetchOverviewRef = useRef(refetchOverview);
@@ -880,20 +881,58 @@ function Index() {
             <h1>
               Site overview<span className="heading-dot">.</span>
             </h1>
-            <p>Every site. Every alert. Dynamic ranking by live open tickets.</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, flexWrap: 'wrap' }}>
+              <p style={{ margin: 0 }}>Every site. Every alert. Dynamic ranking by live open tickets.</p>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 5,
+                  fontSize: 10,
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-mono)',
+                  color: '#22c55e',
+                  background: 'rgba(34, 197, 94, 0.1)',
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  border: '1px solid rgba(34, 197, 94, 0.25)',
+                }}
+                title="Connected directly to GreyOrange Salesforce org API"
+              >
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 6px #22c55e' }} />
+                LIVE SF
+              </span>
+              {sfOverview?.timestamp && (
+                <span style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'var(--font-mono)' }} title={`Last refreshed: ${sfOverview.timestamp}`}>
+                  Synced: {new Date(sfOverview.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              )}
+            </div>
           </div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Button
               variant="outline"
-              onClick={() => {
-                void refetchOverview();
-                void handleSyncSalesforceOrg();
+              onClick={async () => {
+                setSyncingOrg(true);
+                try {
+                  toast.info('Fetching live data directly from Salesforce…');
+                  await sfFetchLiveCasesOverview(true);
+                  await queryClient.invalidateQueries({ queryKey: ['salesforce-overview'] });
+                  await queryClient.invalidateQueries({ queryKey: ['sites'] });
+                  await refetchOverview();
+                  toast.success('Dashboard updated with live Salesforce data.');
+                } catch (err) {
+                  toast.error(`Salesforce fetch notice: ${(err as Error).message}`);
+                } finally {
+                  setSyncingOrg(false);
+                }
               }}
-              disabled={syncingOrg}
+              disabled={syncingOrg || sfFetching}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 40 }}
+              title="Query live tickets directly from Salesforce org API right now"
             >
               <RefreshCw className={syncingOrg || sfFetching ? 'animate-spin' : ''} style={{ width: 14, height: 14 }} />
-              <span>{syncingOrg ? 'Syncing Org…' : 'Sync SF Org'}</span>
+              <span>{syncingOrg || sfFetching ? 'Fetching Live SF…' : 'Fetch Live SF'}</span>
             </Button>
             <Button
               className="add-button"

@@ -207,13 +207,11 @@ export function getTicketEndTime(c: SFCase): string | null {
     raw.parent_end_time ||
     raw.DIR_Approval_End_Time__c ||
     raw.RCA_Approval_End_Time__c ||
-    raw.Planed_End__c ||
     raw.End_Time__c ||
     raw.end_time ||
     raw.EndTime ||
     raw.EndTime__c ||
     raw.End_Date_Time__c ||
-    raw.End_Date__c ||
     raw.Down_Time_End__c ||
     raw.Downtime_End_Time__c ||
     raw.Restoration_Time__c ||
@@ -225,15 +223,6 @@ export function getTicketEndTime(c: SFCase): string | null {
     const s = String(candidate).trim().toLowerCase();
     if (s && s !== 'null' && s !== 'undefined' && s !== 'none' && s !== 'n/a') {
       return String(candidate);
-    }
-  }
-
-  // Also check if Downtime is recorded and completed (> 0)
-  const dt = raw.Downtime__c !== undefined ? raw.Downtime__c : raw.downtime;
-  if (dt !== undefined && dt !== null && dt !== '') {
-    const num = Number(dt);
-    if (!isNaN(num) && num > 0) {
-      return String(raw.LastModifiedDate || raw.CreatedDate || new Date().toISOString());
     }
   }
 
@@ -289,11 +278,31 @@ export function isOpenAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
-  // 1. If ticket has an End Time or Closed Date, it has concluded -> remove from open alerts!
-  if (hasTicketEndTime(c)) return false;
-
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
+
+  // Explicitly closed/solved/cancelled statuses in Salesforce
+  for (const pattern of CLOSED_STATUS_PATTERNS) {
+    if (status.includes(pattern)) return false;
+  }
+
+  // If status is explicitly active in Salesforce, it IS an active open alert!
+  const isActiveOpen =
+    status.includes('new') ||
+    status.includes('open') ||
+    status.includes('progress') ||
+    status.includes('investigat') ||
+    status.includes('active') ||
+    status.includes('assigned');
+
+  if (isActiveOpen) {
+    // If it has an explicit closed date and status is closed, omit
+    if (c.ClosedDate && !isActiveOpen) return false;
+    return true;
+  }
+
+  // If status is not explicitly active and has an end time or on-hold status
+  if (hasTicketEndTime(c)) return false;
 
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
@@ -308,9 +317,21 @@ export function isOpenAlert(c: SFCase): boolean {
 export function isClosedAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
-  const endTime = getTicketEndTime(c);
   const status = String(c.Status || '').toLowerCase();
-  return Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  if (isClosedStatus) return true;
+
+  const isActiveOpen =
+    status.includes('new') ||
+    status.includes('open') ||
+    status.includes('progress') ||
+    status.includes('investigat') ||
+    status.includes('active') ||
+    status.includes('assigned');
+  if (isActiveOpen) return false;
+
+  const endTime = getTicketEndTime(c);
+  return Boolean(endTime);
 }
 
 
@@ -1227,9 +1248,10 @@ function buildEmptySiteStats(): Record<string, SiteCaseStat> {
  * Fetch live case stats for all sites across the organization.
  * Used by home dashboard to dynamically rank sites by ticket count and display case numbers.
  */
-export const sfFetchLiveCasesOverview = async () => {
+export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) => {
   try {
-    const res = await fetch('/api/cases/overview', {
+    const url = forceRefresh ? '/api/cases/overview?refresh=true' : '/api/cases/overview';
+    const res = await fetch(url, {
       signal: AbortSignal.timeout(25000),
     });
     if (res.ok) {
@@ -1271,6 +1293,7 @@ export const sfFetchCasesForSite = async (params: {
   data?: { siteName: string; accountId?: string | null };
   siteName?: string;
   accountId?: string | null;
+  forceRefresh?: boolean;
 }) => {
   const siteName = params?.data?.siteName || params?.siteName || '';
   if (!siteName) {
@@ -1283,7 +1306,8 @@ export const sfFetchCasesForSite = async (params: {
   }
 
   try {
-    const res = await fetch(`/api/cases/site/${encodeURIComponent(siteName)}`, {
+    const queryParam = params?.forceRefresh ? '?refresh=true' : '';
+    const res = await fetch(`/api/cases/site/${encodeURIComponent(siteName)}${queryParam}`, {
       signal: AbortSignal.timeout(25000),
     });
     if (res.ok) {

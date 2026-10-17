@@ -41,6 +41,7 @@ export function getSfConfig() {
 export const DEFAULT_ALL_SITE_NAMES = defaultSites.map(s => s.name);
 
 let tokenCache = null;
+let _overviewCache = { data: null, cachedAt: 0 };
 let _lastSalesforceError = null;
 
 export function getLastSalesforceError() {
@@ -146,13 +147,11 @@ export function getTicketEndTime(c) {
     raw.parent_end_time ||
     raw.DIR_Approval_End_Time__c ||
     raw.RCA_Approval_End_Time__c ||
-    raw.Planed_End__c ||
     raw.End_Time__c ||
     raw.end_time ||
     raw.EndTime ||
     raw.EndTime__c ||
     raw.End_Date_Time__c ||
-    raw.End_Date__c ||
     raw.Down_Time_End__c ||
     raw.Downtime_End_Time__c ||
     raw.Restoration_Time__c ||
@@ -164,15 +163,6 @@ export function getTicketEndTime(c) {
     const s = String(candidate).trim().toLowerCase();
     if (s && s !== 'null' && s !== 'undefined' && s !== 'none' && s !== 'n/a') {
       return candidate;
-    }
-  }
-
-  // Also check if Downtime is recorded and completed (> 0)
-  const dt = raw.Downtime__c !== undefined ? raw.Downtime__c : raw.downtime;
-  if (dt !== undefined && dt !== null && dt !== '') {
-    const num = Number(dt);
-    if (!isNaN(num) && num > 0) {
-      return raw.LastModifiedDate || raw.CreatedDate || new Date().toISOString();
     }
   }
 
@@ -342,11 +332,31 @@ export function isOpenAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
-  // 1. If ticket has an End Time or Closed Date, it has concluded -> remove from open alerts!
-  if (hasTicketEndTime(c)) return false;
-
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
+
+  // Explicitly closed/solved/cancelled statuses in Salesforce
+  for (const pattern of CLOSED_STATUS_PATTERNS) {
+    if (status.includes(pattern)) return false;
+  }
+
+  // If status is explicitly active in Salesforce, it IS an active open alert!
+  const isActiveOpen =
+    status.includes('new') ||
+    status.includes('open') ||
+    status.includes('progress') ||
+    status.includes('investigat') ||
+    status.includes('active') ||
+    status.includes('assigned');
+
+  if (isActiveOpen) {
+    // If it has an explicit closed date and status is closed, omit
+    if (c.ClosedDate && !isActiveOpen) return false;
+    return true;
+  }
+
+  // If status is not explicitly active and has an end time or on-hold status
+  if (hasTicketEndTime(c)) return false;
 
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
@@ -361,9 +371,21 @@ export function isOpenAlert(c) {
 export function isClosedAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
-  const endTime = getTicketEndTime(c);
   const status = String(c.Status || c.status || '').toLowerCase();
-  return Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  if (isClosedStatus) return true;
+
+  const isActiveOpen =
+    status.includes('new') ||
+    status.includes('open') ||
+    status.includes('progress') ||
+    status.includes('investigat') ||
+    status.includes('active') ||
+    status.includes('assigned');
+  if (isActiveOpen) return false;
+
+  const endTime = getTicketEndTime(c);
+  return Boolean(endTime);
 }
 
 export function isClosedAlertToday(c) {
@@ -1426,7 +1448,7 @@ export async function syncSitesFromSalesforce({ authoritative = true } = {}) {
   console.log(`[Salesforce -> MongoDB] Refreshed MongoDB with ${saved.length} active sites.`);
 
   // Invalidate in-memory caches
-  _overviewCache = { data: null, timestamp: 0 };
+  _overviewCache = { data: null, cachedAt: 0 };
   _backendCasesCache = { cases: [], alerts: [], closed: [], fetchedAt: 0 };
 
   return saved;
@@ -1535,7 +1557,8 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       const assignee = isGreyOrangeQueue ? 'Unassigned' : rawAssignee;
       const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
       const endTime = getTicketEndTime(c);
-      const isClosedByEndTime = Boolean(endTime);
+      const isAlert = isAlertCase(c);
+      const isClosedByEndTime = Boolean(endTime) && !isAlert;
       let finalStatus = c.Status;
       if (isClosedByEndTime && !CLOSED_STATUS_PATTERNS.some(p => String(c.Status || '').toLowerCase().includes(p))) {
         finalStatus = 'Closed';
@@ -1656,14 +1679,12 @@ export async function fetchAllLiveCases(forceRefresh = false) {
   return cases;
 }
 
-let _overviewCache = { data: null, cachedAt: 0 };
-
 /**
  * Fetch all LIVE OPEN cases for a specific site (strictly excluding Alerts and Solved/Closed/On Hold).
  * Returns ONLY cases mapped to this site, or [] if none exist.
  */
-export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
-  console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'}`);
+export async function fetchOpenCasesForSite({ siteId, siteName, accountId, forceRefresh = false }) {
+  console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'} (forceRefresh: ${forceRefresh})`);
 
   let allSites = [];
   try {
@@ -1683,7 +1704,7 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
   const effectiveSiteName = targetSite?.name || siteName || '';
   const effectiveAccountId = targetSite?.salesforce_account_id || accountId || null;
 
-  const { cases: liveCases, alerts: liveAlerts, closed: liveClosed = [] } = await fetchAllLiveCasesAndAlerts();
+  const { cases: liveCases, alerts: liveAlerts, closed: liveClosed = [] } = await fetchAllLiveCasesAndAlerts(forceRefresh);
 
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
   const targetLower = cleanText(effectiveSiteName);

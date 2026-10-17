@@ -245,7 +245,21 @@ function SiteDetail() {
   };
 
   const isTicketClosed = (c: SFCase) => {
-    return hasTicketEndTime(c) || Boolean(getTicketEndTime(c)) || isClosedStatus(c.Status) || isClosedToday(c);
+    const s = String(c.Status || '').toLowerCase();
+    if (isClosedStatus(s)) return true;
+
+    // For alerts: if status is actively open, do not consider it closed even if an end time field was touched
+    const isActiveAlert = isAlertCase(c) && (
+      s.includes('new') ||
+      s.includes('open') ||
+      s.includes('progress') ||
+      s.includes('investigat') ||
+      s.includes('active') ||
+      s.includes('assigned')
+    );
+    if (isActiveAlert) return false;
+
+    return hasTicketEndTime(c) || Boolean(getTicketEndTime(c)) || isClosedToday(c);
   };
 
   // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts)

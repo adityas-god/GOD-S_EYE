@@ -9,6 +9,8 @@ import {
   isLiveOpenCase,
   hasTicketEndTime,
   getTicketEndTime,
+  executeSOQL,
+  getSfConfig,
 } from '../services/salesforce.service.js';
 import {
   getSheetConfig,
@@ -122,6 +124,32 @@ router.get('/sev-summary', async (req, res) => {
 
 
 /**
+ * GET /api/cases/test-soql
+ * Live test query directly against Salesforce API
+ */
+router.get('/test-soql', async (req, res) => {
+  try {
+    const { instanceUrl } = getSfConfig();
+    const query = 'SELECT Id, CaseNumber, Status, Subject, LastModifiedDate FROM Case ORDER BY LastModifiedDate DESC LIMIT 1';
+    const result = await executeSOQL(query, { paginate: false });
+    res.json({
+      success: true,
+      connected: true,
+      instanceUrl,
+      recordsCount: result.records?.length || 0,
+      latestCase: result.records?.[0] || null,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      connected: false,
+      error: error.message,
+    });
+  }
+});
+
+/**
  * GET /api/cases
  * Get all open cases (excluding 'Closed' and 'On Hold')
  */
@@ -167,6 +195,7 @@ router.get('/overview', async (req, res) => {
       ...overview,
     });
   } catch (error) {
+    console.error('[Cases API] Error in /overview:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -178,7 +207,8 @@ router.get('/overview', async (req, res) => {
 router.get('/site/:siteName', async (req, res) => {
   try {
     const { siteName } = req.params;
-    const result = await fetchOpenCasesForSite({ siteName });
+    const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
+    const result = await fetchOpenCasesForSite({ siteName, forceRefresh });
     res.json({
       success: true,
       siteName,
