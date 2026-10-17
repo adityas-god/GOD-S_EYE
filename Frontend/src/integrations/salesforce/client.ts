@@ -385,8 +385,10 @@ export function isDirTicket(c: SFCase): boolean {
 export function isImTicket(c: SFCase): boolean {
   if (!c) return false;
 
-  // 1. Child / linked IM ticket automatically created under a parent ticket
-  if (c.ParentId || (c as Record<string, unknown>).parent_id) return true;
+  // 1. Child / linked IM ticket: only if it has explicit IM indicators
+  if ((c.ParentId || (c as Record<string, unknown>).parent_id) && (isAlertCase(c) || /^(im|inc)[\s-:\d]/i.test(String(c.Subject || (c as Record<string, unknown>).subject || '')))) {
+    return true;
+  }
 
   // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
   if (isAlertCase(c)) return true;
@@ -928,10 +930,19 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
   // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
   const accId = caseRecord.AccountId || raw.account_id;
   if (accId) {
-    const targetId = String(accId);
-    const sitesWithAcc = compiledSites.filter(s => s.accountId === targetId);
-    if (sitesWithAcc.length === 1) {
-      return sitesWithAcc[0].originalName;
+    const targetId = String(accId).trim();
+    const sitesWithAcc = compiledSites.filter(s => s.accountId && String(s.accountId).trim() === targetId);
+    if (sitesWithAcc.length > 0) {
+      const uniqueNames = Array.from(new Set(sitesWithAcc.map(s => s.originalName)));
+      if (uniqueNames.length === 1) {
+        return uniqueNames[0];
+      }
+    }
+    const def = (sitesData as Array<{ name: string; salesforce_account_id?: string }>).find(
+      s => s.salesforce_account_id && String(s.salesforce_account_id).trim() === targetId
+    );
+    if (def) {
+      return def.name;
     }
   }
 
@@ -1682,8 +1693,6 @@ export function computeRedZoneSitesClientSide(
     }
     if (durationHours === null && endTimeMs > 0 && createdTime > 0 && endTimeMs >= createdTime) {
       durationHours = Math.round(((endTimeMs - createdTime) / (1000 * 60 * 60)) * 10) / 10;
-    } else if (durationHours === null && createdTime > 0 && !endTimeStr && !c.ClosedDate) {
-      durationHours = Math.round(((now - createdTime) / (1000 * 60 * 60)) * 10) / 10;
     }
 
     siteIncidentsMap.get(key)!.incidents.push({
@@ -1892,10 +1901,14 @@ export function computeRedZoneSitesClientSide(
 /**
  * Fetch RED Zone sites overview from backend API with fallback to client-side computation.
  */
-export const sfFetchRedZoneSites = async (forceRefresh: boolean = false): Promise<RedZoneOverviewResult> => {
+export const sfFetchRedZoneSites = async (forceRefresh: boolean = false, siteName?: string): Promise<RedZoneOverviewResult> => {
   try {
-    const res = await fetch(`/api/cases/red-zone${forceRefresh ? '?refresh=true' : ''}`, {
-      signal: AbortSignal.timeout(20000),
+    const params = new URLSearchParams();
+    if (forceRefresh) params.set('refresh', 'true');
+    if (siteName) params.set('site', siteName);
+    const qs = params.toString();
+    const res = await fetch(`/api/cases/red-zone${qs ? `?${qs}` : ''}`, {
+      signal: AbortSignal.timeout(45000),
     });
     if (res.ok) {
       const data = await res.json();

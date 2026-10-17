@@ -248,8 +248,10 @@ export function isDirTicket(c) {
 export function isImTicket(c) {
   if (!c) return false;
 
-  // 1. Child / linked IM ticket automatically created under a parent ticket
-  if (c.ParentId || c.parent_id) return true;
+  // 1. Child / linked IM ticket: only if it has explicit IM indicators
+  if ((c.ParentId || c.parent_id) && (isAlertCase(c) || /^(im|inc)[\s-:\d]/i.test(String(c.Subject || c.subject || '')))) {
+    return true;
+  }
 
   // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
   if (isAlertCase(c)) return true;
@@ -879,10 +881,17 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
   // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
   const accId = caseRecord.AccountId || caseRecord.account_id;
   if (accId) {
-    const targetId = String(accId);
-    const sitesWithAcc = compiledSites.filter(s => s.accountId === targetId);
-    if (sitesWithAcc.length === 1) {
-      return sitesWithAcc[0].originalName;
+    const targetId = String(accId).trim();
+    const sitesWithAcc = compiledSites.filter(s => s.accountId && String(s.accountId).trim() === targetId);
+    if (sitesWithAcc.length > 0) {
+      const uniqueNames = Array.from(new Set(sitesWithAcc.map(s => s.originalName)));
+      if (uniqueNames.length === 1) {
+        return uniqueNames[0];
+      }
+    }
+    const def = defaultSites.find(d => d.salesforce_account_id && String(d.salesforce_account_id).trim() === targetId);
+    if (def) {
+      return def.name;
     }
   }
 
@@ -2102,10 +2111,50 @@ export function getSiteMatchSOQLParts(siteName) {
 /**
  * Builds site-specific SOQL WHERE criteria matching customer incidents (without alert filters).
  */
-export function buildSiteIncidentSOQLWhereClause(siteName) {
+export function buildSiteIncidentSOQLWhereClause(siteName, compiledSites = []) {
+  const clean = cleanText(siteName);
   const parts = getSiteMatchSOQLParts(siteName);
-  if (parts.length === 0) return '';
-  return `(${parts.join(' OR ')})`;
+
+  // 1. Resolve authoritative salesforce_account_id
+  let accId = null;
+  if (Array.isArray(compiledSites) && compiledSites.length > 0) {
+    const matched = compiledSites.find(s => {
+      const sClean = s.clean || cleanText(s.originalName || '');
+      return sClean === clean || sClean.includes(clean) || clean.includes(sClean);
+    });
+    if (matched && matched.accountId) {
+      accId = matched.accountId;
+    }
+  }
+
+  if (!accId) {
+    const def = defaultSites.find(d => {
+      const dClean = cleanText(d.name);
+      return dClean === clean || dClean.includes(clean) || clean.includes(dClean);
+    });
+    if (def && def.salesforce_account_id) {
+      accId = def.salesforce_account_id;
+    }
+  }
+
+  if (accId) {
+    parts.unshift(`AccountId = '${accId}'`);
+  }
+
+  // 2. Extra broad matching for Sams Club ATL
+  if (clean.includes('sams') && (clean.includes('atl') || clean.includes('4993'))) {
+    parts.push(
+      "Account_Name__c LIKE '%Sam%Club%'",
+      "Account_Name__c LIKE '%Atlanta%'",
+      "Customer_Location__c LIKE '%Atlanta%'",
+      "Snow_Sitename__c LIKE '%Sam%'",
+      "Snow_Sitename__c LIKE '%Atlanta%'"
+    );
+  }
+
+  const uniqueParts = Array.from(new Set(parts.filter(Boolean)));
+  if (uniqueParts.length === 0) return '';
+  return `(${uniqueParts.join(' OR ')})`;
 }
 
 /**
@@ -2610,7 +2659,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   let rawCases = [];
   let siteFilterClause = '';
   if (siteName) {
-    const siteWhere = buildSiteIncidentSOQLWhereClause(siteName);
+    const siteWhere = buildSiteIncidentSOQLWhereClause(siteName, compiledSites);
     if (siteWhere) {
       siteFilterClause = `AND ${siteWhere}`;
     }
@@ -2635,7 +2684,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
     'FROM Case',
-    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+    'WHERE CreatedDate >= LAST_N_DAYS:30',
     siteFilterClause,
     'ORDER BY CreatedDate DESC',
   ].filter(Boolean).join(' ');
@@ -2656,7 +2705,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
         'AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+        'WHERE CreatedDate >= LAST_N_DAYS:30',
         siteFilterClause,
         'ORDER BY CreatedDate DESC',
       ].filter(Boolean).join(' ');
@@ -2671,7 +2720,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     : [
         'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+        'WHERE CreatedDate >= LAST_N_DAYS:30',
         siteFilterClause,
         'ORDER BY CreatedDate DESC',
       ].filter(Boolean).join(' ');

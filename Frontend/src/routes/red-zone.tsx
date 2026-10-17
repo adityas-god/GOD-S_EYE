@@ -234,12 +234,31 @@ function RedZonePage() {
   });
 
   // Dedicated 30-day deep history query for selected site
-  const { data: selectedSiteDetailData } = useQuery({
+  const {
+    data: selectedSiteDetailData,
+    refetch: refetchSiteDetail,
+    isFetching: isDetailFetching,
+  } = useQuery({
     queryKey: ['salesforce-red-zone-site', selectedSiteName],
     queryFn: () => sfFetchRedZoneSites(false, selectedSiteName!),
     enabled: Boolean(selectedSiteName),
     staleTime: 120_000,
   });
+
+  const handleRefresh = async () => {
+    if (selectedSiteName) {
+      await Promise.allSettled([
+        sfFetchRedZoneSites(true, selectedSiteName),
+        refetchSiteDetail(),
+        refetch(),
+      ]);
+    } else {
+      await Promise.allSettled([
+        sfFetchRedZoneSites(true),
+        refetch(),
+      ]);
+    }
+  };
 
   const allRedZoneSites = redZoneData?.redZoneSites || [];
 
@@ -743,8 +762,8 @@ function RedZonePage() {
               <div className="detail-actions" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <Button
                   variant="outline"
-                  onClick={() => void refetch()}
-                  disabled={isFetching}
+                  onClick={() => void handleRefresh()}
+                  disabled={isFetching || isDetailFetching}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -754,8 +773,8 @@ function RedZonePage() {
                     fontFamily: 'var(--font-sans)',
                   }}
                 >
-                  <RefreshCw className={isFetching ? 'animate-spin' : ''} style={{ width: 14, height: 14 }} />
-                  <span>{isFetching ? 'Refreshing…' : 'Refresh Telemetry'}</span>
+                  <RefreshCw className={isFetching || isDetailFetching ? 'animate-spin' : ''} style={{ width: 14, height: 14 }} />
+                  <span>{isFetching || isDetailFetching ? 'Refreshing…' : 'Refresh Telemetry'}</span>
                 </Button>
 
                 <Button
@@ -1563,7 +1582,7 @@ function RedZonePage() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Button
               variant="outline"
-              onClick={() => void refetch()}
+              onClick={() => void handleRefresh()}
               disabled={isFetching}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 40, fontFamily: 'var(--font-sans)' }}
             >
