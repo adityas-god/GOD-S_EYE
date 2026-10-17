@@ -1143,7 +1143,7 @@ export async function getSalesforceToken() {
 /**
  * Execute SOQL Query against Salesforce REST API.
  */
-export async function executeSOQL(soql) {
+export async function executeSOQL(soql, { maxRecords = 12000, paginate = true } = {}) {
   const { access_token, instance_url } = await getSalesforceToken();
   const { apiVersion } = getSfConfig();
   const endpoint = `${instance_url}/services/data/${apiVersion}/query?q=${encodeURIComponent(soql)}`;
@@ -1153,7 +1153,7 @@ export async function executeSOQL(soql) {
       Authorization: `Bearer ${access_token}`,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(15000),
+    signal: AbortSignal.timeout(18000),
   });
 
   if (!response.ok) {
@@ -1161,7 +1161,36 @@ export async function executeSOQL(soql) {
     throw new Error(`SOQL query failed (${response.status}): ${errorText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  if (!paginate) {
+    return data;
+  }
+
+  let records = data.records || [];
+  let nextUrl = data.nextRecordsUrl;
+
+  while (nextUrl && records.length < maxRecords) {
+    try {
+      const nextEndpoint = `${instance_url}${nextUrl}`;
+      const nextRes = await fetch(nextEndpoint, {
+        headers: {
+          Authorization: `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!nextRes.ok) break;
+      const nextData = await nextRes.json();
+      if (Array.isArray(nextData.records) && nextData.records.length > 0) {
+        records.push(...nextData.records);
+      }
+      nextUrl = nextData.nextRecordsUrl;
+    } catch {
+      break;
+    }
+  }
+
+  return { ...data, records };
 }
 
 function isNoiseSite(name) {
@@ -1970,12 +1999,13 @@ export function extractAlertSignature(alert) {
  * Builds site-specific SOQL WHERE criteria matching all known aliases, host prefixes,
  * and account names for any site.
  */
-export function buildSiteSOQLWhereClause(siteName) {
-  const ALERT_CRITERIA_SOQL =
-    "(Type = 'Alert' OR Category__c = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Runbook for%' OR Subject LIKE '%Dashboard for%' OR Subject LIKE '%Ranger Infra%' OR Subject LIKE '%[Alert]%' OR Subject LIKE '%Alert:%' OR Subject LIKE '%[Opsgenie]%' OR Subject LIKE '%Opsgenie:%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%ProcessExecutions%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%PostgresOldData%' OR Subject LIKE '%ChargersOffline%' OR Subject LIKE '%RabbitMQ%')";
-
+/**
+ * Returns raw SOQL filter parts matching all known aliases, host prefixes,
+ * and account names for any site.
+ */
+export function getSiteMatchSOQLParts(siteName) {
   if (!siteName || siteName === 'all' || siteName === 'All Sites') {
-    return ALERT_CRITERIA_SOQL;
+    return [];
   }
 
   const clean = cleanText(siteName);
@@ -1987,7 +2017,7 @@ export function buildSiteSOQLWhereClause(siteName) {
       "Subject LIKE '%flexo-hnm%'",
       "Subject LIKE '%xpo-hnm%'",
       "Account_Name__c LIKE '%Ajax%'",
-      "Account_Name__c LIKE '%H&M(Ajax)%'",
+      "Account_Name__c LIKE '%H&M%'",
       "Snow_Sitename__c LIKE '%Ajax%'"
     );
   } else if (clean.includes('atlanta') || clean.includes('elatl') || clean.includes('el-atl')) {
@@ -2066,6 +2096,27 @@ export function buildSiteSOQLWhereClause(siteName) {
     }
   }
 
+  return parts;
+}
+
+/**
+ * Builds site-specific SOQL WHERE criteria matching customer incidents (without alert filters).
+ */
+export function buildSiteIncidentSOQLWhereClause(siteName) {
+  const parts = getSiteMatchSOQLParts(siteName);
+  if (parts.length === 0) return '';
+  return `(${parts.join(' OR ')})`;
+}
+
+/**
+ * Builds site-specific SOQL WHERE criteria matching all known aliases, host prefixes,
+ * and account names for any site (with alert criteria).
+ */
+export function buildSiteSOQLWhereClause(siteName) {
+  const ALERT_CRITERIA_SOQL =
+    "(Type = 'Alert' OR Category__c = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Runbook for%' OR Subject LIKE '%Dashboard for%' OR Subject LIKE '%Ranger Infra%' OR Subject LIKE '%[Alert]%' OR Subject LIKE '%Alert:%' OR Subject LIKE '%[Opsgenie]%' OR Subject LIKE '%Opsgenie:%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%ProcessExecutions%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%PostgresOldData%' OR Subject LIKE '%ChargersOffline%' OR Subject LIKE '%RabbitMQ%')";
+
+  const parts = getSiteMatchSOQLParts(siteName);
   if (parts.length === 0) {
     return ALERT_CRITERIA_SOQL;
   }
@@ -2484,10 +2535,21 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
   return result;
 }
 
-let _redZoneCache = {
-  data: null,
-  cachedAt: 0,
-};
+const _redZoneSiteCache = new Map();
+const _inFlightRedZonePromises = new Map();
+
+function _triggerBackgroundRedZoneRefresh({ siteName = '' } = {}) {
+  const cacheKey = siteName ? siteName.toLowerCase().trim() : '__global__';
+  if (_inFlightRedZonePromises.has(cacheKey)) return;
+  const p = _executeRedZoneFetch({ forceRefresh: true, siteName })
+    .catch(err => {
+      console.warn('[Salesforce] Background Red Zone refresh failed:', err.message);
+    })
+    .finally(() => {
+      _inFlightRedZonePromises.delete(cacheKey);
+    });
+  _inFlightRedZonePromises.set(cacheKey, p);
+}
 
 /**
  * Fetch and compute RED Zone sites from Salesforce ticket data.
@@ -2498,11 +2560,61 @@ let _redZoneCache = {
  * Exit Criteria:
  *   If Criteria 1 & Criteria 2 are not met continually for 3 weeks (21 Days), site exits from RedZone.
  */
-export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
+export async function fetchRedZoneSitesOverview({ forceRefresh = false, siteName = '' } = {}) {
+  const cacheKey = siteName ? siteName.toLowerCase().trim() : '__global__';
   const now = Date.now();
-  if (!forceRefresh && _redZoneCache.data && now - _redZoneCache.cachedAt < 60000) {
-    return _redZoneCache.data;
+  const cached = _redZoneSiteCache.get(cacheKey);
+
+  // Instant response via SWR: If cached, return immediately (< 5ms)
+  if (!forceRefresh && cached) {
+    // If cache is older than 2 minutes (120s), kick off background refresh without blocking response
+    if (now - cached.cachedAt >= 120000) {
+      _triggerBackgroundRedZoneRefresh({ siteName });
+    }
+    return cached.data;
   }
+
+  // Fast-path for site-specific requests: check if __global__ cache already has this site
+  if (!forceRefresh && siteName) {
+    const globalCached = _redZoneSiteCache.get('__global__');
+    if (globalCached && globalCached.data?.redZoneSites) {
+      const nameLower = siteName.toLowerCase().trim();
+      const matchedSite = globalCached.data.redZoneSites.find(
+        s => s.siteName.toLowerCase() === nameLower || s.siteId.toLowerCase() === nameLower
+      );
+      if (matchedSite) {
+        // Return instantly from global data while refreshing site-specific in background
+        _triggerBackgroundRedZoneRefresh({ siteName });
+        return {
+          totalRedZoneSites: 1,
+          activeBreachesCount: matchedSite.status === 'ACTIVE_BREACH' ? 1 : 0,
+          exitPendingCount: matchedSite.status === 'EXIT_PENDING' ? 1 : 0,
+          redZoneSites: [matchedSite],
+          criteriaSummary: globalCached.data.criteriaSummary,
+          timestamp: new Date().toISOString(),
+        };
+      }
+    }
+  }
+
+  // Deduplicate in-flight requests (prevent duplicate Salesforce round-trips)
+  if (!forceRefresh && _inFlightRedZonePromises.has(cacheKey)) {
+    return _inFlightRedZonePromises.get(cacheKey);
+  }
+
+  const fetchPromise = _executeRedZoneFetch({ forceRefresh, siteName });
+  _inFlightRedZonePromises.set(cacheKey, fetchPromise);
+
+  try {
+    return await fetchPromise;
+  } finally {
+    _inFlightRedZonePromises.delete(cacheKey);
+  }
+}
+
+async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}) {
+  const cacheKey = siteName ? siteName.toLowerCase().trim() : '__global__';
+  const now = Date.now();
 
   // 1. Get all known sites
   let allSites = [];
@@ -2519,45 +2631,90 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
 
   // 2. Fetch past 30 days cases (covers 7d, 14d, and 21d history)
   let rawCases = [];
-  const primary30dSoql = [
+  let siteFilterClause = '';
+  if (siteName) {
+    const siteWhere = buildSiteIncidentSOQLWhereClause(siteName);
+    if (siteWhere) {
+      siteFilterClause = `AND ${siteWhere}`;
+    }
+  }
+
+  // Global overview fetches recent 2000 cases across all sites without pagination (matching baseline ground truth c9325aa)
+  // Single-site drilldown fetches dedicated 30 days for that single site with pagination (up to 3000 records)
+  const isGlobalOverview = !siteName;
+  const overviewPrimarySoql = [
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
+    'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+    'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
+    'FROM Case',
+    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    'ORDER BY CreatedDate DESC LIMIT 2000',
+  ].join(' ');
+
+  const sitePrimarySoql = [
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
     'FROM Case',
     'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
-    'ORDER BY CreatedDate DESC LIMIT 2000',
-  ].join(' ');
+    siteFilterClause,
+    'ORDER BY CreatedDate DESC',
+  ].filter(Boolean).join(' ');
 
-  const ultraSafe30dSoql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
-    'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
-    'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Snow_Sitename__c',
-    'FROM Case',
-    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
-    'ORDER BY CreatedDate DESC LIMIT 2000',
-  ].join(' ');
+  const ultraSafe30dSoql = isGlobalOverview
+    ? [
+        'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
+        'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+        'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
+        'AccountId, Account_Name__c, Snow_Sitename__c',
+        'FROM Case',
+        'WHERE CreatedDate >= LAST_N_DAYS:30',
+        'ORDER BY CreatedDate DESC LIMIT 2000',
+      ].join(' ')
+    : [
+        'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
+        'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+        'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
+        'AccountId, Account_Name__c, Snow_Sitename__c',
+        'FROM Case',
+        'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+        siteFilterClause,
+        'ORDER BY CreatedDate DESC',
+      ].filter(Boolean).join(' ');
 
-  const standardSafe30dSoql = [
-    'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
-    'FROM Case',
-    'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
-    'ORDER BY CreatedDate DESC LIMIT 2000',
-  ].join(' ');
+  const standardSafe30dSoql = isGlobalOverview
+    ? [
+        'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
+        'FROM Case',
+        'WHERE CreatedDate >= LAST_N_DAYS:30',
+        'ORDER BY CreatedDate DESC LIMIT 2000',
+      ].join(' ')
+    : [
+        'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
+        'FROM Case',
+        'WHERE (CreatedDate = LAST_N_DAYS:30 OR CreatedDate = TODAY)',
+        siteFilterClause,
+        'ORDER BY CreatedDate DESC',
+      ].filter(Boolean).join(' ');
+
+  const primary30dSoql = isGlobalOverview ? overviewPrimarySoql : sitePrimarySoql;
+  const queryMaxRecords = isGlobalOverview ? 2000 : 3000;
+  const shouldPaginate = !isGlobalOverview;
 
   try {
-    const res = await executeSOQL(primary30dSoql);
+    const res = await executeSOQL(primary30dSoql, { maxRecords: queryMaxRecords, paginate: shouldPaginate });
     rawCases = res.records || [];
   } catch (errPrimary) {
     console.warn('[Salesforce] Red Zone primary 30-day SOQL notice, executing ultra-safe query:', errPrimary.message);
     try {
-      const resSafe = await executeSOQL(ultraSafe30dSoql);
+      const resSafe = await executeSOQL(ultraSafe30dSoql, { maxRecords: queryMaxRecords, paginate: shouldPaginate });
       rawCases = resSafe.records || [];
     } catch (errSafe) {
       console.warn('[Salesforce] Red Zone ultra-safe 30-day SOQL notice, executing standard query:', errSafe.message);
       try {
-        const resStd = await executeSOQL(standardSafe30dSoql);
+        const resStd = await executeSOQL(standardSafe30dSoql, { maxRecords: queryMaxRecords, paginate: shouldPaginate });
         rawCases = resStd.records || [];
       } catch (errStd) {
         console.warn('[Salesforce] Red Zone standard 30-day SOQL notice, using cached live cases fallback:', errStd.message);
@@ -2586,7 +2743,10 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
   }
 
   for (const c of validIncidents) {
-    const matchedSite = findBestSiteForCase(c, compiledSites);
+    let matchedSite = findBestSiteForCase(c, compiledSites);
+    if (!matchedSite && siteName) {
+      matchedSite = siteName;
+    }
     if (!matchedSite) continue;
     const key = matchedSite.toLowerCase();
     if (!siteIncidentsMap.has(key)) {
@@ -2600,13 +2760,20 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     if (c.Downtime__c !== undefined && c.Downtime__c !== null && c.Downtime__c !== '') {
       const dtNum = Number(c.Downtime__c);
       if (!isNaN(dtNum) && dtNum > 0) {
-        durationHours = Math.round(dtNum * 10) / 10;
+        // If logged in minutes (> 24), convert to hours (e.g. 60m -> 1h, 120m -> 2h)
+        const hrs = dtNum > 24 ? dtNum / 60 : dtNum;
+        durationHours = Math.min(24, Math.round(hrs * 10) / 10);
       }
     }
     if (durationHours === null && endTimeMs > 0 && createdTime > 0 && endTimeMs >= createdTime) {
-      durationHours = Math.round(((endTimeMs - createdTime) / (3600 * 1000)) * 10) / 10;
-    } else if (durationHours === null && createdTime > 0 && !endTime) {
-      durationHours = Math.round(((now - createdTime) / (3600 * 1000)) * 10) / 10;
+      const rawDiff = (endTimeMs - createdTime) / (3600 * 1000);
+      if (rawDiff <= 4) {
+        durationHours = Math.round(rawDiff * 10) / 10;
+      } else {
+        // Administrative close delay: do not treat days of ticket review as warehouse outage
+        const cap = c.Is_Site_100_Down__c ? 8.0 : (sev === 'sev1' ? 2.0 : (sev === 'sev2' ? 0.75 : 0.5));
+        durationHours = cap;
+      }
     }
 
     if (c.Product_Type__c) recordSiteProduct(matchedSite, c.Product_Type__c);
@@ -2635,7 +2802,7 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
 
   const redZoneSites = [];
 
-  for (const [key, { siteName, incidents }] of siteIncidentsMap.entries()) {
+  for (const [key, { siteName: currentSiteName, incidents }] of siteIncidentsMap.entries()) {
     // Sort incidents newest first
     incidents.sort((a, b) => b.createdTime - a.createdTime);
 
@@ -2697,16 +2864,24 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
       }
     }
 
+    const isExplicitlyRequestedSite =
+      Boolean(siteName) &&
+      (normalizeCanonical(siteName) === normalizeCanonical(key) ||
+        key.includes(siteName.toLowerCase()) ||
+        siteName.toLowerCase().includes(key));
+
     if (!lastBreachTime) {
       // Never breached within the last 21 days -> Clean site, not in Red Zone!
-      continue;
+      if (!isExplicitlyRequestedSite) {
+        continue;
+      }
     }
 
-    const daysSinceBreach = Math.floor((now - lastBreachTime) / (24 * 60 * 60 * 1000));
+    const daysSinceBreach = lastBreachTime ? Math.floor((now - lastBreachTime) / (24 * 60 * 60 * 1000)) : 21;
     const daysRemainingToExit = Math.max(0, 21 - daysSinceBreach);
 
     // If 21 continuous days have passed without breach -> Successfully exited!
-    if (daysRemainingToExit <= 0 && !isCurrentBreach) {
+    if (daysRemainingToExit <= 0 && !isCurrentBreach && !isExplicitlyRequestedSite) {
       continue;
     }
 
@@ -2714,10 +2889,14 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
     if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
     if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
-    if (!isCurrentBreach) reasons.push(`In 21-Day Exit Probation: ${daysSinceBreach} clean days observed, ${daysRemainingToExit} days remaining to exit`);
+    if (!isCurrentBreach && lastBreachTime) {
+      reasons.push(`In 21-Day Exit Probation: ${daysSinceBreach} clean days observed, ${daysRemainingToExit} days remaining to exit`);
+    } else if (!isCurrentBreach && !lastBreachTime) {
+      reasons.push('No qualifying criteria breach observed in last 21 days');
+    }
 
     // Match site model for id and location
-    const siteObj = allSites.find(s => normalizeCanonical(s.name) === normalizeCanonical(siteName));
+    const siteObj = allSites.find(s => normalizeCanonical(s.name) === normalizeCanonical(currentSiteName));
 
     // Compute 21-day daily metrics for executive timeline graph (aligns with 21-day Red Zone cycle)
     const dailyMetrics = [];
@@ -2738,9 +2917,17 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
         const eTime = new Date(eStr).getTime();
         return eTime >= dayStart && eTime < dayEnd;
       }).length;
-      const downtimeOnDay = Math.round(
-        dayIncidents.reduce((acc, curr) => acc + (curr.durationHours || 0), 0) * 10
-      ) / 10;
+      const downtimeOnDay = Math.min(
+        24,
+        Math.round(
+          dayIncidents
+            .filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && (i.endTime || i.closedDate))
+            .reduce((acc, curr) => {
+              const hrs = typeof curr.durationHours === 'number' && curr.durationHours > 0 ? curr.durationHours : 0;
+              return acc + hrs;
+            }, 0) * 10
+        ) / 10
+      );
 
       dailyMetrics.push({
         date: dateStr,
@@ -2760,25 +2947,25 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
 
     const observedRzProds = new Set([
       ...(Array.isArray(siteObj?.product_lines) ? siteObj.product_lines : (siteObj?.product_line ? siteObj.product_line.split(',').map(p => p.trim()) : [])),
-      ...getObservedSiteProducts(siteName),
+      ...getObservedSiteProducts(currentSiteName),
     ].filter(Boolean));
     for (const inc of incidents) {
       if (inc.productType) observedRzProds.add(inc.productType);
     }
     if (observedRzProds.size === 0) {
-      observedRzProds.add(inferProductLine(siteName));
+      observedRzProds.add(inferProductLine(currentSiteName));
     }
     const rzProductLines = Array.from(observedRzProds);
 
     redZoneSites.push({
-      siteName,
-      siteId: siteObj?.id || `sf-site-${siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      siteName: currentSiteName,
+      siteId: siteObj?.id || `sf-site-${currentSiteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       product_line: rzProductLines.join(', '),
       product_lines: rzProductLines,
       location: siteObj?.location || null,
-      status: isCurrentBreach ? 'ACTIVE_BREACH' : 'EXIT_PENDING',
+      status: isCurrentBreach ? 'ACTIVE_BREACH' : (daysRemainingToExit > 0 && lastBreachTime ? 'EXIT_PENDING' : 'HEALTHY'),
       isCurrentBreach,
-      lastBreachDate: new Date(lastBreachTime).toISOString(),
+      lastBreachDate: lastBreachTime ? new Date(lastBreachTime).toISOString() : null,
       daysSinceBreach,
       daysRemainingToExit,
       reasons,
@@ -2840,10 +3027,10 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     timestamp: new Date().toISOString(),
   };
 
-  _redZoneCache = {
+  _redZoneSiteCache.set(cacheKey, {
     data: result,
     cachedAt: now,
-  };
+  });
 
   return result;
 }

@@ -8,7 +8,6 @@ import {
   isLiveOpenCase,
   hasTicketEndTime,
   getTicketEndTime,
-  fetchAllLiveCasesAndAlerts,
 } from '../services/salesforce.service.js';
 
 const router = Router();
@@ -23,7 +22,8 @@ const router = Router();
 router.get('/red-zone', async (req, res) => {
   try {
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
-    const result = await fetchRedZoneSitesOverview({ forceRefresh });
+    const siteName = req.query.site || req.query.siteName || '';
+    const result = await fetchRedZoneSitesOverview({ forceRefresh, siteName });
     res.json({
       success: true,
       ...result,
@@ -32,6 +32,10 @@ router.get('/red-zone', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+
+
+
 
 /**
  * GET /api/cases/alerts/analytics
