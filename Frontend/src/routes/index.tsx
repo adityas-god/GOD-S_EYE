@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useSuspenseQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -119,13 +119,16 @@ function Index() {
     refetchInterval: 60_000, // automatic background refresh every 60 seconds
   });
 
-  // Real-time synchronization via SSE from backend if available
+  const refetchOverviewRef = useRef(refetchOverview);
+  refetchOverviewRef.current = refetchOverview;
+
+  // Real-time synchronization via SSE from backend if available (stable listener)
   useEffect(() => {
     let es: EventSource | null = null;
     try {
       es = new EventSource('/api/webhooks/events');
       es.addEventListener('case_update', () => {
-        void refetchOverview();
+        void refetchOverviewRef.current();
         void queryClient.invalidateQueries({ queryKey: ['sites'] });
       });
       es.onerror = () => {
@@ -141,11 +144,11 @@ function Index() {
     return () => {
       if (es) es.close();
     };
-  }, [refetchOverview, queryClient]);
+  }, [queryClient]);
 
-  // Dynamic ranking: enrich each site with live open ticket count, alert count & case numbers,
-  // then sort descending by most open live tickets/alerts so highest activity sites appear first!
-  const sortedAndFilteredSites = useMemo(() => {
+  // Heavy enrichment & dynamic ranking: only runs when baseSites or sfOverview changes!
+  // Completely isolated from search bar typing to prevent CPU lag on VMs.
+  const enrichedSites = useMemo(() => {
     // Deduplicate baseSites by normalized name to guarantee each site card appears exactly once
     const uniqueMap = new Map<string, Site>();
     for (const site of baseSites) {
@@ -161,15 +164,16 @@ function Index() {
       }
     }
     const uniqueSites = Array.from(uniqueMap.values());
+    const statsMap = (sfOverview?.siteStats || {}) as Record<string, SiteCaseStat>;
+    const statsEntries = Object.entries(statsMap);
 
     const enriched: EnrichedSite[] = uniqueSites.map(site => {
       const siteLower = site.name.trim().toLowerCase();
-      const statsMap = (sfOverview?.siteStats || {}) as Record<string, SiteCaseStat>;
       let stats: SiteCaseStat | undefined = statsMap[siteLower];
       if (sfOverview?.siteStats) {
         // Collect and merge all matching stats entries for this site (handles aliases and host names)
         let mergedStats: SiteCaseStat | null = stats ? { ...stats, caseNumbers: [...(stats.caseNumbers || [])] } : null;
-        for (const [k, rawV] of Object.entries(statsMap)) {
+        for (const [k, rawV] of statsEntries) {
           const v = rawV as SiteCaseStat;
           if (k !== siteLower && areSameSite(k, site.name)) {
             if (!mergedStats) {
@@ -232,15 +236,29 @@ function Index() {
       return (a.position ?? 0) - (b.position ?? 0);
     });
 
-    // Filter by search text and normalized product line (supporting all 9 product lines)
-    return enriched.filter(s => {
-      const matchesSearch = s.name.toLowerCase().includes(search.toLowerCase());
-      if (!matchesSearch) return false;
-      if (product === 'All products') return true;
-      const normalize = (str?: string | null) => (str || '').toUpperCase().replace(/[\s_-]+/g, '');
-      return normalize(s.product_line) === normalize(product);
+    return enriched;
+  }, [baseSites, sfOverview]);
+
+  // Deferred search value allows 60fps responsive typing on low-spec VMs
+  const deferredSearch = useDeferredValue(search);
+
+  // Fast sub-millisecond filtering on keystrokes
+  const sortedAndFilteredSites = useMemo(() => {
+    const q = deferredSearch.trim().toLowerCase();
+    const isAll = product === 'All products';
+    const normProduct = isAll ? '' : product.toUpperCase().replace(/[\s_-]+/g, '');
+
+    if (!q && isAll) return enrichedSites;
+
+    return enrichedSites.filter(s => {
+      if (q && !s.name.toLowerCase().includes(q)) return false;
+      if (!isAll) {
+        const siteProd = (s.product_line || '').toUpperCase().replace(/[\s_-]+/g, '');
+        if (siteProd !== normProduct) return false;
+      }
+      return true;
     });
-  }, [baseSites, sfOverview, search, product]);
+  }, [enrichedSites, deferredSearch, product]);
 
   async function handleSyncSalesforceOrg() {
     setSyncingOrg(true);
@@ -307,17 +325,33 @@ function Index() {
   }, [sortedAndFilteredSites]);
   const sitesWithActiveTickets = activeSites;
 
-  // Top 4 sites with the most issues (cases, alerts, or down status)
+  // Top 4 sites with the most issues across workspace (decoupled from search filter)
   const top4IssueSiteIds = useMemo(() => {
-    const withIssues = sortedAndFilteredSites.filter(
+    const withIssues = enrichedSites.filter(
       s => (s.open_cases_count ?? 0) > 0 || (s.open_alerts_count ?? 0) > 0 || Boolean(s.is_down)
     );
     return new Set(withIssues.slice(0, 4).map(s => s.id));
-  }, [sortedAndFilteredSites]);
+  }, [enrichedSites]);
+
+  const compiledSitesList = useMemo(() => compileSites(baseSites), [baseSites]);
+
+  const siteNameToId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of baseSites) {
+      if (!s?.name) continue;
+      map.set(s.name.toLowerCase(), s.id);
+      map.set(normalizeCanonical(s.name), s.id);
+      const aliases = KNOWN_SITE_ALIASES[s.name] || [];
+      for (const alias of aliases) {
+        map.set(alias.toLowerCase(), s.id);
+        map.set(normalizeCanonical(alias), s.id);
+      }
+    }
+    return map;
+  }, [baseSites]);
 
   const isTicketFromToday = (c: SFCase) => {
-    const raw = c as Record<string, unknown>;
-    const candidates = [c.CreatedDate, raw.ClosedDate, raw.End_Time__c, raw.end_time, c.LastModifiedDate].filter(Boolean) as string[];
+    const candidates = [c.CreatedDate, c.ClosedDate, c.End_Time__c, c.end_time, c.LastModifiedDate].filter(Boolean) as string[];
     if (candidates.length === 0) return false;
 
     const now = new Date();
@@ -344,6 +378,19 @@ function Index() {
     return activeBucket === 'cases' ? openCases : activeBucket === 'alerts' ? openAlerts : closedAlerts;
   }, [activeBucket, openCases, openAlerts, closedAlerts]);
 
+  // Pre-index ticket to site mapping once per bucket update so JSX render loop is O(1)
+  const ticketSiteMap = useMemo(() => {
+    const map = new Map<string, { siteDisplay: string; matchedSiteId?: string | undefined }>();
+    for (const c of currentBucketItems) {
+      if (!c?.Id) continue;
+      const mappedSiteName = findBestSiteForCase(c, compiledSitesList);
+      const siteDisplay = mappedSiteName || String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
+      const matchedSiteId = siteNameToId.get(siteDisplay.toLowerCase()) || siteNameToId.get(normalizeCanonical(siteDisplay));
+      map.set(c.Id, { siteDisplay, matchedSiteId });
+    }
+    return map;
+  }, [currentBucketItems, compiledSitesList, siteNameToId]);
+
   const uniqueSeverities = useMemo(() => {
     const set = new Set<string>();
     for (const c of currentBucketItems) {
@@ -352,6 +399,32 @@ function Index() {
     }
     return Array.from(set).sort();
   }, [currentBucketItems]);
+
+  const sev1CountInBucket = useMemo(() => {
+    return currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length;
+  }, [currentBucketItems]);
+
+  const sev2CountInBucket = useMemo(() => {
+    return currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
+  }, [currentBucketItems]);
+
+  const severityCountsMap = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const sev of uniqueSeverities) {
+      const sfLower = sev.toLowerCase();
+      let count = 0;
+      for (const c of currentBucketItems) {
+        const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
+        const p2 = (c.Priority || '').trim().toLowerCase();
+        const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
+        if (p1 === sfLower || p2 === sfLower || p3 === sfLower) {
+          count++;
+        }
+      }
+      map.set(sev, count);
+    }
+    return map;
+  }, [uniqueSeverities, currentBucketItems]);
 
   // Filter tickets with optional severity/priority filter
   const currentOrgTickets: SFCase[] = useMemo(() => {
@@ -379,23 +452,6 @@ function Index() {
     });
   }, [currentBucketItems, severityFilter]);
 
-  const compiledSitesList = useMemo(() => compileSites(baseSites), [baseSites]);
-
-  const siteNameToId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const s of baseSites) {
-      if (!s?.name) continue;
-      map.set(s.name.toLowerCase(), s.id);
-      map.set(normalizeCanonical(s.name), s.id);
-      const aliases = KNOWN_SITE_ALIASES[s.name] || [];
-      for (const alias of aliases) {
-        map.set(alias.toLowerCase(), s.id);
-        map.set(normalizeCanonical(alias), s.id);
-      }
-    }
-    return map;
-  }, [baseSites]);
-
   const formatPreciseTime = (isoString?: string | null): string => {
     if (!isoString) return '—';
     try {
@@ -412,6 +468,88 @@ function Index() {
       return '—';
     }
   };
+
+  // Pre-computed ticket view models for O(1) instant rendering without re-parsing on every frame
+  const ticketViewModels = useMemo(() => {
+    return currentOrgTickets.map(c => {
+      const isDown = Boolean(c.Is_Site_100_Down__c);
+      const raw = c as Record<string, unknown>;
+      const alertEndTime = getTicketEndTime(c) || c.ended_at || (raw['ended_at'] as string | undefined) || c.ClosedDate;
+      const stLower = (c.Status || '').toLowerCase();
+      const isClosedTodayAlert = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved') || Boolean(alertEndTime);
+      const statusClass = isClosedTodayAlert
+        ? 'status-resolved'
+        : stLower.includes('new')
+        ? 'status-new'
+        : stLower.includes('progress')
+        ? 'status-progress'
+        : stLower.includes('investigat')
+        ? 'status-investigating'
+        : 'status-other';
+
+      const sevType = detectSeverity(c);
+      const isSev1Urgent = sevType === 'sev1';
+      const isSev2Urgent = sevType === 'sev2';
+
+      const priorityClass = isSev1Urgent
+        ? 'p-p1'
+        : isSev2Urgent
+        ? 'p-p2'
+        : 'p-p3';
+
+      const priorityDisplay = isSev1Urgent
+        ? 'SEV 1 URGENT'
+        : isSev2Urgent
+        ? 'SEV 2 URGENT'
+        : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
+
+      const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
+      const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
+      const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
+      
+      const cachedSite = c?.Id ? ticketSiteMap.get(c.Id) : undefined;
+      const siteDisplay = cachedSite?.siteDisplay || findBestSiteForCase(c, compiledSitesList) || String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
+      const matchedSiteId = cachedSite ? cachedSite.matchedSiteId : (siteNameToId.get(siteDisplay.toLowerCase()) || siteNameToId.get(normalizeCanonical(siteDisplay)));
+
+      const fromToday = isTicketFromToday(c);
+      const durationInfo = calculateAlertDuration(
+        c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined),
+        alertEndTime,
+        !isClosedTodayAlert
+      );
+
+      const createdTimeFormatted = formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
+      const endTimeFormatted = alertEndTime ? formatPreciseTime(alertEndTime) : '—';
+      const dateVal = c.CreatedDate || c.LastModifiedDate;
+      const casesDateFormatted = fromToday
+        ? (dateVal ? new Date(dateVal).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Today')
+        : (dateVal ? new Date(dateVal).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—');
+
+      return {
+        c,
+        isDown,
+        raw,
+        alertEndTime,
+        isClosedTodayAlert,
+        statusClass,
+        sevType,
+        isSev1Urgent,
+        isSev2Urgent,
+        priorityClass,
+        priorityDisplay,
+        productDisplay,
+        categoryDisplay,
+        assignedDisplay,
+        siteDisplay,
+        matchedSiteId,
+        fromToday,
+        durationInfo,
+        createdTimeFormatted,
+        endTimeFormatted,
+        casesDateFormatted,
+      };
+    });
+  }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId]);
 
   const renderSiteCard = (site: EnrichedSite, i: number) => {
     const casesCount = site.open_cases_count ?? 0;
@@ -441,7 +579,7 @@ function Index() {
         key={site.id}
       >
         <Button asChild variant="site">
-          <Link to="/sites/$siteId" params={{ siteId: site.id }} preload="intent">
+          <Link to="/sites/$siteId" params={{ siteId: site.id }} preload={false}>
             <div className="site-card-top">
               <span className={`site-emblem emblem-${(site.position ?? i) % 4}`}>
                 <Building2 />
@@ -870,21 +1008,15 @@ function Index() {
                       </option>
                     )}
                     <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                      ● SEV 1 URGENT ({currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length})
+                      ● SEV 1 URGENT ({sev1CountInBucket})
                     </option>
                     <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                      ● SEV 2 URGENT ({currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length})
+                      ● SEV 2 URGENT ({sev2CountInBucket})
                     </option>
                     {uniqueSeverities
                       .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
                       .map(sev => {
-                        const count = currentBucketItems.filter(c => {
-                          const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
-                          const p2 = (c.Priority || '').trim().toLowerCase();
-                          const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
-                          const sfLower = sev.toLowerCase();
-                          return p1 === sfLower || p2 === sfLower || p3 === sfLower;
-                        }).length;
+                        const count = severityCountsMap.get(sev) ?? 0;
                         return (
                           <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
                             {sev} ({count})
@@ -920,54 +1052,27 @@ function Index() {
               >
                 {currentOrgTickets.length > 0 ? (
                   <div>
-                    {currentOrgTickets.map(c => {
-                      const isDown = Boolean(c.Is_Site_100_Down__c);
-                      const raw = c as Record<string, unknown>;
-                      const alertEndTime = getTicketEndTime(c) || (raw.ended_at as string) || (raw.ClosedDate as string) || c.ClosedDate;
-                      const stLower = (c.Status || '').toLowerCase();
-                      const isClosedTodayAlert = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved') || Boolean(alertEndTime);
-                      const statusClass = isClosedTodayAlert
-                        ? 'status-resolved'
-                        : stLower.includes('new')
-                        ? 'status-new'
-                        : stLower.includes('progress')
-                        ? 'status-progress'
-                        : stLower.includes('investigat')
-                        ? 'status-investigating'
-                        : 'status-other';
-
-                      const sevType = detectSeverity(c);
-                      const isSev1Urgent = sevType === 'sev1';
-                      const isSev2Urgent = sevType === 'sev2';
-
-                      const priorityClass = isSev1Urgent
-                        ? 'p-p1'
-                        : isSev2Urgent
-                        ? 'p-p2'
-                        : 'p-p3';
-
-                      const priorityDisplay = isSev1Urgent
-                        ? 'SEV 1 URGENT'
-                        : isSev2Urgent
-                        ? 'SEV 2 URGENT'
-                        : c.Highest_Severity__c || c.Priority || 'Severity 3';
-
-                      const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
-                      const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
-                      const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
-                      
-                      // Primary site mapping using authoritative subject parser for alert tickets!
-                      const mappedSiteName = findBestSiteForCase(c, compiledSitesList);
-                      const siteDisplay = mappedSiteName || String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
-                      const matchedSiteId = siteNameToId.get(siteDisplay.toLowerCase()) || siteNameToId.get(normalizeCanonical(siteDisplay));
-
-                      const fromToday = isTicketFromToday(c);
-                      const dateVal = c.CreatedDate || c.LastModifiedDate;
-                      const durationInfo = calculateAlertDuration(
-                        c.CreatedDate || (raw.created_at as string),
+                    {ticketViewModels.map(item => {
+                      const {
+                        c,
                         alertEndTime,
-                        !isClosedTodayAlert
-                      );
+                        isClosedTodayAlert,
+                        statusClass,
+                        isSev1Urgent,
+                        isSev2Urgent,
+                        priorityClass,
+                        priorityDisplay,
+                        productDisplay,
+                        categoryDisplay,
+                        assignedDisplay,
+                        siteDisplay,
+                        matchedSiteId,
+                        fromToday,
+                        durationInfo,
+                        createdTimeFormatted,
+                        endTimeFormatted,
+                        casesDateFormatted,
+                      } = item;
 
                       return (
                         <div
@@ -1063,7 +1168,7 @@ function Index() {
                               <Link
                                 to="/sites/$siteId"
                                 params={{ siteId: matchedSiteId }}
-                                preload="intent"
+                                preload={false}
                                 onClick={e => e.stopPropagation()}
                                 style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
                                 title={`Go to ${siteDisplay} site workspace`}
@@ -1078,15 +1183,15 @@ function Index() {
                           {/* Date Cells: Start Time in Open Alerts; Start, End Time & MTTR Duration in Closed Alerts; Created/Modified in Cases */}
                           {activeBucket === 'alerts' ? (
                             <div className="case-date-cell" style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>
-                              {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                              {createdTimeFormatted}
                             </div>
                           ) : activeBucket === 'closed' ? (
                             <>
                               <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
-                                {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                                {createdTimeFormatted}
                               </div>
                               <div className="case-date-cell" style={{ fontSize: 10, color: '#34d399', fontWeight: 600 }}>
-                                {alertEndTime ? formatPreciseTime(alertEndTime) : '—'}
+                                {endTimeFormatted}
                               </div>
                               <div>
                                 <span
@@ -1111,20 +1216,9 @@ function Index() {
                             </>
                           ) : (
                             <div className="case-date-cell">
-                              {fromToday ? (
-                                <span style={{ color: '#ffffff', fontWeight: 600 }}>
-                                  {dateVal ? new Date(dateVal).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Today'}
-                                </span>
-                              ) : dateVal ? (
-                                <span style={{ color: '#ffffff', fontWeight: 500 }}>
-                                  {new Date(dateVal).toLocaleDateString(undefined, {
-                                    month: 'short',
-                                    day: 'numeric',
-                                  })}
-                                </span>
-                              ) : (
-                                '—'
-                              )}
+                              <span style={{ color: '#ffffff', fontWeight: fromToday ? 600 : 500 }}>
+                                {casesDateFormatted}
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1379,19 +1473,19 @@ function Index() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Product Type</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || 'RMS'}
+                  {String(selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || 'RMS')}
                 </p>
               </div>
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Category</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support'}
+                  {String(selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support')}
                 </p>
               </div>
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Assigned To</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue'}
+                  {String(selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue')}
                 </p>
               </div>
               <div>
