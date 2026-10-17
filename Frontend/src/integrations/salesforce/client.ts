@@ -1078,17 +1078,35 @@ export function getImpactPercentage(c: SFCase): number {
     }
   }
 
+  // Also check Subject and Description for explicit percentage statements (e.g. "100% down", "Impact: 50%")
+  const textToScan = `${c.Subject || ''} ${c.Description || ''}`;
+  if (textToScan.trim()) {
+    if (/\b(?:site\s+)?100\s*%\s*(?:down|impact|outage)\b/i.test(textToScan) || /\b100\s*%\s*site\s+down\b/i.test(textToScan)) {
+      return 100;
+    }
+    const match = textToScan.match(/(?:impact|impacted|down|area down)[^0-9\n]{0,20}(\d+(?:\.\d+)?)\s*%/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+    }
+  }
+
   return 0;
 }
 
 /**
  * Universal severity / priority detector.
  * Strict rules:
- * - NEVER use Subject or Description free text to infer urgency or severity.
- * - Only authoritative Salesforce structured severity/priority fields determine severity:
- *     - Sev 1: Explicitly marked 'Sev 1' / 'Severity 1' / 'P1' / 'Critical' in severity fields, OR Is_Site_100_Down__c is true.
- *     - Sev 2 Urgent: Explicitly marked 'Sev 2 - Urgent' / 'Sev 2 Urgent' / 'P2 - Urgent' in severity fields.
- *     - Plain 'Severity 2', 'Sev 2', 'Sev 2 - High', 'Sev 2 High', 'P2 - High' are High non-urgent (sev3).
+ * - Sev 1 Urgent (sev1):
+ *     - Operational Impact = 100% (or impact >= 100)
+ *     - OR Is_Site_100_Down__c is true
+ *     - OR Explicitly marked 'Sev 1 - Urgent', 'Sev 1 Urgent', 'P1 - Urgent', '1 - Critical', 'Critical'
+ * - Sev 2 Urgent (sev2):
+ *     - Operational Impact >= 50% and <= 99% (99% - 50% is Sev 2 Urgent)
+ *     - OR Explicitly marked 'Sev 2 - Urgent', 'Sev 2 Urgent', 'Severity 2 - Urgent', 'P2 - Urgent'
+ * - Sev 2 High (sev3 - High non-urgent):
+ *     - Marked 'Sev 2 - High', 'Sev 2 High', 'Severity 2 - High', 'P2 - High', 'High', OR plain 'Sev 2' with impact < 50%
+ *     - Sev 2 High MUST NEVER be classified as Sev 2 Urgent unless impact >= 50%.
  * - Excludes automated alerts, IM tickets, and DIR tickets.
  */
 export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
@@ -1102,46 +1120,67 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   const raw = c as Record<string, unknown>;
   const impact = getImpactPercentage(c);
 
-  // Rule 1: 100% Impact or Site 100% Down or explicit Severity 1 is Sev 1
+  // Rule 1: 100% Impact or Site 100% Down -> Sev 1 Urgent
+  // Condition: "if =100% then sev 1 urgent"
   if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || impact >= 100) {
     return 'sev1';
   }
 
-  const highestSev = String(raw.Highest_Severity__c || '').trim().toUpperCase();
-  if (
-    highestSev === 'SEVERITY 1' ||
-    highestSev === 'SEV 1' ||
-    highestSev === 'SEV-1' ||
-    highestSev === 'P1' ||
-    highestSev.startsWith('SEV 1') ||
-    highestSev.startsWith('SEVERITY 1') ||
-    highestSev.includes('1 - CRITICAL') ||
-    highestSev.includes('CRITICAL')
-  ) {
-    return 'sev1';
-  }
-
-  // Rule 2: 50% or more (and below 100%) is Sev 2
+  // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
+  // Condition: "if >=50% its sev 2 urgent if =100% then sev 1 urgent and 99%-50% is sev 2 urgent"
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  // Rule 3: Authoritative Salesforce field Highest_Severity__c for Sev 2
-  // Only inspect Highest_Severity__c (never Alert_Priority__c which belongs to automated alerts)
-  if (
-    highestSev === 'SEVERITY 2' ||
-    highestSev === 'SEV 2' ||
-    highestSev === 'SEV-2' ||
-    highestSev === 'P2' ||
-    highestSev.startsWith('SEV 2') ||
-    highestSev.startsWith('SEVERITY 2') ||
-    highestSev.includes('SEV 2') ||
-    highestSev.includes('SEVERITY 2') ||
-    ((highestSev.includes('2') || highestSev.includes('P2')) && highestSev.includes('URGENT'))
-  ) {
+  const highestSev = String(raw.Highest_Severity__c || '').trim().toUpperCase();
+  const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
+  const candidates = [highestSev, prio].filter(Boolean);
+
+  // Rule 3: Explicit Sev 1 Urgent / Critical in fields
+  for (const s of candidates) {
+    if (
+      s === 'SEVERITY 1' ||
+      s === 'SEV 1' ||
+      s === 'SEV-1' ||
+      s === 'P1' ||
+      s.includes('1 - URGENT') ||
+      s.includes('SEV 1 - URGENT') ||
+      s.includes('SEV 1 URGENT') ||
+      s.includes('1 - CRITICAL') ||
+      s.includes('CRITICAL')
+    ) {
+      return 'sev1';
+    }
+  }
+
+  // Rule 4: Explicit High (Sev 2 - High, Sev 2 High, P2 - High, High)
+  // MUST NOT be classified as Sev 2 Urgent! (Impact < 50%, so it is High non-urgent / sev3)
+  const isHigh = candidates.some(s =>
+    s.includes('HIGH') ||
+    s.includes('2 - HIGH') ||
+    s.includes('SEV 2 - HIGH') ||
+    s.includes('SEV 2 HIGH') ||
+    s.includes('SEVERITY 2 - HIGH') ||
+    s.includes('SEVERITY 2 HIGH') ||
+    s.includes('P2 - HIGH') ||
+    s.includes('P2 HIGH')
+  );
+
+  if (isHigh) {
+    return 'sev3';
+  }
+
+  // Rule 5: Explicit Sev 2 Urgent (must have URGENT keyword)
+  const isUrgent = candidates.some(s =>
+    (s.includes('2') || s.includes('P2') || s.includes('SEVERITY 2') || s.includes('SEV 2')) &&
+    s.includes('URGENT')
+  );
+
+  if (isUrgent) {
     return 'sev2';
   }
 
+  // Plain 'Sev 2' or 'Severity 2' without URGENT or impact >= 50% defaults to High non-urgent (sev3)
   return 'sev3';
 }
 
@@ -1592,6 +1631,7 @@ export interface RedZoneQualifyingIncident {
   durationHours?: number | null;
   description?: string | null;
   isSiteDown?: boolean;
+  impactPercentage?: number;
 }
 
 export interface RedZoneSiteInfo {
@@ -1600,8 +1640,11 @@ export interface RedZoneSiteInfo {
   product_line: string;
   product_lines?: string[];
   location?: string | null;
-  status: 'ACTIVE_BREACH' | 'EXIT_PENDING';
+  status: 'ACTIVE_BREACH' | 'EXIT_PENDING' | 'HEALTHY';
   isCurrentBreach: boolean;
+  isSheetDesignated?: boolean;
+  sheetReason?: string | null;
+  sheetDate?: string | null;
   lastBreachDate: string;
   daysSinceBreach: number;
   daysRemainingToExit: number;
@@ -1629,11 +1672,33 @@ export interface RedZoneSiteInfo {
   qualifyingIncidents: RedZoneQualifyingIncident[];
 }
 
+export interface RedZoneSheetSyncConfig {
+  url: string;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+  isSyncing: boolean;
+  count: number;
+  uptimeSitesCount?: number;
+  lastRow?: {
+    rowIndex: number;
+    dateLabel: string;
+    cellCount: number;
+  } | null;
+  uptimeSitesBelow99?: Array<{ siteName: string; uptime: number }>;
+  sites: Array<{
+    siteName: string;
+    rawName: string;
+    reason: string;
+    entryDate?: string | null;
+  }>;
+}
+
 export interface RedZoneOverviewResult {
   totalRedZoneSites: number;
   activeBreachesCount: number;
   exitPendingCount: number;
   redZoneSites: RedZoneSiteInfo[];
+  sheetSync?: RedZoneSheetSyncConfig | null;
   criteriaSummary: {
     criteria1: string;
     criteria2: string;
@@ -1939,6 +2004,62 @@ export const sfFetchRedZoneSites = async (forceRefresh: boolean = false, siteNam
       },
       timestamp: new Date().toISOString(),
     };
+  }
+};
+
+/**
+ * Fetch current Cloud Sheet (Google Sheets / OneDrive) sync status and configuration.
+ */
+export const sfFetchSheetConfig = async (): Promise<RedZoneSheetSyncConfig | null> => {
+  try {
+    const res = await fetch('/api/cases/red-zone/sheet-config', {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        return data as RedZoneSheetSyncConfig;
+      }
+    }
+  } catch (err) {
+    console.warn('[Salesforce client] /api/cases/red-zone/sheet-config notice:', (err as Error).message);
+  }
+  return null;
+};
+
+/**
+ * Trigger Cloud Sheet sync, update the URL, or supply direct CSV/TSV data.
+ */
+export const sfTriggerSheetSync = async (
+  optionsOrUrl?: string | { url?: string; csvData?: string }
+): Promise<{
+  success: boolean;
+  count?: number;
+  uptimeCount?: number;
+  lastRow?: { rowIndex: number; dateLabel: string; cellCount: number } | null;
+  error?: string;
+  sheetConfig?: RedZoneSheetSyncConfig;
+}> => {
+  try {
+    let body: { url?: string; csvData?: string } = {};
+    if (typeof optionsOrUrl === 'string') {
+      body = { url: optionsOrUrl.trim() };
+    } else if (optionsOrUrl && typeof optionsOrUrl === 'object') {
+      body = {
+        url: optionsOrUrl.url ? optionsOrUrl.url.trim() : undefined,
+        csvData: optionsOrUrl.csvData ? optionsOrUrl.csvData.trim() : undefined,
+      };
+    }
+    const res = await fetch('/api/cases/red-zone/sheet-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(25000),
+    });
+    const data = await res.json();
+    return data;
+  } catch (err) {
+    return { success: false, error: (err as Error).message };
   }
 };
 

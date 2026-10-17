@@ -39,7 +39,16 @@ import { DashboardShell } from '@/components/dashboard-shell';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
   sfFetchRedZoneSites,
+  sfTriggerSheetSync,
   type RedZoneSiteInfo,
   type RedZoneQualifyingIncident,
   type RedZoneDailyMetric,
@@ -259,6 +268,205 @@ function RedZonePage() {
       ]);
     }
   };
+
+  // Cloud Sheet Sync states
+  const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
+  const [syncMode, setSyncMode] = useState<'url' | 'paste'>('url');
+  const [sheetUrlInput, setSheetUrlInput] = useState('');
+  const [pastedCsv, setPastedCsv] = useState('');
+  const [isSyncingSheet, setIsSyncingSheet] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (redZoneData?.sheetSync?.url && !sheetUrlInput) {
+      setSheetUrlInput(redZoneData.sheetSync.url);
+    }
+  }, [redZoneData?.sheetSync?.url]);
+
+  const handleSyncSheet = async () => {
+    setIsSyncingSheet(true);
+    setSyncFeedback(null);
+    try {
+      const payload = syncMode === 'paste'
+        ? { csvData: pastedCsv }
+        : { url: sheetUrlInput };
+      const res = await sfTriggerSheetSync(payload);
+      if (res.success) {
+        const rowMsg = res.lastRow?.dateLabel ? ` (Last row: ${res.lastRow.dateLabel})` : '';
+        const uptimeMsg = res.uptimeCount ? `${res.uptimeCount} site uptimes evaluated` : '';
+        const countMsg = res.count ? `${res.count} pre-designated sites` : '';
+        const details = [uptimeMsg, countMsg].filter(Boolean).join(', ');
+        setSyncFeedback({
+          type: 'success',
+          message: `Successfully synced sheet${rowMsg}! ${details || ''}`,
+        });
+        await handleRefresh();
+      } else {
+        setSyncFeedback({
+          type: 'error',
+          message: res.error || 'Failed to sync with cloud sheet. Please verify the URL and sharing permissions.',
+        });
+      }
+    } catch (err) {
+      setSyncFeedback({
+        type: 'error',
+        message: (err as Error).message || 'Network error during sheet sync.',
+      });
+    } finally {
+      setIsSyncingSheet(false);
+    }
+  };
+
+  const renderSheetModal = () => (
+    <Dialog open={isSheetModalOpen} onOpenChange={setIsSheetModalOpen}>
+      <DialogContent style={{ maxWidth: 620, backgroundColor: 'var(--card)', color: 'var(--foreground)', border: '1px solid var(--border)' }}>
+        <DialogHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+            <span style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(59, 130, 246, 0.15)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: '#60a5fa' }}>
+              <Cloud style={{ width: 16, height: 16 }} />
+            </span>
+            <DialogTitle style={{ fontSize: 18, fontWeight: 600, fontFamily: 'var(--font-sans)' }}>
+              Google Sheet Uptime &amp; Criteria Sync
+            </DialogTitle>
+          </div>
+          <DialogDescription style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)', lineHeight: 1.5 }}>
+            Synchronizes the <strong>very last row</strong> of the uptime sheet. A site is placed in Red Zone if its uptime is &lt; 99% in the last row <strong>and</strong> it met entry criteria; otherwise not.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, margin: '12px 0 6px' }}>
+          {/* Mode Switcher */}
+          <div style={{ display: 'flex', gap: 6, background: 'var(--secondary)', padding: 3, borderRadius: 6, width: 'fit-content' }}>
+            <Button
+              type="button"
+              variant={syncMode === 'url' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => { setSyncMode('url'); setSyncFeedback(null); }}
+              style={{ fontSize: 11, height: 26, padding: '0 10px' }}
+            >
+              Google Sheet Link
+            </Button>
+            <Button
+              type="button"
+              variant={syncMode === 'paste' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => { setSyncMode('paste'); setSyncFeedback(null); }}
+              style={{ fontSize: 11, height: 26, padding: '0 10px' }}
+            >
+              Direct Paste (CSV / TSV)
+            </Button>
+          </div>
+
+          {syncMode === 'url' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted-foreground)' }}>
+                Cloud Sheet Share URL
+              </label>
+              <Input
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=1207923458"
+                value={sheetUrlInput}
+                onChange={e => setSheetUrlInput(e.target.value)}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              />
+              <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)', lineHeight: 1.4 }}>
+                For Google Sheets, click <strong>Share &rarr; Anyone with the link can view</strong>. If restricted by organizational policy, switch to <strong>Direct Paste</strong> above.
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted-foreground)' }}>
+                Paste Spreadsheet Data (CSV or Copied Cells)
+              </label>
+              <textarea
+                placeholder="Paste tab-separated cells copied from Google Sheets or exported CSV rows here..."
+                value={pastedCsv}
+                onChange={e => setPastedCsv(e.target.value)}
+                rows={6}
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11,
+                  background: 'var(--background)',
+                  color: 'var(--foreground)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  padding: 8,
+                  width: '100%',
+                  resize: 'vertical',
+                }}
+              />
+              <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)' }}>
+                Tip: In Google Sheets, press <strong>Ctrl+A &rarr; Ctrl+C</strong> and paste directly here. Delimiters (tabs and commas) are auto-detected.
+              </span>
+            </div>
+          )}
+
+          {/* Sync Stats Banner */}
+          {redZoneData?.sheetSync?.lastSyncedAt && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'var(--secondary)', border: '1px solid var(--border)', fontSize: 11, fontFamily: 'var(--font-mono)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: 'var(--muted-foreground)' }}>
+                  Last Synced: {new Date(redZoneData.sheetSync.lastSyncedAt).toLocaleTimeString()}
+                </span>
+                <span style={{ color: '#60a5fa', fontWeight: 600 }}>
+                  {redZoneData.sheetSync.uptimeSitesCount ?? redZoneData.sheetSync.count} Sites Evaluated
+                </span>
+              </div>
+              {redZoneData.sheetSync.lastRow && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--foreground)' }}>
+                  <span>Last Row Evaluated:</span>
+                  <span style={{ fontWeight: 600 }}>
+                    Row #{redZoneData.sheetSync.lastRow.rowIndex} ({redZoneData.sheetSync.lastRow.dateLabel})
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {syncFeedback && (
+            <div
+              style={{
+                padding: '9px 12px',
+                borderRadius: 6,
+                fontSize: 11.5,
+                fontFamily: 'var(--font-sans)',
+                background: syncFeedback.type === 'success' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                color: syncFeedback.type === 'success' ? '#22c55e' : '#ef4444',
+                border: `1px solid ${syncFeedback.type === 'success' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+              }}
+            >
+              {syncFeedback.message}
+            </div>
+          )}
+        </div>
+
+        <DialogFooter style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {redZoneData?.sheetSync?.url ? (
+            <a
+              href={redZoneData.sheetSync.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 11.5, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-sans)' }}
+            >
+              Open Current Sheet <ExternalLink style={{ width: 12, height: 12 }} />
+            </a>
+          ) : <div />}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button variant="outline" onClick={() => setIsSheetModalOpen(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={() => void handleSyncSheet()}
+              disabled={isSyncingSheet || (syncMode === 'url' ? !sheetUrlInput.trim() : !pastedCsv.trim())}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <RefreshCw className={isSyncingSheet ? 'animate-spin' : ''} style={{ width: 13, height: 13 }} />
+              {isSyncingSheet ? 'Syncing...' : 'Sync Now'}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 
   const allRedZoneSites = redZoneData?.redZoneSites || [];
 
@@ -746,6 +954,26 @@ function RedZonePage() {
                     )}
                   </span>
 
+                  {currentSite.isSheetDesignated && (
+                    <span
+                      className="rz-badge-pill"
+                      style={{
+                        fontSize: 9.5,
+                        padding: '2.5px 7px',
+                        background: 'rgba(59, 130, 246, 0.15)',
+                        color: '#60a5fa',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                      }}
+                      title={currentSite.sheetReason || 'Designated via Cloud Sheet'}
+                    >
+                      <Cloud style={{ width: 10, height: 10 }} />
+                      SHEET DESIGNATED
+                    </span>
+                  )}
+
                   {currentSite.location && (
                     <>
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--muted-foreground)' }}>
@@ -764,6 +992,26 @@ function RedZonePage() {
 
               {/* Action Buttons on Top Right */}
               <div className="detail-actions" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setSheetUrlInput(redZoneData?.sheetSync?.url || '');
+                    setSyncFeedback(null);
+                    setIsSheetModalOpen(true);
+                  }}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 7,
+                    height: 38,
+                    fontSize: 12,
+                    fontFamily: 'var(--font-sans)',
+                  }}
+                >
+                  <Cloud style={{ width: 14, height: 14 }} />
+                  <span>Sheet Sync</span>
+                </Button>
+
                 <Button
                   variant="outline"
                   onClick={() => void handleRefresh()}
@@ -835,6 +1083,20 @@ function RedZonePage() {
                     {managementInsights?.totalDowntimeHours || 0}h total outage
                   </div>
                 </div>
+                {currentSite.criteria2?.uptimePercentage !== null && currentSite.criteria2?.uptimePercentage !== undefined && (
+                  <>
+                    <div style={{ height: 28, width: 1, background: 'var(--border)' }} />
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)', textTransform: 'uppercase' }}>Sheet Uptime (Latest)</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: currentSite.criteria2.uptimePercentage < 99 ? '#ef4444' : '#22c55e' }}>
+                        {currentSite.criteria2.uptimePercentage}%
+                      </div>
+                      <div style={{ fontSize: 9.5, color: 'var(--muted-foreground)' }}>
+                        {currentSite.criteria2.uptimePercentage < 99 ? '< 99% Breached' : '≥ 99% Healthy'}
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1334,18 +1596,18 @@ function RedZonePage() {
                           {/* Severity Badge */}
                           <div>
                             {isSev1 ? (
-                              <span className="case-priority-badge p-p1">
+                              <span className="case-priority-badge p-p1" title="Sev 1 Urgent (100% Impact / Site Down)">
                                 <Flame style={{ width: 10, height: 10 }} />
-                                SEV 1
+                                SEV 1 URGENT
                               </span>
                             ) : isSev2 ? (
-                              <span className="case-priority-badge p-p2">
+                              <span className="case-priority-badge p-p2" title="Sev 2 Urgent (50% - 99% Impact)">
                                 <AlertTriangle style={{ width: 10, height: 10 }} />
-                                SEV 2
+                                SEV 2 URGENT
                               </span>
                             ) : (
-                              <span className="case-priority-badge p-p3">
-                                {inc.severity.toUpperCase()}
+                              <span className="case-priority-badge p-p3" title={inc.rawSeverity || 'High non-urgent'}>
+                                {inc.rawSeverity || 'SEV 2 HIGH'}
                               </span>
                             )}
                           </div>
@@ -1557,6 +1819,7 @@ function RedZonePage() {
             </section>
           </div>
         </div>
+        {renderSheetModal()}
       </DashboardShell>
     );
   }
@@ -1584,6 +1847,28 @@ function RedZonePage() {
           </div>
 
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSheetUrlInput(redZoneData?.sheetSync?.url || '');
+                setSyncFeedback(null);
+                setIsSheetModalOpen(true);
+              }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                height: 40,
+                fontFamily: 'var(--font-sans)',
+                borderColor: redZoneData?.sheetSync?.count ? 'rgba(59, 130, 246, 0.4)' : undefined,
+                color: redZoneData?.sheetSync?.count ? '#60a5fa' : undefined,
+              }}
+            >
+              <Cloud style={{ width: 14, height: 14 }} />
+              <span>
+                {redZoneData?.sheetSync?.count ? `Sheet Sync (${redZoneData.sheetSync.count})` : 'Connect Sheet'}
+              </span>
+            </Button>
             <Button
               variant="outline"
               onClick={() => void handleRefresh()}
@@ -1814,6 +2099,24 @@ function RedZonePage() {
                           >
                             RED ZONE
                           </span>
+                          {site.isSheetDesignated && (
+                            <span
+                              className="rz-badge-pill"
+                              style={{
+                                fontSize: 9.5,
+                                background: 'rgba(59, 130, 246, 0.15)',
+                                color: '#60a5fa',
+                                border: '1px solid rgba(59, 130, 246, 0.3)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 4,
+                              }}
+                              title={site.sheetReason || 'Designated via Cloud Sheet'}
+                            >
+                              <Cloud style={{ width: 10, height: 10 }} />
+                              SHEET
+                            </span>
+                          )}
                           {!isBreach && (
                             <span
                               className="rz-badge-pill rz-badge-cooling"
@@ -1889,6 +2192,22 @@ function RedZonePage() {
                           </b>
                         </span>
 
+                        {site.criteria2?.uptimePercentage !== null && site.criteria2?.uptimePercentage !== undefined && (
+                          <span title={`Latest Sheet Uptime from last row (Threshold < 99%): ${site.criteria2.uptimePercentage}%`}>
+                            <Activity
+                              style={{
+                                width: 11,
+                                height: 11,
+                                color: site.criteria2.uptimePercentage < 99 ? '#ef4444' : '#22c55e',
+                              }}
+                            />
+                            <span>Uptime</span>
+                            <b style={{ color: site.criteria2.uptimePercentage < 99 ? '#ef4444' : '#22c55e' }}>
+                              {site.criteria2.uptimePercentage}%
+                            </b>
+                          </span>
+                        )}
+
                         <span title="Consecutive Clean Streak (Exit Target: 21 days)">
                           <CheckCircle2
                             style={{
@@ -1961,6 +2280,7 @@ function RedZonePage() {
           <span>Sitepulse Operational Monitoring</span>
         </div>
       </div>
+      {renderSheetModal()}
     </DashboardShell>
   );
 }

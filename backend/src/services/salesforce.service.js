@@ -999,6 +999,9 @@ export function isTodayDate(dateVal) {
 /**
  * Extract operational impact percentage from ticket fields or description text.
  */
+/**
+ * Extract operational impact percentage from ticket fields or description text.
+ */
 export function getImpactPercentage(c) {
   if (!c) return 0;
   if (Boolean(c.Is_Site_100_Down__c) || Boolean(c.is_site_down)) {
@@ -1029,17 +1032,35 @@ export function getImpactPercentage(c) {
     }
   }
 
+  // Also check Subject and Description for explicit percentage statements (e.g. "100% down", "Impact: 50%")
+  const textToScan = `${c.Subject || ''} ${c.Description || ''}`;
+  if (textToScan.trim()) {
+    if (/\b(?:site\s+)?100\s*%\s*(?:down|impact|outage)\b/i.test(textToScan) || /\b100\s*%\s*site\s+down\b/i.test(textToScan)) {
+      return 100;
+    }
+    const match = textToScan.match(/(?:impact|impacted|down|area down)[^0-9\n]{0,20}(\d+(?:\.\d+)?)\s*%/i);
+    if (match) {
+      const parsed = parseFloat(match[1]);
+      if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+    }
+  }
+
   return 0;
 }
 
 /**
  * Universal severity / priority detector.
  * Strict rules:
- * - NEVER use Subject or Description free text to infer urgency or severity.
- * - Only authoritative Salesforce structured severity/priority fields determine severity:
- *     - Sev 1: Explicitly marked 'Sev 1' / 'Severity 1' / 'P1' / 'Critical' in severity fields, OR Is_Site_100_Down__c is true.
- *     - Sev 2 Urgent: Explicitly marked 'Sev 2 - Urgent' / 'Sev 2 Urgent' / 'P2 - Urgent' in severity fields.
- *     - Plain 'Severity 2', 'Sev 2', 'Sev 2 - High', 'Sev 2 High', 'P2 - High' are High non-urgent (sev3).
+ * - Sev 1 Urgent (sev1):
+ *     - Operational Impact = 100% (or impact >= 100)
+ *     - OR Is_Site_100_Down__c is true
+ *     - OR Explicitly marked 'Sev 1 - Urgent', 'Sev 1 Urgent', 'P1 - Urgent', '1 - Critical', 'Critical'
+ * - Sev 2 Urgent (sev2):
+ *     - Operational Impact >= 50% and <= 99% (99% - 50% is Sev 2 Urgent)
+ *     - OR Explicitly marked 'Sev 2 - Urgent', 'Sev 2 Urgent', 'Severity 2 - Urgent', 'P2 - Urgent'
+ * - Sev 2 High (sev3 - High non-urgent):
+ *     - Marked 'Sev 2 - High', 'Sev 2 High', 'Severity 2 - High', 'P2 - High', 'High', OR plain 'Sev 2' with impact < 50%
+ *     - Sev 2 High MUST NEVER be classified as Sev 2 Urgent unless impact >= 50%.
  * - Excludes automated alerts, IM tickets, and DIR tickets.
  */
 export function detectSeverity(c) {
@@ -1052,46 +1073,67 @@ export function detectSeverity(c) {
 
   const impact = getImpactPercentage(c);
 
-  // Rule 1: 100% Impact or Site 100% Down or explicit Severity 1 is Sev 1
+  // Rule 1: 100% Impact or Site 100% Down -> Sev 1 Urgent
+  // Condition: "if =100% then sev 1 urgent"
   if (Boolean(c.Is_Site_100_Down__c) || Boolean(c.is_site_down) || impact >= 100) {
     return 'sev1';
   }
 
-  const highestSev = String(c.Highest_Severity__c || '').trim().toUpperCase();
-  if (
-    highestSev === 'SEVERITY 1' ||
-    highestSev === 'SEV 1' ||
-    highestSev === 'SEV-1' ||
-    highestSev === 'P1' ||
-    highestSev.startsWith('SEV 1') ||
-    highestSev.startsWith('SEVERITY 1') ||
-    highestSev.includes('1 - CRITICAL') ||
-    highestSev.includes('CRITICAL')
-  ) {
-    return 'sev1';
-  }
-
-  // Rule 2: 50% or more (and below 100%) is Sev 2
+  // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
+  // Condition: "if >=50% its sev 2 urgent if =100% then sev 1 urgent and 99%-50% is sev 2 urgent"
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  // Rule 3: Authoritative Salesforce field Highest_Severity__c for Sev 2
-  // Only inspect Highest_Severity__c (never Alert_Priority__c which belongs to automated alerts)
-  if (
-    highestSev === 'SEVERITY 2' ||
-    highestSev === 'SEV 2' ||
-    highestSev === 'SEV-2' ||
-    highestSev === 'P2' ||
-    highestSev.startsWith('SEV 2') ||
-    highestSev.startsWith('SEVERITY 2') ||
-    highestSev.includes('SEV 2') ||
-    highestSev.includes('SEVERITY 2') ||
-    ((highestSev.includes('2') || highestSev.includes('P2')) && highestSev.includes('URGENT'))
-  ) {
+  const highestSev = String(c.Highest_Severity__c || '').trim().toUpperCase();
+  const prio = String(c.Priority || c.Snow_Priority__c || c.Snow_Urgency__c || '').trim().toUpperCase();
+  const candidates = [highestSev, prio].filter(Boolean);
+
+  // Rule 3: Explicit Sev 1 Urgent / Critical in fields
+  for (const s of candidates) {
+    if (
+      s === 'SEVERITY 1' ||
+      s === 'SEV 1' ||
+      s === 'SEV-1' ||
+      s === 'P1' ||
+      s.includes('1 - URGENT') ||
+      s.includes('SEV 1 - URGENT') ||
+      s.includes('SEV 1 URGENT') ||
+      s.includes('1 - CRITICAL') ||
+      s.includes('CRITICAL')
+    ) {
+      return 'sev1';
+    }
+  }
+
+  // Rule 4: Explicit High (Sev 2 - High, Sev 2 High, P2 - High, High)
+  // MUST NOT be classified as Sev 2 Urgent! (Impact < 50%, so it is High non-urgent / sev3)
+  const isHigh = candidates.some(s =>
+    s.includes('HIGH') ||
+    s.includes('2 - HIGH') ||
+    s.includes('SEV 2 - HIGH') ||
+    s.includes('SEV 2 HIGH') ||
+    s.includes('SEVERITY 2 - HIGH') ||
+    s.includes('SEVERITY 2 HIGH') ||
+    s.includes('P2 - HIGH') ||
+    s.includes('P2 HIGH')
+  );
+
+  if (isHigh) {
+    return 'sev3';
+  }
+
+  // Rule 5: Explicit Sev 2 Urgent (must have URGENT keyword)
+  const isUrgent = candidates.some(s =>
+    (s.includes('2') || s.includes('P2') || s.includes('SEVERITY 2') || s.includes('SEV 2')) &&
+    s.includes('URGENT')
+  );
+
+  if (isUrgent) {
     return 'sev2';
   }
 
+  // Plain 'Sev 2' or 'Severity 2' without URGENT or impact >= 50% defaults to High non-urgent (sev3)
   return 'sev3';
 }
 
@@ -2587,6 +2629,10 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
 const _redZoneSiteCache = new Map();
 const _inFlightRedZonePromises = new Map();
 
+export function clearRedZoneSiteCache() {
+  _redZoneSiteCache.clear();
+}
+
 function _triggerBackgroundRedZoneRefresh({ siteName = '' } = {}) {
   const cacheKey = siteName ? siteName.toLowerCase().trim() : '__global__';
   if (_inFlightRedZonePromises.has(cacheKey)) return;
@@ -2653,6 +2699,24 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   if (allSiteNames.length === 0) {
     allSiteNames = DEFAULT_ALL_SITE_NAMES;
   }
+
+  // 1b. Check Cloud Sheet (Google Sheets / OneDrive) designated Red Zone sites & uptime
+  let sheetDesignatedSites = [];
+  let getSheetUptimeForSite = () => null;
+  let hasActiveSheetUptime = () => false;
+  try {
+    const sheetsModule = await import('./sheets.service.js');
+    const cfg = sheetsModule.getSheetConfig();
+    if ((forceRefresh || !cfg.lastSyncedAt) && cfg.url) {
+      await sheetsModule.syncRedZoneSheet({ force: forceRefresh, allSiteNames });
+    }
+    sheetDesignatedSites = sheetsModule.getSheetDesignatedRedZoneSites();
+    getSheetUptimeForSite = sheetsModule.getSheetUptimeForSite;
+    hasActiveSheetUptime = sheetsModule.hasActiveSheetUptime;
+  } catch (errSheet) {
+    console.warn('[Salesforce] Cloud Sheet integration notice:', errSheet.message);
+  }
+
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
   // 2. Fetch past 30 days cases (covers 7d, 14d, and 21d history)
@@ -2672,7 +2736,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
     'FROM Case',
     'WHERE CreatedDate >= LAST_N_DAYS:30',
     'ORDER BY CreatedDate DESC LIMIT 2000',
@@ -2682,7 +2746,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
     'FROM Case',
     'WHERE CreatedDate >= LAST_N_DAYS:30',
     siteFilterClause,
@@ -2767,6 +2831,15 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       incidents: [],
     });
   }
+  for (const sRec of sheetDesignatedSites) {
+    const k = sRec.siteName.toLowerCase();
+    if (!siteIncidentsMap.has(k)) {
+      siteIncidentsMap.set(k, {
+        siteName: sRec.siteName,
+        incidents: [],
+      });
+    }
+  }
 
   for (const c of validIncidents) {
     let matchedSite = findBestSiteForCase(c, compiledSites);
@@ -2797,7 +2870,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       caseNumber: c.CaseNumber,
       subject: c.Subject || 'No Subject',
       severity: sev,
-      rawSeverity: c.Highest_Severity__c || c.Priority || (sev === 'sev1' ? 'Sev 1' : sev === 'sev2' ? 'Sev 2' : 'Sev 3'),
+      rawSeverity: c.Highest_Severity__c || c.Priority || (sev === 'sev1' ? 'Sev 1 Urgent' : sev === 'sev2' ? 'Sev 2 Urgent' : 'Sev 3'),
       productType: normalizeProductType(c.Product_Type__c || c.Parent_Product_Type__c) || 'RMS',
       status: c.Status || (endTime ? 'Closed' : 'Active'),
       createdDate: c.CreatedDate,
@@ -2807,6 +2880,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       durationHours,
       description: c.Description || null,
       isSiteDown: Boolean(c.Is_Site_100_Down__c),
+      impactPercentage: getImpactPercentage(c),
     });
   }
 
@@ -2825,11 +2899,19 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
 
-    // Criteria-2: Uptime (omitted for now)
+    // Criteria-2: Uptime (from Google Sheet / Cloud Sheet last row)
+    const sheetUptimeInfo = getSheetUptimeForSite(currentSiteName);
+    const hasSheetUptime = Boolean(sheetUptimeInfo && typeof sheetUptimeInfo.uptime === 'number');
+    const sheetUptimePct = hasSheetUptime ? sheetUptimeInfo.uptime : null;
+    const isUptimeBelow99 = hasSheetUptime && sheetUptimePct < 99.0;
+
     const criteria2 = {
-      met: false,
-      uptimePercentage: null,
-      omitted: true,
+      met: isUptimeBelow99,
+      uptimePercentage: sheetUptimePct,
+      omitted: !hasSheetUptime,
+      threshold: 99.0,
+      source: hasSheetUptime ? sheetUptimeInfo.source || 'sheet_last_row' : null,
+      rowIdx: sheetUptimeInfo?.rowIdx || null,
     };
 
     // Criteria-3: MTBF < 36 hours (Last two weeks = 14 days)
@@ -2847,7 +2929,32 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       criteria3Met = mtbfHours < 36; // Breaches if MTBF < 36h (i.e. N >= 10 in 14 days)
     }
 
-    const isCurrentBreach = criteria1Met || criteria3Met;
+    // Check Cloud Sheet designation
+    const sheetRecord = sheetDesignatedSites.find(
+      s => normalizeCanonical(s.siteName) === normalizeCanonical(currentSiteName)
+    );
+    const isSheetDesignated = Boolean(sheetRecord);
+
+    const meetsTicketEntryCriteria = criteria1Met || criteria3Met;
+
+    // Rule: "if any sites uptime is below 99% in the last row and also met the entry criteria then it will be inside red zone otherwise not"
+    let isCurrentBreach = false;
+    if (hasActiveSheetUptime()) {
+      if (hasSheetUptime) {
+        // Both conditions must be met: Uptime < 99% in last row AND ticket entry criteria met!
+        isCurrentBreach = isUptimeBelow99 && meetsTicketEntryCriteria;
+      } else {
+        // Site not recorded in uptime sheet
+        isCurrentBreach = meetsTicketEntryCriteria;
+      }
+    } else {
+      // Default ticket criteria if sheet uptime is not yet loaded
+      isCurrentBreach = meetsTicketEntryCriteria;
+    }
+
+    if (isSheetDesignated) {
+      isCurrentBreach = true;
+    }
 
     // Exit Criteria: "If Criteria 1 & Criteria 2 are not met for continually 3 weeks/21 Days, Site will exit from RedZone."
     // Determine the most recent breach date:
@@ -2883,9 +2990,16 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         key.includes(siteName.toLowerCase()) ||
         siteName.toLowerCase().includes(key));
 
+    // Rule: "if any sites uptime is below 99% in the last row and also met the entry criteria then it will be inside red zone otherwise not"
+    if (hasActiveSheetUptime() && hasSheetUptime) {
+      if ((!isUptimeBelow99 || !meetsTicketEntryCriteria) && !isExplicitlyRequestedSite && !isSheetDesignated) {
+        continue;
+      }
+    }
+
     if (!lastBreachTime) {
       // Never breached within the last 21 days -> Clean site, not in Red Zone!
-      if (!isExplicitlyRequestedSite) {
+      if (!isExplicitlyRequestedSite && !isSheetDesignated) {
         continue;
       }
     }
@@ -2894,11 +3008,21 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const daysRemainingToExit = Math.max(0, 21 - daysSinceBreach);
 
     // If 21 continuous days have passed without breach -> Successfully exited!
-    if (daysRemainingToExit <= 0 && !isCurrentBreach && !isExplicitlyRequestedSite) {
+    if (daysRemainingToExit <= 0 && !isCurrentBreach && !isExplicitlyRequestedSite && !isSheetDesignated) {
       continue;
     }
 
     const reasons = [];
+    if (isSheetDesignated) {
+      reasons.push(`[Cloud Sheet] ${sheetRecord.reason || 'Designated as Red Zone via Cloud Sheet'}`);
+    }
+    if (hasSheetUptime) {
+      if (isUptimeBelow99) {
+        reasons.push(`Site Uptime is ${sheetUptimePct}% (< 99.0% threshold in sheet last row)`);
+      } else {
+        reasons.push(`Site Uptime is healthy at ${sheetUptimePct}% (≥ 99.0% threshold in sheet last row)`);
+      }
+    }
     if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
     if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
     if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
@@ -2996,9 +3120,15 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       siteId: siteObj?.id || `sf-site-${currentSiteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
       product_line: rzProductLines.join(', '),
       product_lines: rzProductLines,
-      location: siteObj?.location || null,
-      status: isCurrentBreach ? 'ACTIVE_BREACH' : (daysRemainingToExit > 0 && lastBreachTime ? 'EXIT_PENDING' : 'HEALTHY'),
+      status: isCurrentBreach
+        ? 'ACTIVE_BREACH'
+        : (hasActiveSheetUptime() && hasSheetUptime && !isUptimeBelow99)
+          ? 'HEALTHY'
+          : (daysRemainingToExit > 0 && lastBreachTime && !isSheetDesignated ? 'EXIT_PENDING' : 'HEALTHY'),
       isCurrentBreach,
+      isSheetDesignated,
+      sheetReason: sheetRecord?.reason || null,
+      sheetDate: sheetRecord?.entryDate || null,
       lastBreachDate: lastBreachTime ? new Date(lastBreachTime).toISOString() : null,
       daysSinceBreach,
       daysRemainingToExit,
@@ -3047,11 +3177,18 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     return aMtbf - bMtbf;
   });
 
+  let sheetSync = null;
+  try {
+    const { getSheetConfig } = await import('./sheets.service.js');
+    sheetSync = getSheetConfig();
+  } catch {}
+
   const result = {
     totalRedZoneSites: redZoneSites.length,
     activeBreachesCount: redZoneSites.filter(s => s.status === 'ACTIVE_BREACH').length,
     exitPendingCount: redZoneSites.filter(s => s.status === 'EXIT_PENDING').length,
     redZoneSites,
+    sheetSync,
     criteriaSummary: {
       criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
       criteria2: '< 99% uptime for last 7 days (omitted for now)',
