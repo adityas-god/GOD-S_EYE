@@ -422,11 +422,10 @@ select option { background: var(--card); }
 .show-more-divider { margin: 28px 0 16px; display: flex; align-items: center; justify-content: center; position: relative; }
 .show-more-divider::before { content: ""; position: absolute; left: 0; right: 0; height: 1px; background: var(--border); z-index: 1; }
 .show-more-btn { position: relative; z-index: 2; height: 36px; padding: 0 18px; font-size: 11px; gap: 8px; font-weight: 500; background: var(--card); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow); color: var(--foreground); transition: all 0.2s ease; }
-/* Cinematic View Transitions & Smooth Color Fade */
+/* Immediate page navigation without animation lag */
 ::view-transition-old(root),
 ::view-transition-new(root) {
-  animation-duration: 0.85s;
-  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  animation: none !important;
 }
 
 /* Lightweight transitions only when explicitly toggling theme */

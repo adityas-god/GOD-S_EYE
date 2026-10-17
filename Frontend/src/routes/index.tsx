@@ -91,7 +91,10 @@ interface EnrichedSite extends Site {
 
 function Index() {
   const queryClient = useQueryClient();
-  const { data: baseSites } = useSuspenseQuery(sitesQueryOptions());
+  const { data: baseSites = [] } = useQuery({
+    ...sitesQueryOptions(),
+    placeholderData: (prev) => prev,
+  });
   const { admin, user } = useAuth();
   const [search, setSearch] = useState('');
   const [product, setProduct] = useState('All products');
@@ -166,6 +169,11 @@ function Index() {
     const uniqueSites = Array.from(uniqueMap.values());
     const statsMap = (sfOverview?.siteStats || {}) as Record<string, SiteCaseStat>;
     const statsEntries = Object.entries(statsMap);
+    // Only compare entries that actually have cases, alerts, or downtime
+    const activeStatsEntries = statsEntries.filter(([_, rawV]) => {
+      const v = rawV as SiteCaseStat;
+      return (v.count || 0) > 0 || (v.alertCount || 0) > 0 || Boolean(v.isDown) || (v.caseNumbers && v.caseNumbers.length > 0);
+    });
 
     const enriched: EnrichedSite[] = uniqueSites.map(site => {
       const siteLower = site.name.trim().toLowerCase();
@@ -173,7 +181,7 @@ function Index() {
       if (sfOverview?.siteStats) {
         // Collect and merge all matching stats entries for this site (handles aliases and host names)
         let mergedStats: SiteCaseStat | null = stats ? { ...stats, caseNumbers: [...(stats.caseNumbers || [])] } : null;
-        for (const [k, rawV] of statsEntries) {
+        for (const [k, rawV] of activeStatsEntries) {
           const v = rawV as SiteCaseStat;
           if (k !== siteLower && areSameSite(k, site.name)) {
             if (!mergedStats) {

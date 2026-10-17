@@ -416,7 +416,7 @@ function SiteDetail() {
       onOpenRunbookTab={(tab) => setActiveTab(tab)}
     >
       <div className="page-wrap detail-wrap">
-        <Link to="/" className="back-link">
+        <Link to="/" className="back-link" preload="intent">
           <ArrowLeft />
           All sites
         </Link>
@@ -1171,12 +1171,12 @@ function SiteDetail() {
                 {filteredCases.map(c => {
                   const isDown = Boolean(c.Is_Site_100_Down__c);
                   const raw = c as Record<string, unknown>;
-                  const alertEndTime = getTicketEndTime(c) || (raw.ended_at as string) || (raw.ClosedDate as string);
+                  const alertEndTime = getTicketEndTime(c) || c.ended_at || (raw['ended_at'] as string | undefined) || c.ClosedDate;
                   const hasEndTime = Boolean(alertEndTime);
                   const stLower = (c.Status || '').toLowerCase();
                   const isClosedTodayAlert = hasEndTime || stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved');
                   const durationInfo = calculateAlertDuration(
-                    c.CreatedDate || (raw.created_at as string),
+                    c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined),
                     alertEndTime,
                     !isClosedTodayAlert
                   );
@@ -1200,11 +1200,11 @@ function SiteDetail() {
                     ? 'p-p2'
                     : 'p-p3';
 
-                  const priorityDisplay = isSev1Urgent
+                    const priorityDisplay = isSev1Urgent
                     ? 'SEV 1 URGENT'
                     : isSev2Urgent
                     ? 'SEV 2 URGENT'
-                    : c.Highest_Severity__c || c.Priority || 'Severity 3';
+                    : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
 
                   const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType);
                   const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
@@ -1282,7 +1282,7 @@ function SiteDetail() {
 
                           {/* Created Time */}
                           <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
-                            {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                            {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
                           </div>
 
                           {/* Ended Time */}
@@ -1388,7 +1388,7 @@ function SiteDetail() {
 
                           {/* Start Time (ONLY start time in open alerts) */}
                           <div className="case-date-cell" style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>
-                            {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                            {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
                           </div>
                         </>
                       ) : activeBucket === 'closed' ? (
@@ -1456,7 +1456,7 @@ function SiteDetail() {
 
                           {/* Start Time */}
                           <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
-                            {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                            {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
                           </div>
 
                           {/* End Time */}
@@ -1696,19 +1696,19 @@ function SiteDetail() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Product Type</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || siteProductType}
+                  {String(selectedCase.Product_Type__c || selectedCase.product_line || selectedCase.Parent_Product_Type__c || siteProductType)}
                 </p>
               </div>
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Category</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support'}
+                  {String(selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support')}
                 </p>
               </div>
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Assigned To</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue'}
+                  {String(selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue')}
                 </p>
               </div>
               <div>
