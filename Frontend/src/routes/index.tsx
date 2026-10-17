@@ -299,13 +299,12 @@ function Index() {
   }
 
   // Strictly filter cases with end-time logic (no end time, no closed/hold status, no alerts, no DIR)
-  // User requirement: strictly open tickets of today's date on this main operational dashboard
+  // Aligns with site workspace panel: counts all live open cases
   const openCases = useMemo(() => {
     return (sfOverview?.cases ?? []).filter(c => 
       isLiveOpenCase(c) && 
       !hasTicketEndTime(c) && 
-      !getTicketEndTime(c) &&
-      isTodayDate(c.CreatedDate || (c as unknown as { created_at?: string }).created_at)
+      !getTicketEndTime(c)
     );
   }, [sfOverview?.cases]);
 

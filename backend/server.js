@@ -36,10 +36,10 @@ app.use(
   })
 );
 
-// Support XML/plain text for Salesforce Outbound Messaging, plus standard JSON/URL-encoded
-app.use(express.text({ type: ['text/*', 'application/xml', 'text/xml'] }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Support XML/plain text for Salesforce Outbound Messaging, plus standard JSON/URL-encoded with generous limits for sheet data
+app.use(express.text({ type: ['text/*', 'application/xml', 'text/xml'], limit: '50mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Request logging
 app.use((req, res, next) => {

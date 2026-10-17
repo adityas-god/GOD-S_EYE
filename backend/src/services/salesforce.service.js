@@ -1872,12 +1872,11 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
   // Pre-compile site index once for O(S) lightning-fast resolution
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
-  // Strictly open cases: omit any ticket having an end time or downtime, and strictly limit to open tickets of today's date!
+  // Strictly open cases: omit any ticket having an end time or downtime (matching fetchOpenCasesForSite)
   const strictlyOpenCases = liveCases.filter(c => 
     isLiveOpenCase(c) && 
     !hasTicketEndTime(c) && 
-    !getTicketEndTime(c) &&
-    isTodayDate(c.CreatedDate || c.created_date)
+    !getTicketEndTime(c)
   );
 
   for (const c of strictlyOpenCases) {
@@ -2700,22 +2699,10 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     allSiteNames = DEFAULT_ALL_SITE_NAMES;
   }
 
-  // 1b. Check Cloud Sheet (Google Sheets / OneDrive) designated Red Zone sites & uptime
+  // 1b. Cloud Sheet integration disabled per user request
   let sheetDesignatedSites = [];
   let getSheetUptimeForSite = () => null;
   let hasActiveSheetUptime = () => false;
-  try {
-    const sheetsModule = await import('./sheets.service.js');
-    const cfg = sheetsModule.getSheetConfig();
-    if ((forceRefresh || !cfg.lastSyncedAt) && cfg.url) {
-      await sheetsModule.syncRedZoneSheet({ force: forceRefresh, allSiteNames });
-    }
-    sheetDesignatedSites = sheetsModule.getSheetDesignatedRedZoneSites();
-    getSheetUptimeForSite = sheetsModule.getSheetUptimeForSite;
-    hasActiveSheetUptime = sheetsModule.hasActiveSheetUptime;
-  } catch (errSheet) {
-    console.warn('[Salesforce] Cloud Sheet integration notice:', errSheet.message);
-  }
 
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 

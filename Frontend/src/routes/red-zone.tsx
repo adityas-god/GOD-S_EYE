@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -34,6 +34,7 @@ import {
   Cpu,
   Server,
   Workflow,
+  Upload,
 } from 'lucide-react';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { Button } from '@/components/ui/button';
@@ -270,12 +271,15 @@ function RedZonePage() {
   };
 
   // Cloud Sheet Sync states
+  // Cloud Sheet Sync states
   const [isSheetModalOpen, setIsSheetModalOpen] = useState(false);
-  const [syncMode, setSyncMode] = useState<'url' | 'paste'>('url');
+  const [syncMode, setSyncMode] = useState<'upload' | 'url' | 'paste'>('upload');
   const [sheetUrlInput, setSheetUrlInput] = useState('');
   const [pastedCsv, setPastedCsv] = useState('');
+  const [uploadedFileName, setUploadedFileName] = useState('');
   const [isSyncingSheet, setIsSyncingSheet] = useState(false);
   const [syncFeedback, setSyncFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (redZoneData?.sheetSync?.url && !sheetUrlInput) {
@@ -283,13 +287,53 @@ function RedZonePage() {
     }
   }, [redZoneData?.sheetSync?.url]);
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadedFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const text = event.target?.result as string;
+      if (text) {
+        setPastedCsv(text);
+        setIsSyncingSheet(true);
+        setSyncFeedback(null);
+        try {
+          const res = await sfTriggerSheetSync({ csvData: text });
+          if (res.success) {
+            const rowMsg = res.lastRow?.dateLabel ? ` (Last row: ${res.lastRow.dateLabel})` : '';
+            const uptimeMsg = res.uptimeCount ? `${res.uptimeCount} site uptimes evaluated` : '';
+            setSyncFeedback({
+              type: 'success',
+              message: `Successfully loaded ${file.name}${rowMsg}! ${uptimeMsg}`,
+            });
+            await handleRefresh();
+          } else {
+            setSyncFeedback({
+              type: 'error',
+              message: res.error || 'Failed to parse sheet data from file.',
+            });
+          }
+        } catch (err) {
+          setSyncFeedback({
+            type: 'error',
+            message: (err as Error).message || 'Error processing uploaded file.',
+          });
+        } finally {
+          setIsSyncingSheet(false);
+        }
+      }
+    };
+    reader.readAsText(file);
+  };
+
   const handleSyncSheet = async () => {
     setIsSyncingSheet(true);
     setSyncFeedback(null);
     try {
-      const payload = syncMode === 'paste'
-        ? { csvData: pastedCsv }
-        : { url: sheetUrlInput };
+      const payload = syncMode === 'url'
+        ? { url: sheetUrlInput }
+        : { csvData: pastedCsv };
       const res = await sfTriggerSheetSync(payload);
       if (res.success) {
         const rowMsg = res.lastRow?.dateLabel ? ` (Last row: ${res.lastRow.dateLabel})` : '';
@@ -330,13 +374,41 @@ function RedZonePage() {
             </DialogTitle>
           </div>
           <DialogDescription style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)', lineHeight: 1.5 }}>
-            Synchronizes the <strong>very last row</strong> of the uptime sheet. A site is placed in Red Zone if its uptime is &lt; 99% in the last row <strong>and</strong> it met entry criteria; otherwise not.
+            Synchronizes the <strong>very last row</strong> of the uptime sheet. A site enters Red Zone if its uptime is &lt; 99% in the last row <strong>and</strong> it met entry criteria; otherwise not.
           </DialogDescription>
         </DialogHeader>
+
+        {/* Hidden native file input */}
+        <input
+          type="file"
+          accept=".csv,.tsv,.txt"
+          ref={fileInputRef}
+          style={{ display: 'none' }}
+          onChange={handleFileUpload}
+        />
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, margin: '12px 0 6px' }}>
           {/* Mode Switcher */}
           <div style={{ display: 'flex', gap: 6, background: 'var(--secondary)', padding: 3, borderRadius: 6, width: 'fit-content' }}>
+            <Button
+              type="button"
+              variant={syncMode === 'upload' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => { setSyncMode('upload'); setSyncFeedback(null); }}
+              style={{ fontSize: 11, height: 26, padding: '0 10px', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+            >
+              <Upload style={{ width: 12, height: 12 }} />
+              Upload CSV File
+            </Button>
+            <Button
+              type="button"
+              variant={syncMode === 'paste' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => { setSyncMode('paste'); setSyncFeedback(null); }}
+              style={{ fontSize: 11, height: 26, padding: '0 10px' }}
+            >
+              Direct Paste
+            </Button>
             <Button
               type="button"
               variant={syncMode === 'url' ? 'default' : 'ghost'}
@@ -346,33 +418,35 @@ function RedZonePage() {
             >
               Google Sheet Link
             </Button>
-            <Button
-              type="button"
-              variant={syncMode === 'paste' ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => { setSyncMode('paste'); setSyncFeedback(null); }}
-              style={{ fontSize: 11, height: 26, padding: '0 10px' }}
-            >
-              Direct Paste (CSV / TSV)
-            </Button>
           </div>
 
-          {syncMode === 'url' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted-foreground)' }}>
-                Cloud Sheet Share URL
-              </label>
-              <Input
-                placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=1207923458"
-                value={sheetUrlInput}
-                onChange={e => setSheetUrlInput(e.target.value)}
-                style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
-              />
-              <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)', lineHeight: 1.4 }}>
-                For Google Sheets, click <strong>Share &rarr; Anyone with the link can view</strong>. If restricted by organizational policy, switch to <strong>Direct Paste</strong> above.
-              </span>
+          {syncMode === 'upload' ? (
+            <div
+              style={{
+                border: '2px dashed var(--border)',
+                borderRadius: 8,
+                padding: '24px 16px',
+                textAlign: 'center',
+                cursor: 'pointer',
+                background: 'var(--secondary)',
+                transition: 'border-color 0.2s',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <Upload style={{ width: 28, height: 28, margin: '0 auto 8px', color: '#60a5fa' }} />
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)' }}>
+                {uploadedFileName ? `File Selected: ${uploadedFileName}` : 'Click to select CSV / TSV file'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted-foreground)', marginTop: 4 }}>
+                In Google Sheets, click <strong>File &rarr; Download &rarr; Comma Separated Values (.csv)</strong> and pick it here.
+              </div>
+              {uploadedFileName && (
+                <div style={{ marginTop: 8, fontSize: 11, color: '#22c55e', fontWeight: 600 }}>
+                  Ready to evaluate last row. Click "Sync Now" or re-select.
+                </div>
+              )}
             </div>
-          ) : (
+          ) : syncMode === 'paste' ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               <label style={{ fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted-foreground)' }}>
                 Paste Spreadsheet Data (CSV or Copied Cells)
@@ -396,6 +470,21 @@ function RedZonePage() {
               />
               <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)' }}>
                 Tip: In Google Sheets, press <strong>Ctrl+A &rarr; Ctrl+C</strong> and paste directly here. Delimiters (tabs and commas) are auto-detected.
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--muted-foreground)' }}>
+                Cloud Sheet Share URL
+              </label>
+              <Input
+                placeholder="https://docs.google.com/spreadsheets/d/.../edit#gid=1207923458"
+                value={sheetUrlInput}
+                onChange={e => setSheetUrlInput(e.target.value)}
+                style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              />
+              <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)', lineHeight: 1.4 }}>
+                For Google Sheets, click <strong>Share &rarr; Anyone with the link can view</strong>. If restricted by organizational policy, use <strong>Upload CSV File</strong> above.
               </span>
             </div>
           )}
@@ -954,25 +1043,6 @@ function RedZonePage() {
                     )}
                   </span>
 
-                  {currentSite.isSheetDesignated && (
-                    <span
-                      className="rz-badge-pill"
-                      style={{
-                        fontSize: 9.5,
-                        padding: '2.5px 7px',
-                        background: 'rgba(59, 130, 246, 0.15)',
-                        color: '#60a5fa',
-                        border: '1px solid rgba(59, 130, 246, 0.3)',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 4,
-                      }}
-                      title={currentSite.sheetReason || 'Designated via Cloud Sheet'}
-                    >
-                      <Cloud style={{ width: 10, height: 10 }} />
-                      SHEET DESIGNATED
-                    </span>
-                  )}
 
                   {currentSite.location && (
                     <>
@@ -992,26 +1062,6 @@ function RedZonePage() {
 
               {/* Action Buttons on Top Right */}
               <div className="detail-actions" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setSheetUrlInput(redZoneData?.sheetSync?.url || '');
-                    setSyncFeedback(null);
-                    setIsSheetModalOpen(true);
-                  }}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 7,
-                    height: 38,
-                    fontSize: 12,
-                    fontFamily: 'var(--font-sans)',
-                  }}
-                >
-                  <Cloud style={{ width: 14, height: 14 }} />
-                  <span>Sheet Sync</span>
-                </Button>
-
                 <Button
                   variant="outline"
                   onClick={() => void handleRefresh()}
@@ -1849,28 +1899,6 @@ function RedZonePage() {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Button
               variant="outline"
-              onClick={() => {
-                setSheetUrlInput(redZoneData?.sheetSync?.url || '');
-                setSyncFeedback(null);
-                setIsSheetModalOpen(true);
-              }}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                height: 40,
-                fontFamily: 'var(--font-sans)',
-                borderColor: redZoneData?.sheetSync?.count ? 'rgba(59, 130, 246, 0.4)' : undefined,
-                color: redZoneData?.sheetSync?.count ? '#60a5fa' : undefined,
-              }}
-            >
-              <Cloud style={{ width: 14, height: 14 }} />
-              <span>
-                {redZoneData?.sheetSync?.count ? `Sheet Sync (${redZoneData.sheetSync.count})` : 'Connect Sheet'}
-              </span>
-            </Button>
-            <Button
-              variant="outline"
               onClick={() => void handleRefresh()}
               disabled={isFetching}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 40, fontFamily: 'var(--font-sans)' }}
@@ -2280,7 +2308,6 @@ function RedZonePage() {
           <span>Sitepulse Operational Monitoring</span>
         </div>
       </div>
-      {renderSheetModal()}
     </DashboardShell>
   );
 }
