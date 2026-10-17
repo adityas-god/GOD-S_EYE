@@ -1,8 +1,37 @@
 import { Router } from 'express';
 import { CaseRepository } from '../models/Case.js';
-import { fetchOpenCasesForSite, fetchLiveCasesOverview, getAlertAnalyticsForSite, isLiveOpenCase, hasTicketEndTime, getTicketEndTime, fetchAllLiveCasesAndAlerts } from '../services/salesforce.service.js';
+import {
+  fetchOpenCasesForSite,
+  fetchLiveCasesOverview,
+  getAlertAnalyticsForSite,
+  fetchRedZoneSitesOverview,
+  isLiveOpenCase,
+  hasTicketEndTime,
+  getTicketEndTime,
+  fetchAllLiveCasesAndAlerts,
+} from '../services/salesforce.service.js';
 
 const router = Router();
+
+/**
+ * GET /api/cases/red-zone
+ * Return all sites qualifying for RED Zone based on SF tickets:
+ * Criteria-1: >=3 Sev-1 or >=5 Sev-2 in last 7 days
+ * Criteria-3: MTBF < 36h in last 14 days (per-site basis)
+ * Exit: 21 continuous days without breach
+ */
+router.get('/red-zone', async (req, res) => {
+  try {
+    const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
+    const result = await fetchRedZoneSitesOverview({ forceRefresh });
+    res.json({
+      success: true,
+      ...result,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 /**
  * GET /api/cases/alerts/analytics

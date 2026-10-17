@@ -973,29 +973,33 @@ export function detectSeverity(c) {
     highestSev === 'SEV 1' ||
     highestSev === 'SEV-1' ||
     highestSev === 'P1' ||
-    highestSev.includes('1 - CRITICAL')
+    highestSev.startsWith('SEV 1') ||
+    highestSev.startsWith('SEVERITY 1') ||
+    highestSev.includes('1 - CRITICAL') ||
+    highestSev.includes('CRITICAL')
   ) {
     return 'sev1';
   }
 
-  // Rule 2: 50% or more (and below 100%) is Sev 2 Urgent
-  // Requirement: "50 or more is sev 2 urgent and 100 means sev 1 below 100 and greaterthan equal to 50 means sev 2 urgent"
+  // Rule 2: 50% or more (and below 100%) is Sev 2
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  // Also support explicit 'URGENT' tagging on Severity 2
-  const structuredFields = [
-    c.Highest_Severity__c,
-    c.Alert_Priority__c,
-  ]
-    .filter(Boolean)
-    .map(v => String(v).trim().toUpperCase());
-
-  for (const s of structuredFields) {
-    if ((s.includes('SEV 2') || s.includes('SEVERITY 2') || s.includes('P2')) && s.includes('URGENT')) {
-      return 'sev2';
-    }
+  // Rule 3: Authoritative Salesforce field Highest_Severity__c for Sev 2
+  // Only inspect Highest_Severity__c (never Alert_Priority__c which belongs to automated alerts)
+  if (
+    highestSev === 'SEVERITY 2' ||
+    highestSev === 'SEV 2' ||
+    highestSev === 'SEV-2' ||
+    highestSev === 'P2' ||
+    highestSev.startsWith('SEV 2') ||
+    highestSev.startsWith('SEVERITY 2') ||
+    highestSev.includes('SEV 2') ||
+    highestSev.includes('SEVERITY 2') ||
+    ((highestSev.includes('2') || highestSev.includes('P2')) && highestSev.includes('URGENT'))
+  ) {
+    return 'sev2';
   }
 
   return 'sev3';
@@ -2279,6 +2283,270 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
     data: result,
     expiresAt: now + 120_000,
   });
+
+  return result;
+}
+
+let _redZoneCache = {
+  data: null,
+  cachedAt: 0,
+};
+
+/**
+ * Fetch and compute RED Zone sites from Salesforce ticket data.
+ * Entry Criteria (Any one):
+ *   Criteria-1: >= 3 Sev-1 OR >= 5 Sev-2 Incidents in the last 7 Days.
+ *   Criteria-2: < 99% uptime for last 7 Days (omitted for now as requested).
+ *   Criteria-3: MTBF < 36 hours (Last two weeks = 14 days) - calculated per site individually (not averaged).
+ * Exit Criteria:
+ *   If Criteria 1 & Criteria 2 are not met continually for 3 weeks (21 Days), site exits from RedZone.
+ */
+export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
+  const now = Date.now();
+  if (!forceRefresh && _redZoneCache.data && now - _redZoneCache.cachedAt < 60000) {
+    return _redZoneCache.data;
+  }
+
+  // 1. Get all known sites
+  let allSites = [];
+  try {
+    allSites = await SiteRepository.findAll();
+  } catch {
+    allSites = [];
+  }
+  let allSiteNames = (allSites || []).map(s => s.name);
+  if (allSiteNames.length === 0) {
+    allSiteNames = DEFAULT_ALL_SITE_NAMES;
+  }
+  const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
+
+  // 2. Fetch past 30 days cases (covers 7d, 14d, and 21d history)
+  let rawCases = [];
+  const primary30dSoql = [
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
+    'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+    'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
+    'FROM Case',
+    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    'ORDER BY CreatedDate DESC LIMIT 2000',
+  ].join(' ');
+
+  const ultraSafe30dSoql = [
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
+    'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+    'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
+    'AccountId, Account_Name__c, Snow_Sitename__c',
+    'FROM Case',
+    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    'ORDER BY CreatedDate DESC LIMIT 2000',
+  ].join(' ');
+
+  try {
+    const res = await executeSOQL(primary30dSoql);
+    rawCases = res.records || [];
+  } catch (errPrimary) {
+    console.warn('[Salesforce] Red Zone primary 30-day SOQL notice, executing ultra-safe query:', errPrimary.message);
+    try {
+      const resSafe = await executeSOQL(ultraSafe30dSoql);
+      rawCases = resSafe.records || [];
+    } catch (errSafe) {
+      console.warn('[Salesforce] Red Zone ultra-safe 30-day SOQL notice, using cached live cases fallback:', errSafe.message);
+      const live = await fetchAllLiveCasesAndAlerts(false);
+      rawCases = [...(live.cases || []), ...(live.closed || [])];
+    }
+  }
+
+  // 3. Filter for valid customer/site incidents (strictly exclude alert tickets, IM tickets, and DIR tickets)
+  const validIncidents = rawCases.filter(c => {
+    if (!c) return false;
+    if (isAlertCase(c)) return false;
+    if (isImTicket(c)) return false;
+    if (isDirTicket(c)) return false;
+    return true;
+  });
+
+  // Map each incident to a site
+  const siteIncidentsMap = new Map();
+  for (const name of allSiteNames) {
+    siteIncidentsMap.set(name.toLowerCase(), {
+      siteName: name,
+      incidents: [],
+    });
+  }
+
+  for (const c of validIncidents) {
+    const matchedSite = findBestSiteForCase(c, compiledSites);
+    if (!matchedSite) continue;
+    const key = matchedSite.toLowerCase();
+    if (!siteIncidentsMap.has(key)) {
+      siteIncidentsMap.set(key, { siteName: matchedSite, incidents: [] });
+    }
+    const sev = detectSeverity(c);
+    const createdTime = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
+    siteIncidentsMap.get(key).incidents.push({
+      id: c.Id,
+      caseNumber: c.CaseNumber,
+      subject: c.Subject || 'No Subject',
+      severity: sev,
+      status: c.Status || 'Active',
+      createdDate: c.CreatedDate,
+      createdTime,
+    });
+  }
+
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+  const redZoneSites = [];
+
+  for (const [key, { siteName, incidents }] of siteIncidentsMap.entries()) {
+    // Sort incidents newest first
+    incidents.sort((a, b) => b.createdTime - a.createdTime);
+
+    // Incidents in last 7 days
+    const incidents7d = incidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
+    const sev1_7d = incidents7d.filter(i => i.severity === 'sev1').length;
+    const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
+    const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
+
+    // Criteria-2: Uptime (omitted for now)
+    const criteria2 = {
+      met: false,
+      uptimePercentage: null,
+      omitted: true,
+    };
+
+    // Criteria-3: MTBF < 36 hours (Last two weeks = 14 days)
+    // Operating hours in 14 days = 336 hours. Qualifying failures: Sev-1 and Sev-2 incidents
+    const incidents14d = incidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+    const N = incidents14d.length;
+    let mtbfHours = null;
+    let criteria3Met = false;
+
+    if (N === 0) {
+      mtbfHours = null; // No failures in 14 days, MTBF is healthy
+      criteria3Met = false;
+    } else {
+      mtbfHours = Math.round((336 / N) * 10) / 10;
+      criteria3Met = mtbfHours < 36; // Breaches if MTBF < 36h (i.e. N >= 10 in 14 days)
+    }
+
+    const isCurrentBreach = criteria1Met || criteria3Met;
+
+    // Exit Criteria: "If Criteria 1 & Criteria 2 are not met for continually 3 weeks/21 Days, Site will exit from RedZone."
+    // Determine the most recent breach date:
+    let lastBreachTime = null;
+    if (isCurrentBreach) {
+      lastBreachTime = now;
+    } else {
+      // Check historical rolling windows over the last 21 days:
+      for (let dayOffset = 1; dayOffset <= 21; dayOffset++) {
+        const testPoint = now - (dayOffset * 24 * 60 * 60 * 1000);
+        const test7d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
+        const testSev1 = test7d.filter(i => i.severity === 'sev1').length;
+        const testSev2 = test7d.filter(i => i.severity === 'sev2').length;
+        if (testSev1 >= 3 || testSev2 >= 5) {
+          lastBreachTime = testPoint;
+          break;
+        }
+
+        const test14d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        if (test14d.length > 0) {
+          const testMtbf = 336 / test14d.length;
+          if (testMtbf < 36) {
+            lastBreachTime = testPoint;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!lastBreachTime) {
+      // Never breached within the last 21 days -> Clean site, not in Red Zone!
+      continue;
+    }
+
+    const daysSinceBreach = Math.floor((now - lastBreachTime) / (24 * 60 * 60 * 1000));
+    const daysRemainingToExit = Math.max(0, 21 - daysSinceBreach);
+
+    // If 21 continuous days have passed without breach -> Successfully exited!
+    if (daysRemainingToExit <= 0 && !isCurrentBreach) {
+      continue;
+    }
+
+    const reasons = [];
+    if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
+    if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
+    if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
+    if (!isCurrentBreach) reasons.push(`In 21-Day Exit Probation: ${daysSinceBreach} clean days observed, ${daysRemainingToExit} days remaining to exit`);
+
+    // Match site model for id and location
+    const siteObj = allSites.find(s => normalizeCanonical(s.name) === normalizeCanonical(siteName));
+
+    redZoneSites.push({
+      siteName,
+      siteId: siteObj?.id || `sf-site-${siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      product_line: siteObj?.product_line || 'RMS',
+      location: siteObj?.location || null,
+      status: isCurrentBreach ? 'ACTIVE_BREACH' : 'EXIT_PENDING',
+      isCurrentBreach,
+      lastBreachDate: new Date(lastBreachTime).toISOString(),
+      daysSinceBreach,
+      daysRemainingToExit,
+      reasons,
+      criteria1: {
+        met: criteria1Met,
+        sev1Count7d: sev1_7d,
+        sev2Count7d: sev2_7d,
+        thresholdSev1: 3,
+        thresholdSev2: 5,
+      },
+      criteria2,
+      criteria3: {
+        met: criteria3Met,
+        mtbfHours,
+        incidentCount14d: N,
+        thresholdMtbf: 36,
+      },
+      qualifyingIncidents: incidents.slice(0, 15).map(i => ({
+        id: i.id,
+        caseNumber: i.caseNumber,
+        subject: i.subject,
+        severity: i.severity,
+        status: i.status,
+        createdDate: i.createdDate,
+      })),
+    });
+  }
+
+  // Sort: Active breaches first, then lowest MTBF / highest incident count
+  redZoneSites.sort((a, b) => {
+    if (a.isCurrentBreach && !b.isCurrentBreach) return -1;
+    if (!a.isCurrentBreach && b.isCurrentBreach) return 1;
+    const aMtbf = a.criteria3.mtbfHours ?? 9999;
+    const bMtbf = b.criteria3.mtbfHours ?? 9999;
+    return aMtbf - bMtbf;
+  });
+
+  const result = {
+    totalRedZoneSites: redZoneSites.length,
+    activeBreachesCount: redZoneSites.filter(s => s.status === 'ACTIVE_BREACH').length,
+    exitPendingCount: redZoneSites.filter(s => s.status === 'EXIT_PENDING').length,
+    redZoneSites,
+    criteriaSummary: {
+      criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
+      criteria2: '< 99% uptime for last 7 days (omitted for now)',
+      criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
+      exitCriteria: '21 continuous days without breach to exit Red Zone',
+    },
+    timestamp: new Date().toISOString(),
+  };
+
+  _redZoneCache = {
+    data: result,
+    cachedAt: now,
+  };
 
   return result;
 }

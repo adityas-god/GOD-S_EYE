@@ -609,3 +609,28 @@ select option { background: var(--card); }
 @media (max-width: 800px) { .sidebar { width: 68px; padding: 27px 10px 0; align-items: center; } .sidebar .wordmark { font-size: 0; gap: 0; } .brand-mark { width: 25px; } .sidebar .workspace, .sidebar > .nav-label, .nav-count, .connection-dot, .source-health, .sidebar-foot, .sidebar-bottom { display: none; } .sidebar nav { margin-top: 39px; width: 100%; } .nav-button { font-size: 0; padding: 0; justify-content: center; gap: 0; } .nav-button svg { width: 19px; height: 19px; } .main-column { margin-left: 68px; width: calc(100% - 68px); } .topbar { padding: 0 22px; } .breadcrumb { gap: 8px; } .sidebar-glyph { display: none; } .top-actions { gap: 8px; } .account-button > span:nth-child(2), .account-button > svg { display: none; } .overview-metrics { grid-template-columns: repeat(2,1fr); } .metric:nth-child(2) { border-right: none; } .metric:nth-child(-n+2) { border-bottom: 1px solid var(--border); } .site-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .list-view { grid-template-columns: 1fr; } .connection-banner p { max-width: 230px; line-height: 1.6; } .connection-banner > button { font-size: 0; flex-shrink: 0; } .connection-banner > button svg { width: 17px; } .list-view .site-card-subtitle, .list-view .site-card-bottom { display: none; } .list-view .site-card-top { min-width: 100px; } .detail-summary { grid-template-columns: 1fr; gap: 15px; } .detail-summary > div { padding: 0; border: none; } .detail-wrap .page-heading { align-items: flex-start; flex-direction: column; } .data-panel-toolbar > span { display: none; } .panel-table-head { grid-template-columns: 1fr 65px 70px; } .panel-table-head span:last-child { display: none; } }
 @media (max-width: 540px) { .sidebar { width: 54px; padding-left: 6px; padding-right: 6px; } .main-column { margin-left: 54px; width: calc(100% - 54px); } .topbar { height: 65px; padding: 0 15px; } .top-actions { gap: 3px; } .top-actions > button:first-of-type, .top-divider { display: none; } .page-wrap { padding: 30px 16px 16px; } .eyebrow { font-size: 7px; } h1 { font-size: 29px; } .page-heading { gap: 12px; align-items: flex-start; flex-direction: column; } .page-heading p { font-size: 11px; line-height: 1.7; } .add-button { margin-top: 0; font-size: 10px; height: 34px; } .overview-metrics { margin-top: 25px; } .metric { padding: 15px 12px; } .metric-label { font-size: 10px; } .metric strong { font-size: 28px; } .metric > div:nth-child(2) > span { font-size: 8px; line-height: 1.5; } .metric-foot { font-size: 7px; line-height: 1.5; margin-top: 15px; } .connection-banner { padding: 12px 10px; gap: 8px; } .banner-symbol { flex-shrink: 0; width: 29px; height: 29px; } .connection-banner strong { font-size: 10px; } .connection-banner p { font-size: 9px; } .directory { margin-top: 27px; } .directory-note { display: none; } .directory-tools { flex-direction: column; gap: 10px; margin-top: 16px; } .site-search { width: 100%; } .filter-tools { justify-content: space-between; } .site-grid { gap: 10px; } .site-button { padding: 13px 10px 0; } .site-emblem { width: 27px; height: 27px; } .pill { font-size: 7px; padding: 2px 4px; } .site-card-title { margin-top: 11px; min-height: 50px; gap: 2px; } .site-card-title h3 { font-size: 11px; } .site-card-title svg { width: 11px; } .site-card-subtitle { font-size: 8px; margin-bottom: 13px; } .site-card-bottom { gap: 9px; font-size: 7px; } .site-card-bottom svg { width: 10px; } .site-card-bottom .card-arrow { display: none; } .directory-footer { font-size: 8px; } .directory-footer > span:last-child { display: none; } .main-footer { margin-left: 16px; margin-right: 16px; font-size: 7px; } .main-footer > span:last-child { display: none; } .list-view .site-card-title { min-height: auto; } .list-view .site-button { padding: 12px; gap: 10px; } .list-view .site-card-top { min-width: 80px; gap: 9px; } .data-panel-heading { padding: 15px 12px; gap: 8px; } .data-panel-heading h2 { font-size: 14px; } .provider-symbol { width: 32px; height: 32px; } .data-panel-heading > button { width: 24px; } .data-panel-toolbar, .panel-table-head, .panel-footer { padding-left: 12px; padding-right: 12px; } .panel-table-head { font-size: 7px; grid-template-columns: 1fr 53px 53px; } .source-empty { padding: 20px 15px; } .source-empty h3 { font-size: 15px; } .source-empty p { font-size: 10px; } .connection-row { gap: 8px; flex-wrap: wrap; } .connection-row p { font-size: 9px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+
+
+/* RED Zone Status Badges on Site Cards */
+.rz-badge-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 8.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+.rz-badge-breach {
+  background: rgba(239, 68, 68, 0.16);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.rz-badge-cooling {
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}

@@ -339,8 +339,10 @@ export function AlertAnalyticsPanel({
         continue;
       }
       const raw = a as Record<string, unknown>;
-      const dur = typeof raw.duration_minutes === 'number'
-        ? (raw.duration_minutes as number)
+      const dur = typeof a.duration_minutes === 'number'
+        ? a.duration_minutes
+        : typeof raw['duration_minutes'] === 'number'
+        ? (raw['duration_minutes'] as number)
         : (() => {
             const cTime = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
             const endStr = getTicketEndTime(a);

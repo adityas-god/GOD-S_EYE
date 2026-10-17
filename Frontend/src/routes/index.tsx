@@ -25,6 +25,7 @@ import {
   X,
   Clock,
   CheckCircle2,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -35,6 +36,7 @@ import { sitesQueryOptions, type Site } from '@/lib/sites';
 import {
   sfSyncOrgSites,
   sfFetchLiveCasesOverview,
+  sfFetchRedZoneSites,
   type SFCase,
   isAlertCase,
   detectSeverity,
@@ -121,6 +123,21 @@ function Index() {
     staleTime: 30_000,
     refetchInterval: 60_000, // automatic background refresh every 60 seconds
   });
+
+  const { data: redZoneOverview } = useQuery({
+    queryKey: ['salesforce-red-zone'],
+    queryFn: () => sfFetchRedZoneSites(),
+    staleTime: 45_000,
+    refetchInterval: 60_000,
+  });
+
+  const redZoneSiteNamesSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const rz of redZoneOverview?.redZoneSites || []) {
+      if (rz?.siteName) s.add(rz.siteName.toLowerCase().trim());
+    }
+    return s;
+  }, [redZoneOverview]);
 
   const refetchOverviewRef = useRef(refetchOverview);
   refetchOverviewRef.current = refetchOverview;
@@ -570,12 +587,13 @@ function Index() {
     const hasSev2 = sev2Count > 0;
     const hasUrgent = hasSev1 || hasSev2;
 
-    // Any site with Sev 1 Urgent, Sev 2 Urgent, or site down goes RED!
+    // Any site with Sev 1 Urgent, Sev 2 Urgent, site down, or Red Zone goes RED!
     // Top sites with standard non-urgent issues get subtle yellow tint.
+    const isRedZone = redZoneSiteNamesSet.has(site.name.toLowerCase().trim());
     const isTop4 = top4IssueSiteIds.has(site.id);
     let highlightColor: 'red' | 'orange' | 'yellow' | 'green' | null = null;
 
-    if (sev1Count > 0 || sev2Count > 0 || site.is_down) {
+    if (sev1Count > 0 || sev2Count > 0 || site.is_down || isRedZone) {
       highlightColor = 'red';
     } else if (isTop4 && (hasAlerts || hasCases)) {
       highlightColor = 'yellow';
@@ -593,6 +611,28 @@ function Index() {
                 <Building2 />
               </span>
               <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                {isRedZone && (
+                  <span
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.16)',
+                      border: '1px solid rgba(239, 68, 68, 0.45)',
+                      color: '#ef4444',
+                      fontSize: 9,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2.5px 6px',
+                      borderRadius: 4,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      lineHeight: 1,
+                    }}
+                    title="Site qualified under RED Zone criteria"
+                  >
+                    <ShieldAlert style={{ width: 10, height: 10 }} />
+                    RED ZONE
+                  </span>
+                )}
                 {hasCases && (
                   <div
                     style={{

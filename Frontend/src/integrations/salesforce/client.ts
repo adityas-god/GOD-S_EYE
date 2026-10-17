@@ -18,10 +18,13 @@ export interface SFCase {
   Subject: string | null;
   Status: string;
   Priority?: string | null;
+  Highest_Severity__c?: string | null;
+  Alert_Priority__c?: string | null;
   Type?: string | null;
   Owner?: { Name?: string } | null;
   CreatedDate: string;
   LastModifiedDate: string;
+  ClosedDate?: string | null;
   Description: string | null;
   AccountId?: string | null;
   Account_Name__c?: string | null;
@@ -33,8 +36,21 @@ export interface SFCase {
   ParentId?: string | null;
   parent_id?: string | null;
   product_line?: string | null;
+  Product_Type__c?: string | null;
+  Parent_Product_Type__c?: string | null;
+  Category__c?: string | null;
+  Snow_Category__c?: string | null;
+  Category?: string | null;
+  Dev_Case_Assignee__c?: string | null;
+  End_Time__c?: string | null;
+  end_time?: string | null;
+  created_at?: string | null;
+  ended_at?: string | null;
+  duration_minutes?: number | null;
+  is_open?: boolean;
+  is_closed?: boolean;
   Account?: { Name: string } | null;
-  [key: string]: unknown;
+  [key: string]: any;
 }
 
 export interface SFQueryResult<T> {
@@ -176,6 +192,7 @@ export function calculateAlertDuration(createdDate?: string | null, endDate?: st
  */
 export function getTicketEndTime(c: SFCase): string | null {
   if (!c) return null;
+  if (c.ended_at) return String(c.ended_at);
   const raw = c as Record<string, unknown>;
   const candidate =
     raw.End_Time_of_Incident__c ||
@@ -608,10 +625,22 @@ export const compileSites = compileSiteIndex;
  * - "Runbook for <AlertName> Ranger Infra Dashboard for <siteHost>"
  * - "[<siteHost>] ..."
  */
+const alertSubjectSiteCache = new Map<string, string | null>();
+
 export function extractSiteFromAlertSubject(subject: string, compiledSites: CompiledSite[]): string | null {
   if (!subject || typeof subject !== 'string' || !compiledSites || compiledSites.length === 0) return null;
   const sub = subject.trim();
+  const cacheKey = `${sub}:::${compiledSites.length}`;
+  if (alertSubjectSiteCache.has(cacheKey)) {
+    return alertSubjectSiteCache.get(cacheKey)!;
+  }
 
+  const result = _computeSiteFromAlertSubject(sub, compiledSites);
+  alertSubjectSiteCache.set(cacheKey, result);
+  return result;
+}
+
+function _computeSiteFromAlertSubject(sub: string, compiledSites: CompiledSite[]): string | null {
   // Pattern 0: Direct host prefix with brackets, colon, hyphen, pipe, cluster, etc.
   // e.g. "samprod:", "samprod :", "[samprod]", "<samprod>", "samsatlprod - ...", "sedicoprod:", "owensminorprod:", "cc-temuco:", "samsatlprod-cluster-prod-greymatter"
   const prefixMatch = sub.match(/^[<\[]?([a-z0-9._-]+)[>\]]?(?:\s*[:|–—\-]\s*|\s*-\s*(?:cluster|prod|greymatter))/i);
@@ -779,6 +808,14 @@ export function resolveSiteFromToken(token: string, compiledSites: CompiledSite[
   return null;
 }
 
+const COMPILED_KNOWN_SITE_ALIASES: Array<{ keyClean: string; allNames: string[] }> = Object.entries(KNOWN_SITE_ALIASES).map(([siteKey, aliases]) => {
+  const keyClean = normalizeCanonical(siteKey);
+  const allNames = [keyClean, ...aliases.map(normalizeCanonical)];
+  return { keyClean, allNames };
+});
+
+const sameSiteCache = new Map<string, boolean>();
+
 /**
  * Checks whether two site names represent the same physical site, taking into account
  * aliases, canonical brand variations (e.g. "Sams Club ATL" vs "Sams ATL", "Casey's" vs "Casey's Joplin"),
@@ -788,49 +825,97 @@ export function areSameSite(nameA: string, nameB: string, compiledSites: Compile
   if (!nameA || !nameB) return false;
   if (nameA === nameB) return true;
 
+  const cacheKey = nameA < nameB ? `${nameA}|${nameB}` : `${nameB}|${nameA}`;
+  const cached = sameSiteCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
   const cleanA = normalizeCanonical(nameA);
   const cleanB = normalizeCanonical(nameB);
-  if (cleanA && cleanB && cleanA === cleanB) return true;
+  if (cleanA && cleanB && cleanA === cleanB) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
 
   const spacelessA = cleanA.replace(/\s+/g, '');
   const spacelessB = cleanB.replace(/\s+/g, '');
-  if (spacelessA && spacelessB && spacelessA === spacelessB) return true;
+  if (spacelessA && spacelessB && spacelessA === spacelessB) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
 
   // Domain aliases:
   const isSamsAtl = (s: string) => /sam.*atl|samprod|samsprod|^4993/i.test(s);
-  if (isSamsAtl(nameA) && isSamsAtl(nameB)) return true;
-
-  const isSamsLax = (s: string) => /sam.*lax|samlax|^8799|^9476/i.test(s);
-  if (isSamsLax(nameA) && isSamsLax(nameB)) return true;
-
-  const isCaseys = (s: string) => /casey/i.test(s);
-  if (isCaseys(nameA) && isCaseys(nameB)) return true;
-
-  const isOwens = (s: string) => /owens|onm/i.test(s);
-  if (isOwens(nameA) && isOwens(nameB)) return true;
-
-  const isSedico = (s: string) => /sedico/i.test(s);
-  if (isSedico(nameA) && isSedico(nameB)) return true;
-
-  const isElAtl = (s: string) => /el[-_]?atl|atlanta.*luxottica|luxottica.*atlanta/i.test(s);
-  if (isElAtl(nameA) && isElAtl(nameB)) return true;
-
-  // Check KNOWN_SITE_ALIASES
-  for (const [siteKey, aliases] of Object.entries(KNOWN_SITE_ALIASES)) {
-    const keyClean = normalizeCanonical(siteKey);
-    const allNames = [keyClean, ...aliases.map(normalizeCanonical)];
-    const matchA = allNames.includes(cleanA) || (cleanA && keyClean.includes(cleanA));
-    const matchB = allNames.includes(cleanB) || (cleanB && keyClean.includes(cleanB));
-    if (matchA && matchB) return true;
+  if (isSamsAtl(nameA) && isSamsAtl(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
   }
 
+  const isSamsLax = (s: string) => /sam.*lax|samlax|^8799|^9476/i.test(s);
+  if (isSamsLax(nameA) && isSamsLax(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
+  const isCaseys = (s: string) => /casey/i.test(s);
+  if (isCaseys(nameA) && isCaseys(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
+  const isOwens = (s: string) => /owens|onm/i.test(s);
+  if (isOwens(nameA) && isOwens(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
+  const isSedico = (s: string) => /sedico/i.test(s);
+  if (isSedico(nameA) && isSedico(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
+  const isElAtl = (s: string) => /el[-_]?atl|atlanta.*luxottica|luxottica.*atlanta/i.test(s);
+  if (isElAtl(nameA) && isElAtl(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
+  // Check pre-compiled KNOWN_SITE_ALIASES
+  for (let i = 0; i < COMPILED_KNOWN_SITE_ALIASES.length; i++) {
+    const { keyClean, allNames } = COMPILED_KNOWN_SITE_ALIASES[i];
+    const matchA = allNames.includes(cleanA) || (cleanA && keyClean.includes(cleanA));
+    const matchB = allNames.includes(cleanB) || (cleanB && keyClean.includes(cleanB));
+    if (matchA && matchB) {
+      sameSiteCache.set(cacheKey, true);
+      return true;
+    }
+  }
+
+  sameSiteCache.set(cacheKey, false);
   return false;
 }
+
+const caseToSiteCache = new Map<string, string | null>();
 
 export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   if (!caseRecord || !compiledSites || compiledSites.length === 0) return null;
 
-  // Level 0: For automated ALERTS, the Subject line is the PRIMARY authoritative source for site host identification!
+  const raw = caseRecord as Record<string, unknown>;
+  const cId = String(caseRecord.Id || raw.id || raw.case_id || '');
+  if (cId) {
+    const key = `${cId}:${caseRecord.LastModifiedDate || ''}:${compiledSites.length}`;
+    if (caseToSiteCache.has(key)) {
+      return caseToSiteCache.get(key)!;
+    }
+    const result = _computeBestSiteForCase(caseRecord, compiledSites);
+    caseToSiteCache.set(key, result);
+    return result;
+  }
+
+  return _computeBestSiteForCase(caseRecord, compiledSites);
+}
+
+function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   const raw = caseRecord as Record<string, unknown>;
   const sub = String(caseRecord.Subject || raw.subject || '').trim();
   if (sub && (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub))) {
@@ -1015,29 +1100,33 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     highestSev === 'SEV 1' ||
     highestSev === 'SEV-1' ||
     highestSev === 'P1' ||
-    highestSev.includes('1 - CRITICAL')
+    highestSev.startsWith('SEV 1') ||
+    highestSev.startsWith('SEVERITY 1') ||
+    highestSev.includes('1 - CRITICAL') ||
+    highestSev.includes('CRITICAL')
   ) {
     return 'sev1';
   }
 
-  // Rule 2: 50% or more (and below 100%) is Sev 2 Urgent
-  // Requirement: "50 or more is sev 2 urgent and 100 means sev 1 below 100 and greaterthan equal to 50 means sev 2 urgent"
+  // Rule 2: 50% or more (and below 100%) is Sev 2
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  // Also support explicit 'URGENT' tagging on Severity 2
-  const structuredFields = [
-    raw.Highest_Severity__c,
-    raw.Alert_Priority__c,
-  ]
-    .filter(Boolean)
-    .map(v => String(v).trim().toUpperCase());
-
-  for (const s of structuredFields) {
-    if ((s.includes('SEV 2') || s.includes('SEVERITY 2') || s.includes('P2')) && s.includes('URGENT')) {
-      return 'sev2';
-    }
+  // Rule 3: Authoritative Salesforce field Highest_Severity__c for Sev 2
+  // Only inspect Highest_Severity__c (never Alert_Priority__c which belongs to automated alerts)
+  if (
+    highestSev === 'SEVERITY 2' ||
+    highestSev === 'SEV 2' ||
+    highestSev === 'SEV-2' ||
+    highestSev === 'P2' ||
+    highestSev.startsWith('SEV 2') ||
+    highestSev.startsWith('SEVERITY 2') ||
+    highestSev.includes('SEV 2') ||
+    highestSev.includes('SEVERITY 2') ||
+    ((highestSev.includes('2') || highestSev.includes('P2')) && highestSev.includes('URGENT'))
+  ) {
+    return 'sev2';
   }
 
   return 'sev3';
@@ -1459,5 +1548,289 @@ export const sfFetchAlertAnalytics = async (
     console.warn('[Salesforce client] Notice querying alert analytics:', (err as Error).message);
   }
   return null;
+};
+
+// ─── RED Zone Sites Types & API Client ─────────────────────────────────────────
+
+export interface RedZoneQualifyingIncident {
+  id: string;
+  caseNumber: string;
+  subject: string;
+  severity: 'sev1' | 'sev2' | 'sev3';
+  status: string;
+  createdDate: string;
+}
+
+export interface RedZoneSiteInfo {
+  siteName: string;
+  siteId: string;
+  product_line: string;
+  location?: string | null;
+  status: 'ACTIVE_BREACH' | 'EXIT_PENDING';
+  isCurrentBreach: boolean;
+  lastBreachDate: string;
+  daysSinceBreach: number;
+  daysRemainingToExit: number;
+  reasons: string[];
+  criteria1: {
+    met: boolean;
+    sev1Count7d: number;
+    sev2Count7d: number;
+    thresholdSev1: number;
+    thresholdSev2: number;
+  };
+  criteria2: {
+    met: boolean;
+    uptimePercentage: number | null;
+    omitted: true;
+  };
+  criteria3: {
+    met: boolean;
+    mtbfHours: number | null;
+    incidentCount14d: number;
+    thresholdMtbf: number;
+  };
+  qualifyingIncidents: RedZoneQualifyingIncident[];
+}
+
+export interface RedZoneOverviewResult {
+  totalRedZoneSites: number;
+  activeBreachesCount: number;
+  exitPendingCount: number;
+  redZoneSites: RedZoneSiteInfo[];
+  criteriaSummary: {
+    criteria1: string;
+    criteria2: string;
+    criteria3: string;
+    exitCriteria: string;
+  };
+  timestamp: string;
+}
+
+/**
+ * Client-side calculation engine for RED Zone sites.
+ * Evaluates:
+ * - Criteria 1: >= 3 Sev-1 OR >= 5 Sev-2 in last 7 days
+ * - Criteria 2: Uptime < 99% (omitted for now)
+ * - Criteria 3: MTBF < 36 hours in last 14 days (calculated per site individually)
+ * - Exit Criteria: 21 continuous days without breach to exit
+ */
+export function computeRedZoneSitesClientSide(
+  cases: SFCase[] = [],
+  allSiteNames: string[] = ALL_SITE_NAMES
+): RedZoneOverviewResult {
+  const now = Date.now();
+  const compiledSites = compileSiteIndex(allSiteNames);
+
+  // Filter for real customer incidents (exclude alerts, IM bots, DIR approvals)
+  const validIncidents = cases.filter(c => {
+    if (!c) return false;
+    if (isAlertCase(c)) return false;
+    if (isImTicket(c)) return false;
+    if (isDirTicket(c)) return false;
+    return true;
+  });
+
+  const siteIncidentsMap = new Map<string, { siteName: string; incidents: any[] }>();
+  for (const name of allSiteNames) {
+    siteIncidentsMap.set(name.toLowerCase(), { siteName: name, incidents: [] });
+  }
+
+  for (const c of validIncidents) {
+    const matchedSite = findBestSiteForCase(c, compiledSites);
+    if (!matchedSite) continue;
+    const key = matchedSite.toLowerCase();
+    if (!siteIncidentsMap.has(key)) {
+      siteIncidentsMap.set(key, { siteName: matchedSite, incidents: [] });
+    }
+    const sev = detectSeverity(c);
+    const createdTime = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
+    siteIncidentsMap.get(key)!.incidents.push({
+      id: c.Id,
+      caseNumber: c.CaseNumber,
+      subject: c.Subject || 'No Subject',
+      severity: sev,
+      status: c.Status || 'Active',
+      createdDate: c.CreatedDate,
+      createdTime,
+    });
+  }
+
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+  const FOURTEEN_DAYS_MS = 14 * 24 * 60 * 60 * 1000;
+
+  const redZoneSites: RedZoneSiteInfo[] = [];
+
+  for (const [_, { siteName, incidents }] of siteIncidentsMap.entries()) {
+    incidents.sort((a, b) => b.createdTime - a.createdTime);
+
+    // 7-day window
+    const incidents7d = incidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
+    const sev1_7d = incidents7d.filter(i => i.severity === 'sev1').length;
+    const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
+    const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
+
+    // Criteria-2: Uptime (omitted for now)
+    const criteria2 = {
+      met: false,
+      uptimePercentage: null,
+      omitted: true as const,
+    };
+
+    // 14-day window MTBF per individual site (336 operating hours / Sev-1 and Sev-2 failure count)
+    const incidents14d = incidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+    const N = incidents14d.length;
+    let mtbfHours: number | null = null;
+    let criteria3Met = false;
+
+    if (N === 0) {
+      mtbfHours = null;
+      criteria3Met = false;
+    } else {
+      mtbfHours = Math.round((336 / N) * 10) / 10;
+      criteria3Met = mtbfHours < 36;
+    }
+
+    const isCurrentBreach = criteria1Met || criteria3Met;
+
+    // Check rolling windows for 21-day exit calculation
+    let lastBreachTime: number | null = null;
+    if (isCurrentBreach) {
+      lastBreachTime = now;
+    } else {
+      for (let dayOffset = 1; dayOffset <= 21; dayOffset++) {
+        const testPoint = now - (dayOffset * 24 * 60 * 60 * 1000);
+        const test7d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
+        const testSev1 = test7d.filter(i => i.severity === 'sev1').length;
+        const testSev2 = test7d.filter(i => i.severity === 'sev2').length;
+        if (testSev1 >= 3 || testSev2 >= 5) {
+          lastBreachTime = testPoint;
+          break;
+        }
+
+        const test14d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        if (test14d.length > 0) {
+          const testMtbf = 336 / test14d.length;
+          if (testMtbf < 36) {
+            lastBreachTime = testPoint;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!lastBreachTime) {
+      continue;
+    }
+
+    const daysSinceBreach = Math.floor((now - lastBreachTime) / (24 * 60 * 60 * 1000));
+    const daysRemainingToExit = Math.max(0, 21 - daysSinceBreach);
+
+    if (daysRemainingToExit <= 0 && !isCurrentBreach) {
+      continue;
+    }
+
+    const reasons: string[] = [];
+    if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
+    if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
+    if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
+    if (!isCurrentBreach) reasons.push(`In 21-Day Exit Probation: ${daysSinceBreach} clean days observed, ${daysRemainingToExit} days remaining to exit`);
+
+    redZoneSites.push({
+      siteName,
+      siteId: `sf-site-${siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+      product_line: 'RMS',
+      status: isCurrentBreach ? 'ACTIVE_BREACH' : 'EXIT_PENDING',
+      isCurrentBreach,
+      lastBreachDate: new Date(lastBreachTime).toISOString(),
+      daysSinceBreach,
+      daysRemainingToExit,
+      reasons,
+      criteria1: {
+        met: criteria1Met,
+        sev1Count7d: sev1_7d,
+        sev2Count7d: sev2_7d,
+        thresholdSev1: 3,
+        thresholdSev2: 5,
+      },
+      criteria2,
+      criteria3: {
+        met: criteria3Met,
+        mtbfHours,
+        incidentCount14d: N,
+        thresholdMtbf: 36,
+      },
+      qualifyingIncidents: incidents.slice(0, 15).map(i => ({
+        id: i.id,
+        caseNumber: i.caseNumber,
+        subject: i.subject,
+        severity: i.severity,
+        status: i.status,
+        createdDate: i.createdDate,
+      })),
+    });
+  }
+
+  redZoneSites.sort((a, b) => {
+    if (a.isCurrentBreach && !b.isCurrentBreach) return -1;
+    if (!a.isCurrentBreach && b.isCurrentBreach) return 1;
+    const aMtbf = a.criteria3.mtbfHours ?? 9999;
+    const bMtbf = b.criteria3.mtbfHours ?? 9999;
+    return aMtbf - bMtbf;
+  });
+
+  return {
+    totalRedZoneSites: redZoneSites.length,
+    activeBreachesCount: redZoneSites.filter(s => s.status === 'ACTIVE_BREACH').length,
+    exitPendingCount: redZoneSites.filter(s => s.status === 'EXIT_PENDING').length,
+    redZoneSites,
+    criteriaSummary: {
+      criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
+      criteria2: '< 99% uptime for last 7 days (omitted for now)',
+      criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
+      exitCriteria: '21 continuous days without breach to exit Red Zone',
+    },
+    timestamp: new Date().toISOString(),
+  };
+}
+
+/**
+ * Fetch RED Zone sites overview from backend API with fallback to client-side computation.
+ */
+export const sfFetchRedZoneSites = async (forceRefresh: boolean = false): Promise<RedZoneOverviewResult> => {
+  try {
+    const res = await fetch(`/api/cases/red-zone${forceRefresh ? '?refresh=true' : ''}`, {
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.redZoneSites)) {
+        return data as RedZoneOverviewResult;
+      }
+    }
+  } catch (err) {
+    console.warn('[Salesforce client] /api/cases/red-zone notice, calculating via overview data:', (err as Error).message);
+  }
+
+  // Resilient fallback: compute from sfOverview live cases
+  try {
+    const overview = await sfFetchLiveCasesOverview();
+    const cases = [...(overview.cases || [])];
+    return computeRedZoneSitesClientSide(cases);
+  } catch {
+    return {
+      totalRedZoneSites: 0,
+      activeBreachesCount: 0,
+      exitPendingCount: 0,
+      redZoneSites: [],
+      criteriaSummary: {
+        criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
+        criteria2: '< 99% uptime for last 7 days (omitted for now)',
+        criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
+        exitCriteria: '21 continuous days without breach to exit Red Zone',
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
 };
 

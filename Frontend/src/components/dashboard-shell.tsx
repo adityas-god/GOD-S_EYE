@@ -1,5 +1,5 @@
 import { useState, useEffect, type ReactNode } from 'react';
-import { Link } from '@tanstack/react-router';
+import { Link, useRouterState } from '@tanstack/react-router';
 import {
   LayoutGrid,
   PlugZap,
@@ -10,6 +10,7 @@ import {
   Cloud,
   LogOut,
   Shield,
+  ShieldAlert,
   CircleHelp,
   PanelLeftClose,
   Sun,
@@ -28,6 +29,7 @@ import { useAuth } from './auth-context';
 import { ConnectionsDialog, SignInDialog } from './dashboard-dialogs';
 import { useQuery } from '@tanstack/react-query';
 import { sitesQueryOptions } from '@/lib/sites';
+import { sfFetchRedZoneSites } from '@/integrations/salesforce/client';
 import type { SiteRunbook } from '@/lib/runbook';
 import type { RunbookTabKey } from '@/components/site-runbook-panel';
 
@@ -44,8 +46,21 @@ export function DashboardShell({
   onOpenRunbookTab?: (tab: 'monitoring' | RunbookTabKey) => void;
   activeTab?: 'monitoring' | RunbookTabKey;
 }) {
+  const routerState = useRouterState();
+  const currentPath = routerState?.location?.pathname ?? '';
+  const isRedZoneActive = currentPath === '/red-zone';
+
   const { data: sites } = useQuery(sitesQueryOptions());
   const actualSitesCount = sites?.length ?? 78;
+
+  const { data: redZoneOverview } = useQuery({
+    queryKey: ['salesforce-red-zone'],
+    queryFn: () => sfFetchRedZoneSites(),
+    staleTime: 45_000,
+    refetchInterval: 60_000,
+  });
+  const redZoneCount = redZoneOverview?.totalRedZoneSites ?? 0;
+
   const [login, setLogin] = useState(false);
   const [connections, setConnections] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -107,11 +122,23 @@ export function DashboardShell({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          <Button variant="nav" asChild className={!detail && activeTab === 'all' ? 'active' : ''}>
+          <Button variant="nav" asChild className={!detail && !isRedZoneActive && activeTab === 'all' ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
               All sites
               <span className="nav-count">{actualSitesCount}</span>
+            </Link>
+          </Button>
+
+          <Button
+            variant="nav"
+            asChild
+            className={isRedZoneActive ? 'active' : ''}
+          >
+            <Link to="/red-zone">
+              <ShieldAlert />
+              RED zone sites
+              <span className="nav-count">{redZoneCount}</span>
             </Link>
           </Button>
 
@@ -286,7 +313,7 @@ export function DashboardShell({
             </button>
             <span>Workspace</span>
             <span className="crumb-slash">/</span>
-            <span>{detail ? 'Site details' : 'Site overview'}</span>
+            <span>{detail ? 'Site details' : isRedZoneActive ? 'RED zone sites' : 'Site overview'}</span>
           </div>
           <div className="top-actions">
             <span className="workspace-status">
