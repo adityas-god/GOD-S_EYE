@@ -2574,29 +2574,6 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false, siteName
     return cached.data;
   }
 
-  // Fast-path for site-specific requests: check if __global__ cache already has this site
-  if (!forceRefresh && siteName) {
-    const globalCached = _redZoneSiteCache.get('__global__');
-    if (globalCached && globalCached.data?.redZoneSites) {
-      const nameLower = siteName.toLowerCase().trim();
-      const matchedSite = globalCached.data.redZoneSites.find(
-        s => s.siteName.toLowerCase() === nameLower || s.siteId.toLowerCase() === nameLower
-      );
-      if (matchedSite) {
-        // Return instantly from global data while refreshing site-specific in background
-        _triggerBackgroundRedZoneRefresh({ siteName });
-        return {
-          totalRedZoneSites: 1,
-          activeBreachesCount: matchedSite.status === 'ACTIVE_BREACH' ? 1 : 0,
-          exitPendingCount: matchedSite.status === 'EXIT_PENDING' ? 1 : 0,
-          redZoneSites: [matchedSite],
-          criteriaSummary: globalCached.data.criteriaSummary,
-          timestamp: new Date().toISOString(),
-        };
-      }
-    }
-  }
-
   // Deduplicate in-flight requests (prevent duplicate Salesforce round-trips)
   if (!forceRefresh && _inFlightRedZonePromises.has(cacheKey)) {
     return _inFlightRedZonePromises.get(cacheKey);
@@ -2757,23 +2734,10 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const endTime = getTicketEndTime(c) || c.ClosedDate || null;
     const endTimeMs = endTime ? new Date(endTime).getTime() : 0;
     let durationHours = null;
-    if (c.Downtime__c !== undefined && c.Downtime__c !== null && c.Downtime__c !== '') {
-      const dtNum = Number(c.Downtime__c);
-      if (!isNaN(dtNum) && dtNum > 0) {
-        // If logged in minutes (> 24), convert to hours (e.g. 60m -> 1h, 120m -> 2h)
-        const hrs = dtNum > 24 ? dtNum / 60 : dtNum;
-        durationHours = Math.min(24, Math.round(hrs * 10) / 10);
-      }
-    }
-    if (durationHours === null && endTimeMs > 0 && createdTime > 0 && endTimeMs >= createdTime) {
-      const rawDiff = (endTimeMs - createdTime) / (3600 * 1000);
-      if (rawDiff <= 4) {
-        durationHours = Math.round(rawDiff * 10) / 10;
-      } else {
-        // Administrative close delay: do not treat days of ticket review as warehouse outage
-        const cap = c.Is_Site_100_Down__c ? 8.0 : (sev === 'sev1' ? 2.0 : (sev === 'sev2' ? 0.75 : 0.5));
-        durationHours = cap;
-      }
+    if (endTimeMs > 0 && createdTime > 0 && endTimeMs > createdTime) {
+      // Calculate downtime duration strictly from Start Time and End Time difference only
+      const diffHours = (endTimeMs - createdTime) / (3600 * 1000);
+      durationHours = Math.round(diffHours * 10) / 10;
     }
 
     if (c.Product_Type__c) recordSiteProduct(matchedSite, c.Product_Type__c);
@@ -2917,17 +2881,38 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         const eTime = new Date(eStr).getTime();
         return eTime >= dayStart && eTime < dayEnd;
       }).length;
-      const downtimeOnDay = Math.min(
-        24,
-        Math.round(
-          dayIncidents
-            .filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && (i.endTime || i.closedDate))
-            .reduce((acc, curr) => {
-              const hrs = typeof curr.durationHours === 'number' && curr.durationHours > 0 ? curr.durationHours : 0;
-              return acc + hrs;
-            }, 0) * 10
-        ) / 10
-      );
+      // Calculate true non-overlapping outage duration for Sev 1 & Sev 2 urgent incidents on this day
+      const daySev12 = dayIncidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && (i.endTime || i.closedDate));
+      const dayIntervals = [];
+      for (const inc of daySev12) {
+        const start = inc.createdTime || 0;
+        const endMs = inc.endTime ? new Date(inc.endTime).getTime() : (inc.closedDate ? new Date(inc.closedDate).getTime() : 0);
+        if (start > 0 && endMs > start) {
+          const s = Math.max(dayStart, start);
+          const e = Math.min(dayEnd, endMs);
+          if (e > s) dayIntervals.push([s, e]);
+        }
+      }
+      dayIntervals.sort((a, b) => a[0] - b[0]);
+      let dayDowntimeMs = 0;
+      let curStart = -1;
+      let curEnd = -1;
+      for (const [s, e] of dayIntervals) {
+        if (curStart === -1) {
+          curStart = s;
+          curEnd = e;
+        } else if (s <= curEnd) {
+          curEnd = Math.max(curEnd, e);
+        } else {
+          dayDowntimeMs += (curEnd - curStart);
+          curStart = s;
+          curEnd = e;
+        }
+      }
+      if (curStart !== -1) {
+        dayDowntimeMs += (curEnd - curStart);
+      }
+      const downtimeOnDay = Math.round((dayDowntimeMs / (3600 * 1000)) * 10) / 10;
 
       dailyMetrics.push({
         date: dateStr,
@@ -2940,7 +2925,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       });
     }
 
-    const resolvedIncidents = incidents.filter(i => typeof i.durationHours === 'number' && i.durationHours > 0);
+    const resolvedIncidents = incidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && typeof i.durationHours === 'number' && i.durationHours > 0);
     const meanTimeToResolveHours = resolvedIncidents.length > 0
       ? Math.round((resolvedIncidents.reduce((acc, i) => acc + (i.durationHours || 0), 0) / resolvedIncidents.length) * 10) / 10
       : null;

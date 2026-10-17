@@ -61,11 +61,61 @@ export const Route = createFileRoute('/red-zone')({
     void context.queryClient.prefetchQuery({
       queryKey: ['salesforce-red-zone'],
       queryFn: () => sfFetchRedZoneSites(),
-      staleTime: 45_000,
+      staleTime: 120_000,
     });
   },
   component: RedZonePage,
 });
+
+export type RedZoneTimeframe = '7d' | '14d' | '21d' | '30d';
+
+export const TIMEFRAME_CONFIG: Record<
+  RedZoneTimeframe,
+  { label: string; days: number; hours: number; subLabel: string }
+> = {
+  '7d': { label: '7 days', days: 7, hours: 168, subLabel: '7-Day' },
+  '14d': { label: '14 days', days: 14, hours: 336, subLabel: '14-Day' },
+  '21d': { label: '21 days', days: 21, hours: 504, subLabel: '21-Day' },
+  '30d': { label: '30 days', days: 30, hours: 720, subLabel: '30-Day' },
+};
+
+/**
+ * Accurately compute single incident downtime duration:
+ * Calculates outage duration strictly from Start Time and End Time difference only
+ * for qualifying Sev 1 & Sev 2 urgent incidents (not High / Sev 3 / Sev 4).
+ */
+function computeSingleIncidentDowntime(i: {
+  durationHours?: number | null;
+  createdTime?: number;
+  createdDate?: string | null;
+  endTime?: string | null;
+  closedDate?: string | null;
+  actualEndTime?: string | null;
+  severity?: string;
+}): number {
+  // Only Sev 1 and Sev 2 urgent incidents qualify for outage duration (not High / Sev 3 / Sev 4)
+  const sev = String(i.severity || '').toLowerCase();
+  const isSev12Urgent = sev === 'sev1' || sev === 'sev2';
+  if (!isSev12Urgent) return 0;
+
+  // Strict Start Time and End Time difference only
+  const created = i.createdTime || (i.createdDate ? new Date(i.createdDate).getTime() : 0);
+  const endStr = i.actualEndTime || i.endTime || i.closedDate;
+  if (endStr && created > 0) {
+    const endMs = new Date(endStr).getTime();
+    if (endMs > created) {
+      const diffHours = (endMs - created) / (3600 * 1000);
+      return Math.round(diffHours * 10) / 10;
+    }
+  }
+
+  // Fallback to pre-computed durationHours from backend if explicit start/end timestamp string is absent
+  if (typeof i.durationHours === 'number' && i.durationHours > 0) {
+    return Math.round(i.durationHours * 10) / 10;
+  }
+
+  return 0;
+}
 
 type EnrichedRedZoneSite = RedZoneSiteInfo & {
   targetSiteId: string;
@@ -166,7 +216,8 @@ function RedZonePage() {
   // Site detail page states
   const [expandedTicketId, setExpandedTicketId] = useState<string | null>(null);
   const [ticketSearch, setTicketSearch] = useState('');
-  const [ticketFilter, setTicketFilter] = useState<'all' | 'sev1' | 'sev2' | 'down' | 'active'>('all');
+  const [ticketFilter, setTicketFilter] = useState<'all' | 'window' | 'sev1' | 'sev2' | 'down' | 'active'>('all');
+  const [timeframe, setTimeframe] = useState<RedZoneTimeframe>('21d');
   const [hoveredDayIdx, setHoveredDayIdx] = useState<number | null>(null);
 
   const { data: baseSites = [] } = useQuery(sitesQueryOptions());
@@ -178,8 +229,16 @@ function RedZonePage() {
   } = useQuery({
     queryKey: ['salesforce-red-zone'],
     queryFn: () => sfFetchRedZoneSites(),
-    staleTime: 45_000,
-    refetchInterval: 60_000,
+    staleTime: 120_000,
+    refetchInterval: 120_000,
+  });
+
+  // Dedicated 30-day deep history query for selected site
+  const { data: selectedSiteDetailData } = useQuery({
+    queryKey: ['salesforce-red-zone-site', selectedSiteName],
+    queryFn: () => sfFetchRedZoneSites(false, selectedSiteName!),
+    enabled: Boolean(selectedSiteName),
+    staleTime: 120_000,
   });
 
   const allRedZoneSites = redZoneData?.redZoneSites || [];
@@ -255,28 +314,50 @@ function RedZonePage() {
   // Currently selected site for dedicated page view
   const currentSite = useMemo(() => {
     if (!selectedSiteName) return null;
-    const nameLower = selectedSiteName.toLowerCase();
-    return enrichedRedZoneSites.find(
-      s => s.siteName.toLowerCase() === nameLower || s.siteId.toLowerCase() === nameLower
-    ) || null;
-  }, [selectedSiteName, enrichedRedZoneSites]);
+    const nameLower = selectedSiteName.toLowerCase().trim();
+    if (selectedSiteDetailData?.redZoneSites?.length) {
+      const matched = selectedSiteDetailData.redZoneSites.find(
+        s =>
+          s.siteName.toLowerCase().trim() === nameLower ||
+          s.siteId.toLowerCase().trim() === nameLower ||
+          s.siteName.toLowerCase().includes(nameLower) ||
+          nameLower.includes(s.siteName.toLowerCase())
+      );
+      if (matched) return matched;
+      if (selectedSiteDetailData.redZoneSites.length === 1) {
+        return selectedSiteDetailData.redZoneSites[0];
+      }
+    }
+    return (
+      enrichedRedZoneSites.find(
+        s =>
+          s.siteName.toLowerCase().trim() === nameLower ||
+          s.siteId.toLowerCase().trim() === nameLower ||
+          s.siteName.toLowerCase().includes(nameLower) ||
+          nameLower.includes(s.siteName.toLowerCase())
+      ) || null
+    );
+  }, [selectedSiteName, selectedSiteDetailData, enrichedRedZoneSites]);
 
-  // Daily metrics for selected site timeline graph (calculated over 21-day Red Zone cycle)
+  // Daily metrics for selected site timeline graph (calculated over selected timeframe)
   const siteDailyMetrics: RedZoneDailyMetric[] = useMemo(() => {
     if (!currentSite) return [];
     const incidents = currentSite.qualifyingIncidents || [];
+    const cfg = TIMEFRAME_CONFIG[timeframe];
+    const numDays = cfg.days;
 
-    // Always compute accurate 21-day rolling metrics directly from site qualifying incidents
-    const now = Date.now();
     const DAY_MS = 24 * 60 * 60 * 1000;
+    const todayMidnight = new Date();
+    todayMidnight.setHours(0, 0, 0, 0);
+    const todayStartMs = todayMidnight.getTime();
     const metrics: RedZoneDailyMetric[] = [];
 
-    for (let dayOffset = 20; dayOffset >= 0; dayOffset--) {
-      const d = new Date(now - dayOffset * DAY_MS);
+    for (let dayOffset = numDays - 1; dayOffset >= 0; dayOffset--) {
+      const dayStart = todayStartMs - dayOffset * DAY_MS;
+      const dayEnd = dayStart + DAY_MS;
+      const d = new Date(dayStart);
       const dateStr = d.toISOString().slice(0, 10);
       const dayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-      const dayEnd = dayStart + DAY_MS;
 
       const dayIncidents = incidents.filter(i => {
         const t = i.createdTime || (i.createdDate ? new Date(i.createdDate).getTime() : 0);
@@ -291,10 +372,43 @@ function RedZonePage() {
         const eTime = new Date(eStr).getTime();
         return eTime >= dayStart && eTime < dayEnd;
       }).length;
-      const downtimeOnDay =
-        Math.round(
-          dayIncidents.reduce((acc, curr) => acc + (curr.durationHours || 0), 0) * 10
-        ) / 10;
+
+      // Calculate true non-overlapping outage duration for Sev 1 & Sev 2 urgent incidents on this day
+      const daySev12 = dayIncidents.filter(i => {
+        const sev = String(i.severity || '').toLowerCase();
+        return (sev === 'sev1' || sev === 'sev2') && (i.endTime || i.closedDate);
+      });
+      const dayIntervals: Array<[number, number]> = [];
+      for (const inc of daySev12) {
+        const start = inc.createdTime || (inc.createdDate ? new Date(inc.createdDate).getTime() : 0);
+        const endStr = inc.actualEndTime || inc.endTime || inc.closedDate;
+        const end = endStr ? new Date(endStr).getTime() : 0;
+        if (start > 0 && end > start) {
+          const s = Math.max(dayStart, start);
+          const e = Math.min(dayEnd, end);
+          if (e > s) dayIntervals.push([s, e]);
+        }
+      }
+      dayIntervals.sort((a, b) => a[0] - b[0]);
+      let dayDowntimeMs = 0;
+      let curStart = -1;
+      let curEnd = -1;
+      for (const [s, e] of dayIntervals) {
+        if (curStart === -1) {
+          curStart = s;
+          curEnd = e;
+        } else if (s <= curEnd) {
+          curEnd = Math.max(curEnd, e);
+        } else {
+          dayDowntimeMs += (curEnd - curStart);
+          curStart = s;
+          curEnd = e;
+        }
+      }
+      if (curStart !== -1) {
+        dayDowntimeMs += (curEnd - curStart);
+      }
+      const downtimeOnDay = Math.round((dayDowntimeMs / (3600 * 1000)) * 10) / 10;
 
       metrics.push({
         date: dateStr,
@@ -307,9 +421,14 @@ function RedZonePage() {
       });
     }
     return metrics;
-  }, [currentSite]);
+  }, [currentSite, timeframe]);
 
-  // Minimalist Daily Incident Bar Chart Calculations (21-Day evaluation window)
+  // Total qualifying incidents within the selected timeframe
+  const timeframeTotalIncidents = useMemo(() => {
+    return siteDailyMetrics.reduce((sum, m) => sum + m.totalIncidents, 0);
+  }, [siteDailyMetrics]);
+
+  // Minimalist Daily Incident Bar Chart Calculations
   const chartW = 1000;
   const chartH = 160;
   const padL = 44;
@@ -332,29 +451,92 @@ function RedZonePage() {
     });
   }, [maxChartIncident, baseH, usableH]);
 
-  // Rich management insights calculations
+  // Rich management insights calculations (Strictly selected timeframe, Sev 1 & Sev 2 urgent cases only, End Time calculation)
   const managementInsights = useMemo(() => {
     if (!currentSite) return null;
     const incidents = currentSite.qualifyingIncidents || [];
-    const totalDowntimeHours =
-      Math.round(
-        incidents.reduce((acc, curr) => acc + (curr.durationHours || 0), 0) * 10
-      ) / 10;
+    const now = Date.now();
+    const cfg = TIMEFRAME_CONFIG[timeframe];
+    const timeframeWindowMs = cfg.hours * 60 * 60 * 1000;
+    const timeframeStart = now - timeframeWindowMs;
+    const baselineHours = cfg.hours;
 
-    let longestOutageIncident: RedZoneQualifyingIncident | null = null;
+    // Filter strictly for selected timeframe only, and Sev 1 & Sev 2 urgent cases only
+    const qualifyingSev12 = incidents.filter(inc => {
+      const created = inc.createdTime || (inc.createdDate ? new Date(inc.createdDate).getTime() : 0);
+      // Strictly within selected window (from window start up to now)
+      const isWithinWindow = created >= timeframeStart && created <= (now + 3600000);
+      // Strictly Sev-1 or Sev-2 urgent cases
+      const isSev12Urgent = inc.severity === 'sev1' || inc.severity === 'sev2';
+      return isWithinWindow && isSev12Urgent;
+    });
+
+    // Outage calculation strictly based on End Time:
+    // Only tickets with a recorded End Time / closedDate are completed outages
+    // Calculate non-overlapping wall-clock outage time via Interval Union
+    const windowIntervals: Array<[number, number]> = [];
+    const outageIncidents: Array<RedZoneQualifyingIncident & { durationHours: number }> = [];
+
+    for (const inc of qualifyingSev12) {
+      const created = inc.createdTime || (inc.createdDate ? new Date(inc.createdDate).getTime() : 0);
+      const endStr = inc.actualEndTime || inc.endTime || inc.closedDate;
+      const endMs = endStr ? new Date(endStr).getTime() : 0;
+      if (created > 0 && endMs > created) {
+        const singleDiffHours = Math.round(((endMs - created) / (3600 * 1000)) * 10) / 10;
+        outageIncidents.push({
+          ...inc,
+          durationHours: singleDiffHours,
+        });
+
+        // Clip to timeframe window
+        const s = Math.max(timeframeStart, created);
+        const e = Math.min(now, endMs);
+        if (e > s) {
+          windowIntervals.push([s, e]);
+        }
+      }
+    }
+
+    // Merge overlapping intervals to determine true wall-clock facility downtime
+    windowIntervals.sort((a, b) => a[0] - b[0]);
+    let totalDowntimeMs = 0;
+    let curStart = -1;
+    let curEnd = -1;
+    for (const [s, e] of windowIntervals) {
+      if (curStart === -1) {
+        curStart = s;
+        curEnd = e;
+      } else if (s <= curEnd) {
+        curEnd = Math.max(curEnd, e);
+      } else {
+        totalDowntimeMs += (curEnd - curStart);
+        curStart = s;
+        curEnd = e;
+      }
+    }
+    if (curStart !== -1) {
+      totalDowntimeMs += (curEnd - curStart);
+    }
+
+    const totalDowntimeHours = Math.min(
+      baselineHours,
+      Math.round((totalDowntimeMs / (3600 * 1000)) * 10) / 10
+    );
+
+    let longestOutageIncident: (RedZoneQualifyingIncident & { durationHours: number }) | null = null;
     let maxDuration = 0;
-    for (const inc of incidents) {
-      if (typeof inc.durationHours === 'number' && inc.durationHours > maxDuration) {
+    for (const inc of outageIncidents) {
+      if (inc.durationHours > maxDuration) {
         maxDuration = inc.durationHours;
         longestOutageIncident = inc;
       }
     }
 
-    // Availability estimate over 336 operating hours
-    const operationalAvailabilityPct = Math.max(
-      85,
-      Math.min(99.9, Math.round(((336 - totalDowntimeHours) / 336) * 1000) / 10)
-    );
+    // Availability estimate over operating baseline (baselineHours operating hours)
+    // Formula: (baselineHours - totalDowntimeHours) / baselineHours * 100%
+    const operationalAvailabilityPct = totalDowntimeHours >= baselineHours
+      ? 0
+      : Math.max(0, Math.min(100, Math.round(((baselineHours - totalDowntimeHours) / baselineHours) * 1000) / 10));
 
     // Subsystem categorization
     const catCounts = {
@@ -380,21 +562,35 @@ function RedZonePage() {
 
     return {
       totalDowntimeHours,
+      totalDowntimeHours7d: totalDowntimeHours,
       longestOutageIncident,
+      longestOutageIncident7d: longestOutageIncident,
       operationalAvailabilityPct,
+      operationalAvailabilityPct7d: operationalAvailabilityPct,
       catCounts,
       dominantCategory,
       mtbfDeficitPct,
       failureCadenceHours,
+      qualifyingSev12Count: qualifyingSev12.length,
+      qualifying7dCount: qualifyingSev12.length,
+      outageTicketsCount: outageIncidents.length,
     };
-  }, [currentSite]);
+  }, [currentSite, timeframe]);
 
   // Filter qualifying incidents for table
   const filteredIncidents = useMemo(() => {
     if (!currentSite) return [];
     let list = currentSite.qualifyingIncidents || [];
+    const cfg = TIMEFRAME_CONFIG[timeframe];
+    const timeframeWindowMs = cfg.hours * 60 * 60 * 1000;
+    const timeframeStart = Date.now() - timeframeWindowMs;
 
-    if (ticketFilter === 'sev1') {
+    if (ticketFilter === 'window') {
+      list = list.filter(i => {
+        const t = i.createdTime || (i.createdDate ? new Date(i.createdDate).getTime() : 0);
+        return t >= timeframeStart;
+      });
+    } else if (ticketFilter === 'sev1') {
       list = list.filter(i => i.severity === 'sev1');
     } else if (ticketFilter === 'sev2') {
       list = list.filter(i => i.severity === 'sev2');
@@ -421,9 +617,17 @@ function RedZonePage() {
     }
 
     return list;
-  }, [currentSite, ticketFilter, ticketSearch]);
+  }, [currentSite, ticketFilter, ticketSearch, timeframe]);
 
   const allSiteIncidents = currentSite?.qualifyingIncidents || [];
+  const windowIncidentsCount = useMemo(() => {
+    const timeframeWindowMs = TIMEFRAME_CONFIG[timeframe].hours * 60 * 60 * 1000;
+    const timeframeStart = Date.now() - timeframeWindowMs;
+    return allSiteIncidents.filter(i => {
+      const t = i.createdTime || (i.createdDate ? new Date(i.createdDate).getTime() : 0);
+      return t >= timeframeStart;
+    }).length;
+  }, [allSiteIncidents, timeframe]);
   const sev1Count = allSiteIncidents.filter(i => i.severity === 'sev1').length;
   const sev2Count = allSiteIncidents.filter(i => i.severity === 'sev2').length;
   const downCount = allSiteIncidents.filter(i => Boolean(i.isSiteDown)).length;
@@ -653,18 +857,18 @@ function RedZonePage() {
                 </div>
               </div>
 
-              {/* Metric 3: Cumulative Downtime */}
+              {/* Metric 3: Cumulative Downtime (Selected Timeframe, Sev-1 & Sev-2 with End Time) */}
               <div className="metric">
                 <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
                   <Timer />
-                  Cumulative Outage
+                  Cumulative Outage ({TIMEFRAME_CONFIG[timeframe].label})
                 </span>
                 <div>
                   <strong>
-                    {managementInsights?.totalDowntimeHours || 0} hrs
+                    {managementInsights?.totalDowntimeHours ?? 0} hrs
                   </strong>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>
-                    {managementInsights?.operationalAvailabilityPct}% est. availability
+                    {managementInsights?.operationalAvailabilityPct ?? 100}% est. availability
                   </span>
                 </div>
                 <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
@@ -694,7 +898,7 @@ function RedZonePage() {
               </div>
             </div>
 
-            {/* Minimalist 21-Day Incident Frequency Bar Graph */}
+            {/* Incident Frequency Bar Graph with Timeframe Selector */}
             <section className="data-panel" style={{ marginBottom: 28 }}>
               <div className="data-panel-heading">
                 <div className="provider-symbol">
@@ -705,11 +909,49 @@ function RedZonePage() {
                     OPERATIONAL RELIABILITY TELEMETRY
                   </span>
                   <h2 style={{ fontFamily: 'var(--font-sans)', fontSize: 18, fontWeight: 600 }}>
-                    21-Day Daily Incident Frequency
+                    {TIMEFRAME_CONFIG[timeframe].subLabel} Daily Incident Frequency
                   </h2>
                 </div>
 
-                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {/* Interactive Timeframe Filter Buttons: 48 hrs | 7 days | 15 days | 30 days */}
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      background: 'var(--secondary)',
+                      padding: 3,
+                      borderRadius: 8,
+                      border: '1px solid var(--border)',
+                      gap: 2,
+                    }}
+                  >
+                    {(['7d', '14d', '21d', '30d'] as RedZoneTimeframe[]).map((tf) => {
+                      const isSelected = timeframe === tf;
+                      return (
+                        <button
+                          key={tf}
+                          type="button"
+                          onClick={() => setTimeframe(tf)}
+                          style={{
+                            background: isSelected ? 'var(--primary)' : 'transparent',
+                            color: isSelected ? '#ffffff' : 'var(--muted-foreground)',
+                            border: 'none',
+                            borderRadius: 5,
+                            padding: '4px 11px',
+                            fontSize: 11,
+                            fontWeight: isSelected ? 600 : 500,
+                            fontFamily: 'var(--font-mono)',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          {TIMEFRAME_CONFIG[tf].label}
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {hoveredDayIdx !== null && siteDailyMetrics[hoveredDayIdx] && (
                     <div
                       style={{
@@ -745,7 +987,7 @@ function RedZonePage() {
                   )}
 
                   <span className="pill" style={{ fontFamily: 'var(--font-mono)' }}>
-                    {allSiteIncidents.length} Qualifying Incidents
+                    {timeframeTotalIncidents} Qualifying Incidents
                   </span>
                 </div>
               </div>
@@ -789,12 +1031,17 @@ function RedZonePage() {
                     {siteDailyMetrics.map((m, idx) => {
                       const totalDays = siteDailyMetrics.length;
                       const slotW = usableW / totalDays;
-                      const barW = Math.max(14, Math.min(26, slotW * 0.55));
+                      const barW = Math.max(14, Math.min(32, slotW * 0.55));
                       const x = padL + idx * slotW + (slotW - barW) / 2;
                       const barH = m.totalIncidents > 0 ? Math.max(4, (m.totalIncidents / maxChartIncident) * usableH) : 0;
                       const y = baseH - barH;
                       const isHovered = hoveredDayIdx === idx;
-                      const showLabel = idx % 3 === 0 || idx === totalDays - 1 || isHovered;
+                      const showLabel =
+                        totalDays <= 7
+                          ? true
+                          : totalDays <= 15
+                          ? idx % 2 === 0 || idx === totalDays - 1 || isHovered
+                          : idx % 3 === 0 || idx === totalDays - 1 || isHovered;
 
                       return (
                         <g
@@ -928,6 +1175,17 @@ function RedZonePage() {
                     onClick={() => setTicketFilter('all')}
                   >
                     All ({allSiteIncidents.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`rz-pill-tab ${ticketFilter === 'window' ? 'active' : ''}`}
+                    onClick={() => setTicketFilter('window')}
+                    style={{
+                      borderColor: ticketFilter === 'window' ? 'var(--primary)' : undefined,
+                      color: ticketFilter === 'window' ? 'var(--primary)' : undefined,
+                    }}
+                  >
+                    Last {TIMEFRAME_CONFIG[timeframe].label} ({windowIncidentsCount})
                   </button>
                   <button
                     type="button"
