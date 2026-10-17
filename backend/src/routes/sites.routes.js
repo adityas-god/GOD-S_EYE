@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { SiteRepository } from '../models/Site.js';
-import { syncSitesFromSalesforce, fetchOpenCasesForSite } from '../services/salesforce.service.js';
+import { syncSitesFromSalesforce, fetchOpenCasesForSite, setSiteObservedProducts, invalidateOverviewCache } from '../services/salesforce.service.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -178,6 +178,41 @@ router.get('/:siteId', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+/**
+ * PATCH & PUT /api/sites/:siteId/product-lines
+ * Update product lines for a site authoritatively
+ */
+async function handleUpdateProductLines(req, res) {
+  try {
+    const { siteId } = req.params;
+    const { product_lines, product_line } = req.body;
+    const lines = product_lines !== undefined ? product_lines : product_line;
+    if (lines === undefined) {
+      return res.status(400).json({ success: false, error: 'product_lines array or product_line string is required' });
+    }
+
+    const updatedSite = await SiteRepository.updateProductLines(siteId, lines);
+    if (!updatedSite) {
+      return res.status(404).json({ success: false, error: 'Site not found' });
+    }
+
+    try {
+      setSiteObservedProducts(updatedSite.name, updatedSite.product_lines);
+      invalidateOverviewCache();
+    } catch (e) {
+      console.warn('[Sites] Cache invalidate notice:', e.message);
+    }
+
+    res.json({ success: true, site: updatedSite });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+}
+
+router.patch('/:siteId/product-lines', handleUpdateProductLines);
+router.put('/:siteId/product-lines', handleUpdateProductLines);
+
 
 // ==========================================
 // 1️⃣ MONITORING LINKS CRUD

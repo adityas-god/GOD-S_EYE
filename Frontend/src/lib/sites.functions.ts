@@ -109,3 +109,22 @@ export const getSites = async (): Promise<SiteRow[]> => {
 
   return Array.from(unique.values()).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
 };
+
+/**
+ * Update product lines for a site via the backend API.
+ */
+export const updateSiteProductLines = async (siteId: string, productLines: string[]): Promise<boolean> => {
+  try {
+    const res = await fetch(`/api/sites/${encodeURIComponent(siteId)}/product-lines`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ product_lines: productLines }),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[Sites] Failed to update product lines on backend:', (err as Error).message);
+    return false;
+  }
+};

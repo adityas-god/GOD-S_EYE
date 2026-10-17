@@ -539,6 +539,24 @@ export function getObservedSiteProducts(siteIdentifier) {
   return Array.from(prods);
 }
 
+export function setSiteObservedProducts(siteIdentifier, productList) {
+  if (!siteIdentifier) return;
+  const rawStr = String(siteIdentifier).trim();
+  const keys = [
+    normalizeCanonical(rawStr),
+    rawStr.toLowerCase(),
+  ];
+  const cleanList = Array.isArray(productList) ? productList : [];
+  for (const k of keys) {
+    if (!k) continue;
+    _siteObservedProductsMap.set(k, new Set(cleanList));
+  }
+}
+
+export function invalidateOverviewCache() {
+  _overviewCache = { data: null, cachedAt: 0 };
+}
+
 export function inferProductLine(name) {
   const n = String(name || '').toLowerCase();
   if (/\bttp\b/i.test(n)) return 'TTP';

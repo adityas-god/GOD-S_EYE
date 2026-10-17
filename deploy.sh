@@ -31,13 +31,13 @@ git fetch origin main
 git reset --hard origin/main
 
 echo "🛑 Stopping running containers..."
-docker compose down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true
+docker compose down --remove-orphans 2>/dev/null || true
 
 echo "🔨 Building Docker images..."
-docker compose build --network host || docker compose build || docker-compose build
+docker compose build
 
 echo "▶️ Starting Docker stack..."
-docker compose up -d --remove-orphans || docker-compose up -d
+docker compose up -d --remove-orphans
 
 echo "🩺 Verifying health on http://127.0.0.1:${HOST_PORT}/health..."
 HEALTHY=0

@@ -129,13 +129,13 @@ jobs:
 
           # 4. Clean shutdown and rebuild to completely replace the previous website
           echo "Stopping previous containers..."
-          docker compose --env-file .env down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true
+          docker compose --env-file .env down --remove-orphans 2>/dev/null || docker compose down 2>/dev/null || true
 
-          echo "Building new Docker images using host network..."
-          docker compose --env-file .env build --network host || docker compose build || docker-compose build
+          echo "Building new Docker images..."
+          docker compose --env-file .env build || docker compose build
 
           echo "Starting new Docker stack..."
-          docker compose --env-file .env up -d --remove-orphans || docker-compose up -d
+          docker compose --env-file .env up -d --remove-orphans || docker compose up -d
 
           # 5. Verify service health via loop for up to 60s
           echo "Verifying health on http://127.0.0.1:${HOST_PORT}/health..."

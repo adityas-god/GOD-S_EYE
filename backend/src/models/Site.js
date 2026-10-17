@@ -453,6 +453,68 @@ export const SiteRepository = {
     }
   },
 
+  async updateProductLines(siteIdentifier, productLines) {
+    const pLines = Array.isArray(productLines)
+      ? Array.from(new Set(productLines.map(x => String(x).trim()).filter(Boolean)))
+      : (typeof productLines === 'string' ? productLines.split(',').map(x => x.trim()).filter(Boolean) : []);
+    const pLine = pLines.length > 0 ? pLines.join(', ') : null;
+
+    let updatedDoc = null;
+    if (isDbConnected()) {
+      updatedDoc = await SiteModel.findOneAndUpdate(
+        buildSiteFilter(siteIdentifier),
+        { $set: { product_lines: pLines, product_line: pLine, last_synced_at: new Date() } },
+        { new: true }
+      ).lean();
+    }
+
+    const site = await this.findById(siteIdentifier);
+    if (site) {
+      site.product_lines = pLines;
+      site.product_line = pLine;
+      site.last_synced_at = new Date();
+      inMemorySites.set(site.id, site);
+    }
+
+    // Synchronize to candidate sites.json on disk if present
+    try {
+      const candidatePaths = [
+        path.resolve(__dirname, '../data/sites.json'),
+        path.resolve(__dirname, '../../../Frontend/src/data/sites.json'),
+        path.resolve(process.cwd(), 'src/data/sites.json'),
+        path.resolve(process.cwd(), '../Frontend/src/data/sites.json'),
+      ];
+      for (const p of candidatePaths) {
+        if (fs.existsSync(p)) {
+          const raw = fs.readFileSync(p, 'utf8');
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const cleanSiteName = (site?.name || updatedDoc?.name || '').trim().toLowerCase();
+            const cleanSiteId = String(siteIdentifier).trim().toLowerCase();
+            let changed = false;
+            for (const item of list) {
+              if (
+                (item.name && item.name.trim().toLowerCase() === cleanSiteName) ||
+                (item.id && String(item.id).toLowerCase() === cleanSiteId)
+              ) {
+                item.product_lines = pLines;
+                item.product_line = pLine;
+                changed = true;
+              }
+            }
+            if (changed) {
+              fs.writeFileSync(p, JSON.stringify(list, null, 2), 'utf8');
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[SiteRepository] Note while updating sites.json file:', e.message);
+    }
+
+    return updatedDoc ? normalizeRunbook(updatedDoc) : (site ? normalizeRunbook(site) : null);
+  },
+
   // ==========================================
   // OPERATIONAL RUNBOOK CRUD METHODS
   // ==========================================
