@@ -1,20 +1,25 @@
 import { Router } from 'express';
 import { CaseRepository } from '../models/Case.js';
-import { fetchOpenCasesForSite, fetchLiveCasesOverview, getLastSalesforceError } from '../services/salesforce.service.js';
+import { fetchOpenCasesForSite, fetchLiveCasesOverview, getAlertAnalyticsForSite, isLiveOpenCase, hasTicketEndTime, getTicketEndTime, fetchAllLiveCasesAndAlerts } from '../services/salesforce.service.js';
 
 const router = Router();
 
-router.get('/test-soql', async (req, res) => {
+/**
+ * GET /api/cases/alerts/analytics
+ * Get historical alert metrics, bar/line graph buckets, MTTR, auto-resolve and breach statistics
+ */
+router.get('/alerts/analytics', async (req, res) => {
   try {
-    const overview = await fetchLiveCasesOverview(true);
-    const lastErr = getLastSalesforceError();
+    const siteName = req.query.site || req.query.siteName || '';
+    const range = req.query.range || '7d';
+    const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
+    const analytics = await getAlertAnalyticsForSite({ siteName, range, forceRefresh });
     res.json({
-      success: !lastErr,
-      error: lastErr,
-      overview,
+      success: true,
+      ...analytics,
     });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message, stack: err.stack });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 
@@ -55,14 +60,16 @@ router.get('/', async (req, res) => {
         count: result.cases.length,
         cases: result.cases,
         alerts: result.alerts,
+        closed: result.closed || [],
       });
     }
 
     const openCases = await CaseRepository.findAllOpenCases();
+    const strictlyFiltered = openCases.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
     res.json({
       success: true,
-      count: openCases.length,
-      cases: openCases,
+      count: strictlyFiltered.length,
+      cases: strictlyFiltered,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -100,6 +107,7 @@ router.get('/site/:siteName', async (req, res) => {
       totalOpenCases: result.totalOpenCases,
       cases: result.cases,
       alerts: result.alerts,
+      closed: result.closed || [],
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

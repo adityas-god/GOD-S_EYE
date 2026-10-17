@@ -1,3 +1,4 @@
+// God's Eye Backend Server - Live Salesforce & Site Management [reload 2]
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -15,6 +16,14 @@ import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
 
 import { getSfConfig, getSalesforceToken, getLastSalesforceError } from './src/services/salesforce.service.js';
+
+// Process Safety Handlers - prevent container crashes from uncaught errors or unhandled promise rejections
+process.on('uncaughtException', (err) => {
+  console.error('[Process Safety] Uncaught exception intercepted:', err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process Safety] Unhandled promise rejection intercepted:', reason?.message || reason);
+});
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -118,3 +127,5 @@ async function startServer() {
 }
 
 startServer();
+// Reload trigger: 2026-10-17T04:08:00
+

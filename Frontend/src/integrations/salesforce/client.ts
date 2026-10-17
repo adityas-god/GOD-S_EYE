@@ -80,24 +80,231 @@ const EXCLUDED_STATUS_PATTERNS = [
  * Filter out alerts: returns true if case is an automated alert or alert-type ticket
  */
 export function isAlertCase(c: SFCase): boolean {
-  if (c.Type && typeof c.Type === 'string' && /alert/i.test(c.Type)) {
+  if (!c) return false;
+
+  // 1. Explicit Type or Category is Alert
+  const raw = c as Record<string, unknown>;
+  const typeStr = String(c.Type || raw.type || '').trim().toLowerCase();
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  if (typeStr === 'alert' || catStr === 'alert') return true;
+
+  // If Type or Category is explicitly Incident, Problem, or Support, require strong automated alert indicators in Subject
+  const isExplicitNormalCase =
+    typeStr.includes('incident') ||
+    typeStr.includes('support') ||
+    typeStr.includes('problem') ||
+    catStr.includes('incident') ||
+    catStr.includes('support');
+
+  const sub = String(c.Subject || raw.subject || '').trim();
+  if (!sub) return false;
+
+  // 2. Strong Automated Alert Subject Signatures:
+  // Opsgenie / Runbook / Dashboard / Ranger Infra anywhere in subject
+  if (/(?:\[?alert\]?|\[?opsgenie\]?|runbook\s+for|dashboard\s+for|ranger\s+infra|alert:)/i.test(sub)) {
     return true;
   }
-  if (c.Subject && typeof c.Subject === 'string') {
-    const sub = c.Subject.trim();
-    if (/^(\[?alert\]?|opsgenie)/i.test(sub)) return true;
-    if (/\balert\b/i.test(sub)) return true;
+
+  // Automated monitoring rule signatures (case-insensitive substring/word matching)
+  if (
+    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia)/i.test(
+      sub
+    )
+  ) {
+    return true;
   }
-  if (c.Description && typeof c.Description === 'string') {
-    if (/opsgenie alert|automated alert/i.test(c.Description)) return true;
+
+  if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
+    return true;
   }
+
+  // Host prefix with alert pattern ONLY if not an explicit customer support ticket: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "cc-temuco: Bots..."
+  if (!isExplicitNormalCase && /^[a-z0-9._-]+:\s*[a-z0-9._-]+/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
+    return true;
+  }
+
+  // Host tokens matching automated alert patterns
+  if (!isExplicitNormalCase && /\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod)\b/i.test(sub) && /(?:process|bot|disk|mem|cpu|postgres|util|lag|fail|retry|offline|error|warn|high|low|alert|monitor|runbook|dashboard)/i.test(sub)) {
+    return true;
+  }
+
+  // If it's an explicit normal customer support or incident case, DO NOT match generic words
+  if (isExplicitNormalCase) return false;
+
+  // 3. Fallback check on description ONLY if automated alert signatures exist
+  const desc = String(c.Description || raw.description || '');
+  if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
+    return true;
+  }
+
   return false;
 }
 
+export function calculateAlertDuration(createdDate?: string | null, endDate?: string | null, isOpen?: boolean): { text: string; isLive: boolean } {
+  if (isOpen) {
+    if (createdDate) {
+      const start = new Date(createdDate).getTime();
+      const diffMs = Date.now() - start;
+      if (diffMs > 0) {
+        const mins = Math.round(diffMs / 60000);
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return { text: h > 0 ? `${h}h ${m}m (Live)` : `${m}m (Live)`, isLive: true };
+      }
+    }
+    return { text: 'Active', isLive: true };
+  }
+
+  if (createdDate && endDate) {
+    const start = new Date(createdDate).getTime();
+    const end = new Date(endDate).getTime();
+    const diffMs = end - start;
+    if (diffMs > 0) {
+      const mins = Math.round(diffMs / 60000);
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      return { text: h > 0 ? `${h}h ${m}m` : `${m}m`, isLive: false };
+    }
+  }
+
+  return { text: '—', isLive: false };
+}
+
+/**
+ * Extracts any populated End Time or Closed Date from ticket fields.
+ * User requirement: "the close of the ticket will be updated from end time in cases if there is end time on the ticket then remove it from live cases"
+ */
+export function getTicketEndTime(c: SFCase): string | null {
+  if (!c) return null;
+  const raw = c as Record<string, unknown>;
+  const candidate =
+    raw.End_Time_of_Incident__c ||
+    raw.end_time_of_incident ||
+    raw.Actual_End_Time__c ||
+    raw.actual_end_time ||
+    raw.Solved_Date_Time__c ||
+    raw.solved_date_time ||
+    raw.Parent_End_Time__c ||
+    raw.parent_end_time ||
+    raw.DIR_Approval_End_Time__c ||
+    raw.RCA_Approval_End_Time__c ||
+    raw.Planed_End__c ||
+    raw.End_Time__c ||
+    raw.end_time ||
+    raw.EndTime ||
+    raw.EndTime__c ||
+    raw.End_Date_Time__c ||
+    raw.End_Date__c ||
+    raw.Down_Time_End__c ||
+    raw.Downtime_End_Time__c ||
+    raw.Restoration_Time__c ||
+    raw.Resolution_Time__c ||
+    raw.ClosedDate ||
+    raw.closed_date;
+
+  if (candidate !== undefined && candidate !== null && candidate !== '') {
+    const s = String(candidate).trim().toLowerCase();
+    if (s && s !== 'null' && s !== 'undefined' && s !== 'none' && s !== 'n/a') {
+      return String(candidate);
+    }
+  }
+
+  // Also check if Downtime is recorded and completed (> 0)
+  const dt = raw.Downtime__c !== undefined ? raw.Downtime__c : raw.downtime;
+  if (dt !== undefined && dt !== null && dt !== '') {
+    const num = Number(dt);
+    if (!isNaN(num) && num > 0) {
+      return String(raw.LastModifiedDate || raw.CreatedDate || new Date().toISOString());
+    }
+  }
+
+  return null;
+}
+
+export function hasTicketEndTime(c: SFCase): boolean {
+  return Boolean(getTicketEndTime(c));
+}
+
+export function isClosedToday(c: SFCase): boolean {
+  if (!c) return false;
+  const endTime = getTicketEndTime(c);
+  const status = String(c.Status || '').toLowerCase();
+  const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  if (!isClosed) return false;
+
+  const dateStr = endTime || c.ClosedDate || (c as Record<string, unknown>).LastModifiedDate;
+  if (!dateStr) return true;
+
+  const d = new Date(String(dateStr));
+  if (isNaN(d.getTime())) return true;
+  const now = new Date();
+  const isSameCalendarDay = (
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate()
+  );
+  if (isSameCalendarDay) return true;
+
+  // Shift window tolerance: within last 24 hours
+  const diffHours = Math.abs(now.getTime() - d.getTime()) / (1000 * 60 * 60);
+  return diffHours <= 24;
+}
+
+export function isAlertForShiftBucket(c: SFCase): boolean {
+  if (!isAlertCase(c)) return false;
+  const endTime = getTicketEndTime(c);
+  const status = String(c.Status || '').toLowerCase();
+  const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+  if (!isClosed) {
+    if (status.includes('hold') || status.includes('pending confirmation')) return false;
+    return true; // Live open alert
+  }
+  return isClosedToday(c); // Closed alert of today's date
+}
+
+/**
+ * Live open alert predicate: strictly open alerts with end time logic applied.
+ * Excludes tickets with an End Time, Closed Date, or closed/hold status.
+ */
+export function isOpenAlert(c: SFCase): boolean {
+  if (!c) return false;
+  if (!isAlertCase(c)) return false;
+
+  // 1. If ticket has an End Time or Closed Date, it has concluded -> remove from open alerts!
+  if (hasTicketEndTime(c)) return false;
+
+  const status = String(c.Status || '').trim().toLowerCase();
+  if (!status) return false;
+
+  for (const pattern of EXCLUDED_STATUS_PATTERNS) {
+    if (status.includes(pattern)) return false;
+  }
+
+  return true;
+}
+
+/**
+ * Closed alert predicate: strictly alert tickets that have an End Time, Closed Date, or closed status.
+ */
+export function isClosedAlert(c: SFCase): boolean {
+  if (!c) return false;
+  if (!isAlertCase(c)) return false;
+  const endTime = getTicketEndTime(c);
+  const status = String(c.Status || '').toLowerCase();
+  return Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
+}
+
+
 /**
  * Live open case predicate: must NOT be closed, solved, resolved, or on-hold, and NOT an alert or DIR ticket.
+ * Excludes tickets with an End Time or Closed Date.
  */
 export function isLiveOpenCase(c: SFCase): boolean {
+  if (!c) return false;
+
+  // 1. If ticket has an End Time, Closed Date, or downtime completed -> strictly omit from live cases!
+  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
+
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
 
@@ -243,7 +450,10 @@ export function normalizeCanonical(str: string): string {
     .replace(/\b(ikeaa)\b/gi, 'ikea')
     .replace(/\b(click\s*&\s*collect|click\s*and\s*collect|cnc)\b/gi, 'click collect')
     .replace(/\b(mercado\s*libre)\b/gi, 'meli')
-    .replace(/\b(owens\s*&\s*monors|owens\s*&\s*minors|owens\s*and\s*minors|owens\s*minors|owens&minors|owens&monors|owens\s*monors|owens\s*monor)\b/gi, 'owens minor')
+    .replace(/\b(owens\s*&\s*monors|owens\s*&\s*minors|owens\s*and\s*minors|owens\s*minors|owens&minors|owens&monors|owens\s*monors|owens\s*monor|owensminor|owensminorprod|onmprod|onm)\b/gi, 'owens minor')
+    .replace(/\b(sams\s+atl|sam\s+atl|samatl|samsatl|samprod|samsprod|samsatlprod|samatlprod)\b/gi, 'sams club atl')
+    .replace(/\b(sams\s+lax|sam\s+lax|samlax|samslax|samslaxprod|samlaxprod)\b/gi, 'sams club lax')
+    .replace(/\b(casey|caseys|caseyprod|caseysprod|casey's|caseys\s+joplin|casey's\s+joplin)\b/gi, "caseys joplin")
     .replace(/&/g, ' ')
     .replace(/[^a-z0-9]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -251,25 +461,25 @@ export function normalizeCanonical(str: string): string {
 }
 
 export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
-  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)'],
+  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)', 'flexo-hnm-canada', 'flexo-hnm', 'hnm-canada-prod'],
   'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
-  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta'],
-  'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear'],
+  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta', 'samprod', 'samsprod', 'samsatlprod', 'samsatl', 'samatlprod', 'samatl', 'sams-atl', 'samatl-prod', '4993.us', '4993-us', 'samprod-cluster', 'samsatlprod-cluster', 'sam\'s atl', 'sam atl'],
+  'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california', 'samslaxprod', 'samslax', 'samlaxprod', 'samlax', 'sams-lax', '8799.us', '9476.us'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
-  'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris'],
-  'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond'],
+  'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'xpo-hnm', 'xpo_anf'],
+  'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond', 'evergreenprod'],
   'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)'],
   'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania', 'farmacia tei-romania'],
   'Nishiskawa': ['nishiskawa', 'nishikawa'],
-  'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13', 'mercado libre (mx13)_hidalgo-méxico', 'mercado libre (mx13)_hidalgo-mexico'],
+  'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13', 'mercado libre (mx13)_hidalgo-méxico', 'mercado libre (mx13)_hidalgo-mexico', 'melimx13prod', 'melimx13'],
   'Mercado Libre(SP04)': ['meli sp04', 'mercado libre sp04', 'sp04', 'mercado libre(sp04)-cajamar(brazil)', 'mercado libre sp04 cajamar'],
   'Mercado Libre': ['meli', 'mercado libre', 'meli sc02', 'mercado libre sc02', 'mercado libre(sp15)-cajamar(brazil)', 'meli sp15'],
   'Kenco Fairlife(Phoenix, USA)': ['kenco fairlife', 'fairlife phoenix', 'fairlife', 'kenco fairlife(phoenix, usa)'],
   'Kenco-Jeff1': ['kenco jeff1', 'kenco jeffersonville', 'jeff1', 'kenco-jeff1(jeffersonville, usa)'],
   'Kenco Goodyear': ['kenco goodyear', 'kenco goodyear arizona', 'kenco-goodyear(arizona,usa)'],
   'Kenco Kansas': ['kenco kansas', 'kenco kansas usa', 'kenco-kansas(usa)'],
-  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)'],
+  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)', 'lakesideprod'],
   'Robinson USA (Dayton)': ['robinson usa dayton', 'robinson dayton', 'robinson usa', 'robinson tennessee', 'robinson-tennessee(usa)'],
   'Active Ants-Belgium': ['active ants belgium', 'active ants-belgium'],
   'Active Ants-Germany': ['active ants germany', 'active ants-germany'],
@@ -281,15 +491,17 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Dorman Warsaw': ['dorman warsaw', 'dorman warsaw ky', 'dorman-warsaw,ky(usa)'],
   'Dorman': ['dorman', 'dorman portland'],
   'Ryder Whiplash': ['ryder whiplash', 'whiplash ohio', 'ryder whiplash ohio', 'whiplash', 'ryder whiplash-ohio(usa)'],
-  'Ryder Maryland': ['ryder maryland', 'ryder maryland usa', 'ryder ml', 'ryder md', 'ryderml', 'rydermd', 'ryder-maryland(usa)', 'ryder-maryland'],
-  'Owens & Minor': ['owens minor', 'owens & minor', 'owens and minor', 'owens & minors', 'owens minors', 'owens&minor', 'owens&minors', 'owens&monors', 'owens monors', 'owens monor', 'owens&minor-georgia(usa)'],
+  'Ryder Maryland': ['ryder maryland', 'ryder maryland usa', 'ryder ml', 'ryder md', 'ryderml', 'rydermd', 'ryder-maryland(usa)', 'ryder-maryland', 'ryderprod'],
+  'Owens & Minor': ['owens minor', 'owens & minor', 'owens and minor', 'owens & minors', 'owens minors', 'owens&minor', 'owens&minors', 'owens&monors', 'owens monors', 'owens monor', 'owens&minor-georgia(usa)', 'onm', 'onmprod', 'owensminorprod', 'owensminor', 'owens-minor', 'owensminor-prod', 'onm-prod', 'onm_prod', 'owens_minor'],
+  "Casey's Joplin": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg", "uscstg1-caseystg", "kafka-caseyprod-prod", "kafka-caseyprod", "casey-prod", "caseys-prod", "casey-joplin"],
+  "Casey's": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg"],
   'H&M P1': ['hm p1', 'h&m p1', 'hm robbinsville', 'hm robbinsville project 1', 'h&m(project1)-robbinsville(newjersey)'],
   'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms', 'h&m (project1) _ rms'],
   'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilorluxottica-fhr(california)', 'fhr luxottica', 'fhr'],
-  'Essilor Luxottica Atlanta': ['essilorluxottica atlanta (el-atl)', 'essilorluxottica atlanta', 'el-atl', 'el atl', 'essilor luxottica atlanta'],
-  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)'],
-  'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)'],
-  'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico'],
+  'Essilor Luxottica Atlanta': ['essilorluxottica atlanta (el-atl)', 'essilorluxottica atlanta', 'el-atl', 'el atl', 'essilor luxottica atlanta', 'elatl', 'elatlprod', 'el-atlprod'],
+  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)', 'elcolombus', 'elcolombusprod', 'elcolumbusprod'],
+  'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)', 'sedicoprod'],
+  'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico', 'walmartmxprod', 'walmartmx'],
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
@@ -313,20 +525,20 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Ricoh-Nike': ['ricoh nike', 'ricoh nike beaverton', 'ricoh(nike)-beaverton(oregon,usa)'],
   'Stryker': ['stryker', 'stryker-mahwah(newjersey,usa)'],
   'Trusco Saitama': ['trusco saitama', 'trusco-saitama'],
-  'Trusco Tohoku': ['trusco tohoku', 'trusco-tohoku'],
+  'Trusco Tohoku': ['trusco tohoku', 'trusco-tohoku', 'tohoku', 'tohokuprod'],
   'YKK': ['ykk', 'ykkprod', 'ykk-georgia(usa)'],
-  'Aritzia': ['aritzia', 'aritizia', 'aritzia-british columbia(canada)'],
-  'Sodimac SBS': ['sodimac sbs', 'sbs', 'sbs-chile'],
+  'Aritzia': ['aritzia', 'aritizia', 'aritzia-british columbia(canada)', 'aritziaprod'],
+  'Sodimac SBS': ['sodimac sbs', 'sbs', 'sbs-chile', 'sodimacsbsprod'],
   'Sodimac-Colombia-Funza-2': ['sodimac colombia funza 2', 'sodimac funza 2', 'funza 2', 'sodimac(funza-2)-colombia'],
   'Sodimac Colombia Arthur': ['sodimac colombia arthur', 'sodimac arthur', 'sodimac(arthur)-colombia'],
-  'Sodimac-Colombia': ['sodimac colombia', 'sodimac(funza-1)-colombia', 'funza 1'],
+  'Sodimac-Colombia': ['sodimac colombia', 'sodimac(funza-1)-colombia', 'funza 1', 'sod-col', 'sodcol', 'sodcolprod'],
   'Sodimac-FLR': ['sodimac flr', 'flr', 'sodimac-flr'],
-  'Sodimac-CC1': ['sodimac cc1', 'sodimac(c&c-1)-arauco'],
+  'Sodimac-CC1': ['sodimac cc1', 'sodimac(c&c-1)-arauco', 'cc-arauco', 'cc arauco'],
   'Sodimac-CC2': ['sodimac cc2', 'sodimac(c&c-2)-florida'],
-  'Sodimac-CC3': ['sodimac cc3', 'sodimac(c&c-3)-condes'],
-  'Sodimac-CC4': ['sodimac cc4', 'sodimac(c&c-4)-maipu'],
+  'Sodimac-CC3': ['sodimac cc3', 'sodimac(c&c-3)-condes', 'cc-condes', 'cc condes'],
+  'Sodimac-CC4': ['sodimac cc4', 'sodimac(c&c-4)-maipu', 'cc-maipu', 'cc maipu'],
   'Sodimac-CC5': ['sodimac cc5', 'sodimac(c&c-5)-puertomontt'],
-  'Sodimac-CC7': ['sodimac cc7', 'sodimac(c&c-7)-temuco'],
+  'Sodimac-CC7': ['sodimac cc7', 'sodimac(c&c-7)-temuco', 'cc-temuco', 'cc temuco'],
   'Sodimac-CC8': ['sodimac cc8', 'sodimac(c&c-8)-talca'],
   'Sodimac-CC9': ['sodimac cc9', 'sodimac(c&c-9)-biobio'],
 };
@@ -334,6 +546,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
 export interface CompiledSite {
   originalName: string;
   clean: string;
+  spaceless: string;
   tokens: string[];
   accountId: string | null;
   length: number;
@@ -353,6 +566,7 @@ export function compileSiteIndex(siteList: Array<string | { name: string; salesf
     compiled.push({
       originalName,
       clean,
+      spaceless: clean.replace(/\s+/g, ''),
       tokens,
       accountId,
       length: clean.length,
@@ -378,11 +592,253 @@ export function compileSiteIndex(siteList: Array<string | { name: string; salesf
   return compiled;
 }
 
+export const compileSites = compileSiteIndex;
+
+/**
+ * Extracts site name from an automated alert Subject line.
+ * Handles patterns:
+ * - "sedicoprod: BotsAvailableLow..."
+ * - "samsatlprod: ProcessExecutionsInManualRetry..."
+ * - "owensminorprod: PostgresOldDataDetected..."
+ * - "samsatlprod-cluster-prod-greymatter - ..."
+ * - "elatlprod-cluster-prod-greymatter - ..."
+ * - "Site: kafka-melimx13prod-prod | ..."
+ * - "Dashboard for <siteHost>'s ..."
+ * - "Ranger Infra Dashboard for <siteHost>"
+ * - "Runbook for <AlertName> Ranger Infra Dashboard for <siteHost>"
+ * - "[<siteHost>] ..."
+ */
+export function extractSiteFromAlertSubject(subject: string, compiledSites: CompiledSite[]): string | null {
+  if (!subject || typeof subject !== 'string' || !compiledSites || compiledSites.length === 0) return null;
+  const sub = subject.trim();
+
+  // Pattern 0: Direct host prefix with brackets, colon, hyphen, pipe, cluster, etc.
+  // e.g. "samprod:", "samprod :", "[samprod]", "<samprod>", "samsatlprod - ...", "sedicoprod:", "owensminorprod:", "cc-temuco:", "samsatlprod-cluster-prod-greymatter"
+  const prefixMatch = sub.match(/^[<\[]?([a-z0-9._-]+)[>\]]?(?:\s*[:|–—\-]\s*|\s*-\s*(?:cluster|prod|greymatter))/i);
+  if (prefixMatch && prefixMatch[1]) {
+    const rawHost = prefixMatch[1].toLowerCase().trim();
+    const site = resolveSiteFromToken(rawHost, compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 1: Dashboard for <siteHost>'s ... or Ranger Infra Dashboard for <siteHost>
+  const match1 = sub.match(/(?:Dashboard\s+for|Ranger\s+Infra\s+Dashboard\s+for)\s*[:]?\s*[<'"\[]?([a-z0-9._-]+)[>'"\]]?(?:'s)?/i);
+  if (match1 && match1[1]) {
+    const rawHost = match1[1].toLowerCase().trim();
+    const site = resolveSiteFromToken(rawHost, compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 2: Runbook for <AlertName> Ranger Infra Dashboard for <siteHost>
+  const match2 = sub.match(/Ranger\s+Infra\s+Dashboard\s+for\s*[<'"\[]?([a-z0-9._-]+)[>'"\]]?(?:'s)?/i);
+  if (match2 && match2[1]) {
+    const rawHost = match2[1].toLowerCase().trim();
+    const site = resolveSiteFromToken(rawHost, compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 3: Kafka consumer lag with Site: kafka-<host>-prod or Site: <host>
+  const matchKafka = sub.match(/(?:Site|Cluster):\s*(?:kafka-)?([a-z0-9._-]+?)(?:-prod)?(?:\s*[|,]|\s*$)/i);
+  if (matchKafka && matchKafka[1]) {
+    const rawHost = matchKafka[1].toLowerCase().trim();
+    const site = resolveSiteFromToken(rawHost, compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 4: [<siteHost>] or <siteHost> anywhere in brackets
+  const match4 = sub.match(/[<\[]([a-z0-9._-]+)[>\]]/i);
+  if (match4 && match4[1]) {
+    const rawHost = match4[1].toLowerCase().trim();
+    const site = resolveSiteFromToken(rawHost, compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 5: Look for known host keywords anywhere in the subject
+  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993)\b/i);
+  if (tokenMatches && tokenMatches[1]) {
+    const site = resolveSiteFromToken(tokenMatches[1].toLowerCase(), compiledSites);
+    if (site) return site;
+  }
+
+  // Pattern 6: Direct substring scan across compiledSites (most specific first)
+  const subClean = normalizeCanonical(sub);
+  for (const site of compiledSites) {
+    if (site.clean.length >= 4 && subClean.includes(site.clean)) {
+      return site.originalName;
+    }
+  }
+
+  return null;
+}
+
+export function resolveSiteFromToken(token: string, compiledSites: CompiledSite[]): string | null {
+  if (!token) return null;
+  const rawToken = String(token).toLowerCase().trim();
+  const clean = normalizeCanonical(rawToken);
+  if (!clean) return null;
+  const spaceless = clean.replace(/\s+/g, '');
+
+  // 1. Direct clean or alias match
+  for (const site of compiledSites) {
+    if (site.clean === clean) return site.originalName;
+  }
+
+  // 2. Strip common trailing -prod, _prod, prod, -cluster, -stg, etc.
+  const stripped = clean.replace(/[-_]?(?:prod|stg|stage|dev|cluster|greymatter|kafka).*$/i, '').trim();
+  const strippedSpaceless = stripped.replace(/\s+/g, '');
+
+  if (stripped) {
+    for (const site of compiledSites) {
+      if (site.clean === stripped) return site.originalName;
+    }
+  }
+
+  // 3. Spaceless comparison (e.g. 'samsatl' -> 'sams atl', 'owensminor' -> 'owens minor')
+  for (const site of compiledSites) {
+    const siteSpaceless = site.spaceless || site.clean.replace(/\s+/g, '');
+    if (siteSpaceless === spaceless || (strippedSpaceless && siteSpaceless === strippedSpaceless)) {
+      return site.originalName;
+    }
+    if (siteSpaceless.length >= 4 && (spaceless.includes(siteSpaceless) || siteSpaceless.includes(spaceless))) {
+      return site.originalName;
+    }
+  }
+
+  // 4. Targeted high-precision domain knowledge rules for known host conventions
+  // Sams Club ATL: samprod, samsprod, samsatl, samatl, 4993
+  if (/sam.*atl|^sam(s)?prod|^4993/i.test(rawToken)) {
+    const s = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+    return s ? s.originalName : 'Sams Club ATL';
+  }
+  // Sams Club LAX: samslax, samlax, 8799, 9476
+  if (/sam.*lax|^8799|^9476/i.test(rawToken)) {
+    const s = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
+    return s ? s.originalName : 'Sams Club LAX';
+  }
+  // Owens & Minor: onm, owensminor, owens-minor
+  if (/^onm|^owens[-_]?minor/i.test(rawToken)) {
+    const s = compiledSites.find(x => /owens/i.test(x.originalName));
+    return s ? s.originalName : 'Owens & Minor';
+  }
+  // Casey's: casey, caseys, caseyprod, caseysprod, caseystg
+  if (/^casey/i.test(rawToken)) {
+    const s = compiledSites.find(x => /casey/i.test(x.originalName));
+    return s ? s.originalName : "Casey's Joplin";
+  }
+  // Sedico: sedico, sedicoprod
+  if (/sedico/i.test(rawToken)) {
+    const s = compiledSites.find(x => /sedico/i.test(x.originalName));
+    return s ? s.originalName : 'Luxottica_Sedico';
+  }
+  // Essilor Luxottica Atlanta: el-atl, elatl, elatlprod
+  if (/^el[-_]?atl/i.test(rawToken)) {
+    const s = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
+    return s ? s.originalName : 'Essilor Luxottica Atlanta';
+  }
+  // Essilor Luxottica Columbus: el-col, elcolumbus, elcolombus
+  if (/^el[-_]?col/i.test(rawToken)) {
+    const s = compiledSites.find(x => /columbus/i.test(x.originalName));
+    return s ? s.originalName : 'Essilor Luxottica -Columbus';
+  }
+  // Sodimac Colombia: sod-col, sodcol, sodcolprod
+  if (/^sod[-_]?col/i.test(rawToken)) {
+    const s = compiledSites.find(x => /sodimac-colombia$/i.test(x.originalName) || x.originalName === 'Sodimac-Colombia');
+    return s ? s.originalName : 'Sodimac-Colombia';
+  }
+  // Sodimac CC7 Temuco: cc-temuco
+  if (/cc[-_]?temuco/i.test(rawToken)) {
+    const s = compiledSites.find(x => /cc7|temuco/i.test(x.originalName));
+    return s ? s.originalName : 'Sodimac-CC7';
+  }
+  // H&M Canada Ajax: hnm-canada, hm-canada, flexo-hnm
+  if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm/i.test(rawToken)) {
+    const s = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
+    return s ? s.originalName : 'H&M Canada Ajax';
+  }
+  // DHL Figs: flexo-dhlfigs, dhlfigs
+  if (/dhlfigs/i.test(rawToken)) {
+    const s = compiledSites.find(x => /dhl.*figs/i.test(x.originalName));
+    return s ? s.originalName : 'DHL- Figs';
+  }
+  // DHL NL: dhlnl
+  if (/dhlnl/i.test(rawToken)) {
+    const s = compiledSites.find(x => /dhl.*nl/i.test(x.originalName));
+    return s ? s.originalName : 'DHL-NL';
+  }
+  // Sodimac SBS: sodimacsbs, sbs
+  if (/sodimacsbs|^sbs/i.test(rawToken)) {
+    const s = compiledSites.find(x => /sodimac sbs/i.test(x.originalName));
+    return s ? s.originalName : 'Sodimac SBS';
+  }
+  // Mercado Libre MX13: melimx13
+  if (/melimx13/i.test(rawToken)) {
+    const s = compiledSites.find(x => /mx13/i.test(x.originalName));
+    return s ? s.originalName : 'Mercado Libre (MX13)';
+  }
+
+  return null;
+}
+
+/**
+ * Checks whether two site names represent the same physical site, taking into account
+ * aliases, canonical brand variations (e.g. "Sams Club ATL" vs "Sams ATL", "Casey's" vs "Casey's Joplin"),
+ * and host names ("samprod", "onm", "owensminorprod").
+ */
+export function areSameSite(nameA: string, nameB: string, compiledSites: CompiledSite[] = []): boolean {
+  if (!nameA || !nameB) return false;
+  if (nameA === nameB) return true;
+
+  const cleanA = normalizeCanonical(nameA);
+  const cleanB = normalizeCanonical(nameB);
+  if (cleanA && cleanB && cleanA === cleanB) return true;
+
+  const spacelessA = cleanA.replace(/\s+/g, '');
+  const spacelessB = cleanB.replace(/\s+/g, '');
+  if (spacelessA && spacelessB && spacelessA === spacelessB) return true;
+
+  // Domain aliases:
+  const isSamsAtl = (s: string) => /sam.*atl|samprod|samsprod|^4993/i.test(s);
+  if (isSamsAtl(nameA) && isSamsAtl(nameB)) return true;
+
+  const isSamsLax = (s: string) => /sam.*lax|samlax|^8799|^9476/i.test(s);
+  if (isSamsLax(nameA) && isSamsLax(nameB)) return true;
+
+  const isCaseys = (s: string) => /casey/i.test(s);
+  if (isCaseys(nameA) && isCaseys(nameB)) return true;
+
+  const isOwens = (s: string) => /owens|onm/i.test(s);
+  if (isOwens(nameA) && isOwens(nameB)) return true;
+
+  const isSedico = (s: string) => /sedico/i.test(s);
+  if (isSedico(nameA) && isSedico(nameB)) return true;
+
+  const isElAtl = (s: string) => /el[-_]?atl|atlanta.*luxottica|luxottica.*atlanta/i.test(s);
+  if (isElAtl(nameA) && isElAtl(nameB)) return true;
+
+  // Check KNOWN_SITE_ALIASES
+  for (const [siteKey, aliases] of Object.entries(KNOWN_SITE_ALIASES)) {
+    const keyClean = normalizeCanonical(siteKey);
+    const allNames = [keyClean, ...aliases.map(normalizeCanonical)];
+    const matchA = allNames.includes(cleanA) || (cleanA && keyClean.includes(cleanA));
+    const matchB = allNames.includes(cleanB) || (cleanB && keyClean.includes(cleanB));
+    if (matchA && matchB) return true;
+  }
+
+  return false;
+}
+
 export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   if (!caseRecord || !compiledSites || compiledSites.length === 0) return null;
 
-  // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
+  // Level 0: For automated ALERTS, the Subject line is the PRIMARY authoritative source for site host identification!
   const raw = caseRecord as Record<string, unknown>;
+  const sub = String(caseRecord.Subject || raw.subject || '').trim();
+  if (sub && (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub))) {
+    const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
+    if (siteFromSub) return siteFromSub;
+  }
+
+  // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
   const accId = caseRecord.AccountId || raw.account_id;
   if (accId) {
     const targetId = String(accId);
@@ -595,7 +1051,7 @@ export function matchCaseToSite(
 ): boolean {
   const compiled = compileSiteIndex(allSiteNames);
   const best = findBestSiteForCase(caseRecord, compiled);
-  return Boolean(best && normalizeCanonical(best) === normalizeCanonical(targetSiteName));
+  return Boolean(best && areSameSite(best, targetSiteName, compiled));
 }
 
 export function getBestSiteForCase(
@@ -606,41 +1062,6 @@ export function getBestSiteForCase(
   return findBestSiteForCase(caseRecord, compiled);
 }
 
-/**
- * Predicate to check if a case/alert was closed today
- */
-export function isClosedToday(c: SFCase): boolean {
-  const status = String(c.Status || '').toLowerCase();
-  const isClosed = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
-  if (!isClosed) return false;
-
-  const dateStr = (c as Record<string, unknown>).ClosedDate || c.LastModifiedDate;
-  if (!dateStr) return false;
-
-  const d = new Date(dateStr as string);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
-}
-
-/**
- * Filter for alerts bucket:
- * 1) Alerts that are opened (not closed/solved/on-hold/pending confirmation)
- * 2) ONLY closed alerts of today's date
- */
-export function isAlertForShiftBucket(c: SFCase): boolean {
-  if (!isAlertCase(c)) return false;
-  const status = String(c.Status || '').toLowerCase();
-  const isClosed = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
-  if (!isClosed) {
-    if (status.includes('hold') || status.includes('pending confirmation')) return false;
-    return true;
-  }
-  return isClosedToday(c);
-}
 
 // ─── Exported standard async functions (called from browser) ──────────────────
 
@@ -680,6 +1101,7 @@ export const sfFetchLiveCasesOverview = async () => {
           totalLiveAlerts: data.totalLiveAlerts ?? (data.alerts ? data.alerts.length : 0),
           cases: (data.cases || []) as SFCase[],
           alerts: (data.alerts || []) as SFCase[],
+          closedAlerts: (data.closedAlerts || []) as SFCase[],
           siteStats: mergedStats,
           timestamp: data.timestamp || new Date().toISOString(),
         };
@@ -694,6 +1116,7 @@ export const sfFetchLiveCasesOverview = async () => {
     totalLiveAlerts: 0,
     cases: [] as SFCase[],
     alerts: [] as SFCase[],
+    closedAlerts: [] as SFCase[],
     siteStats: buildEmptySiteStats(),
     timestamp: new Date().toISOString(),
   };
@@ -725,15 +1148,25 @@ export const sfFetchCasesForSite = async (params: {
     if (res.ok) {
       const json = await res.json();
       if (json && json.success && Array.isArray(json.cases)) {
-        const strictlyFiltered = (json.cases as SFCase[]).filter(isLiveOpenCase);
-        const alertsFiltered = Array.isArray(json.alerts)
-          ? json.alerts
-          : (json.cases as SFCase[]).filter(isAlertForShiftBucket);
+        const strictlyFiltered = (json.cases as SFCase[]).filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+        let alertsFiltered = Array.isArray(json.alerts) ? (json.alerts as SFCase[]) : [];
+        const closedFiltered = Array.isArray(json.closed) ? (json.closed as SFCase[]) : [];
+
+        // Resilient fallback: if alerts array is empty, search closed and cases lists
+        if (alertsFiltered.length === 0) {
+          if (closedFiltered.length > 0 && closedFiltered.some(isAlertCase)) {
+            alertsFiltered = closedFiltered.filter(isAlertCase);
+          } else if ((json.cases as SFCase[]).some(isAlertForShiftBucket)) {
+            alertsFiltered = (json.cases as SFCase[]).filter(isAlertForShiftBucket);
+          }
+        }
+
         return {
           totalSize: strictlyFiltered.length,
           done: true,
           records: strictlyFiltered,
           alerts: alertsFiltered,
+          closed: closedFiltered,
         };
       }
     }
@@ -746,6 +1179,7 @@ export const sfFetchCasesForSite = async (params: {
     done: true,
     records: [] as SFCase[],
     alerts: [] as SFCase[],
+    closed: [] as SFCase[],
   };
 };
 
@@ -878,3 +1312,152 @@ export const sfDebugQuery = async (param?: string | { data?: string }) => {
     sample: [],
   };
 };
+
+export interface AlertAnalyticsBucket {
+  index: number;
+  label: string;
+  startTime: string;
+  endTime: string;
+  total: number;
+  open: number;
+  closed: number;
+  breached?: number;
+  frBreached?: number;
+  autoResolved?: number;
+  avgDurationMinutes: number;
+}
+
+export interface TopAlertItem {
+  name: string;
+  count: number;
+  open: number;
+  closed: number;
+  breaches: number;
+  frBreaches: number;
+  autoResolved: number;
+  avgDurationMinutes: number;
+  pct: number;
+}
+
+export interface AlertAnalyticsResult {
+  siteName: string;
+  range: string;
+  rangeLabel: string;
+  totalAlerts: number;
+  openAlerts: number;
+  closedAlerts: number;
+  resolutionRate: number;
+  avgDurationMinutes: number;
+  minDurationMinutes: number;
+  maxDurationMinutes: number;
+  breachedAlerts: number;
+  frBreachedAlerts: number;
+  slaComplianceRate: number;
+  autoResolvedAlerts: number;
+  autoResolvedRate: number;
+  properCloseAlerts: number;
+  properCloseRate: number;
+  healthScore?: number;
+  healthStatus?: 'OPTIMAL' | 'OPERATIONAL' | 'DEGRADED' | 'CRITICAL';
+  buckets: AlertAnalyticsBucket[];
+  topAlerts: TopAlertItem[];
+  topCategories?: Array<{ name: string; count: number; pct?: number }>;
+  alerts?: SFCase[];
+}
+
+export function extractAlertSignature(alert: SFCase | Record<string, unknown>): string {
+  if (!alert) return 'System Monitoring Alert';
+  const raw = alert as Record<string, unknown>;
+  const sub = String(raw.Subject || raw.subject || '').trim();
+
+  if (sub && sub !== 'No Subject') {
+    let cleaned = sub;
+
+    // 1. Strip Runbook for / Dashboard for / Ranger Infra prefixes
+    cleaned = cleaned.replace(/^(?:runbook\s+for|dashboard\s+for|ranger\s+infra\s+dashboard\s+for)\s+/i, '').trim();
+
+    // 2. Strip bracketed alert tags: [Alert], [Opsgenie], [Critical], [SEV1], [SEV2], [P1], etc.
+    cleaned = cleaned.replace(/^(\[?(?:alert|opsgenie|critical|sev[0-9]|p[0-9]|warning|error|info)\]?[:\s\-_]*)+/i, '').trim();
+
+    // 3. Match Linux:... alertName: pattern
+    const linuxMatch = cleaned.match(/alertName:([^,]+)/i);
+    if (linuxMatch && linuxMatch[1]) {
+      return linuxMatch[1].trim();
+    }
+
+    // 4. Strip site host prefixes like "flexo-hnm-canada:", "xpo-hnm:", "hnm-canada:", "walmartmxprod:", "cc-temuco:"
+    cleaned = cleaned.replace(/^[a-z0-9_-]+(?:'s|:|-)\s*/i, (match) => {
+      if (/(?:hnm|walmart|evergreen|activewear|arvato|gap|flipkart|target|ikea|cc-|flexo-|prod-|qa[0-9]-|xpo-|sams|lacoste|elatl|figs|dhl|ykk|stryker)/i.test(match)) {
+        return '';
+      }
+      return match;
+    }).trim();
+
+    // 5. Match standard known signatures if present
+    const sigMatch = cleaned.match(/^(BotsAvailableLow|BotsInDeadStateHigh|ProcessNotRunning|ProcessExecutionsFailed|ProcessExecutionsInManualRetry|DiskUtilHigh|MemUtilHigh|CpuUtilHigh|PostgresOldDataDetected|FileSizeHigh|ChargersOffline|GORInternalAPIHighResponseTime|GORInternalApiFailed|AirflowConnectivityIssues|System\s+Stopped|TKISDisconnection|LivenessFailure|HostReportingStopped|PickExceptionsHigh)/i);
+    if (sigMatch && sigMatch[1]) {
+      return sigMatch[1].trim();
+    }
+
+    // 6. Strip trailing details (metrics, thresholds, host/app paths)
+    cleaned = cleaned.replace(/:\s*host=[^,]+.*$/i, '').trim();
+    cleaned = cleaned.replace(/:\s*\d+(\.\d+)?%.*$/i, '').trim();
+    cleaned = cleaned.replace(/\s+Number\s+of\s+inactive\s+bots.*$/i, '').trim();
+    cleaned = cleaned.replace(/\s+on\s+host=[^,]+.*$/i, '').trim();
+    cleaned = cleaned.replace(/\s+on\s+app=[^:]+.*$/i, '').trim();
+    cleaned = cleaned.replace(/\s+reached\s+\d+(\.\d+)?.*$/i, '').trim();
+
+    // 7. Remove trailing UUIDs, timestamps, or raw IDs
+    cleaned = cleaned.replace(/\s*-[0-9a-f]{8,}$/i, '').trim();
+    cleaned = cleaned.replace(/\s*\[id:[^\]]+\]/i, '').trim();
+
+    if (cleaned.length >= 3 && !/^alert$/i.test(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  const prod = String(raw.Product_Type__c || raw.Product_Line || '').trim();
+  if (prod && !/alert/i.test(prod)) {
+    return `${prod} Alert`;
+  }
+
+  const desc = String(raw.Description || raw.description || '').trim();
+  if (desc) {
+    const firstLine = desc.split(/[\r\n]+/)[0].trim();
+    const alertMatch = firstLine.match(/(?:alert|error|failure|exception):\s*([a-zA-Z0-9_\- ]{3,50})/i);
+    if (alertMatch && alertMatch[1]) {
+      return alertMatch[1].trim();
+    }
+    if (firstLine.length > 5 && firstLine.length < 50 && !/^(hi|hello|dear|team)/i.test(firstLine)) {
+      return firstLine;
+    }
+  }
+
+  return 'System Infrastructure Alert';
+}
+
+export const sfFetchAlertAnalytics = async (
+  siteName: string = '',
+  range: string = '7d',
+  forceRefresh: boolean = false
+): Promise<AlertAnalyticsResult | null> => {
+  try {
+    const params = new URLSearchParams();
+    if (siteName && siteName !== 'all') params.set('site', siteName);
+    if (range) params.set('range', range);
+    if (forceRefresh) params.set('force', 'true');
+    const res = await fetch(`/api/cases/alerts/analytics?${params.toString()}`, {
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.success) {
+        return data as AlertAnalyticsResult;
+      }
+    }
+  } catch (err) {
+    console.warn('[Salesforce client] Notice querying alert analytics:', (err as Error).message);
+  }
+  return null;
+};
+

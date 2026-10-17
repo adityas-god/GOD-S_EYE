@@ -120,3 +120,124 @@ SF_API_VERSION=v59.0
 ```
 
 Once saved on the VM, subsequent Git pushes will **never** alter or overwrite these secrets.
+
+---
+
+## 🧭 Future Roadmap & Architectural Plan: Operations Metrics Cockpit & AI Analytics Engine
+
+> **Status**: Architected & Documented for Future Re-Enablement.  
+> **Objective**: Provide leadership and site reliability engineers with a god-level operational cockpit that uncovers where the organization is lagging, separated into actionable buckets and driven by natural language AI analytics.
+
+---
+
+### 1. Dual Operational Buckets Architecture
+
+| Operational Bucket | Color Code | Data Source | SLA & Criticality Target | Purpose |
+| :--- | :--- | :--- | :--- | :--- |
+| **🔴 Incidents Bucket** | `#ef4444` (Crimson) | Salesforce Service Cloud (`Case` object) | **Contractual SLA Deadlines**<br>Sev 1: 2 hrs, Sev 2: 4 hrs, Sev 3: 24 hrs, Sev 4: 72 hrs | Tracks real customer-facing warehouse outages, production halts, and critical hardware downtime. |
+| **🟡 Alerts Bucket** | `#eab308` (Amber) | Opsgenie / Automated Telemetry Stream | **Signal-to-Noise Reduction**<br>De-duplication, suppression, hysteresis | Captures automated machine alarms, heartbeat drops, charging/docking warnings, and sensor triggers before they become production outages. |
+
+---
+
+### 2. The 6 Organizational Lagging Indicators
+
+1. **SLA Compliance & MTTR Bottlenecks**:
+   - Compares incident arrival timestamp (`CreatedDate`) vs resolution timestamp (`ClosedDate`).
+   - Flags breaches against contractual limits:
+     $$\text{Breach Condition} = (\text{Duration} > \text{Target SLA})$$
+   - Computes organization-wide Mean Time to Resolve (MTTR) across Sev 1, Sev 2, Sev 3, Sev 4.
+
+2. **Top Chronic Problem Sites ("Hall of Churn")**:
+   - Computes weighted Churn Score per facility:
+     $$\text{Churn Score} = (10 \times \text{Sev 1}) + (5 \times \text{Sev 2}) + (2 \times \text{Sev 3}) + (15 \times \text{IsDown}) + (4 \times \text{Breaches}) + (0.3 \times \text{Alerts})$$
+   - Highlights repeated hardware failures at specific distribution centers (e.g., Kenco, Sam's Club, DHL, Essilor Luxottica).
+
+3. **Alert Fatigue & Telemetry Noise Ratio**:
+   - Calculates the ratio of automated telemetry alarms to true customer tickets:
+     $$\text{Noise Percentage} = \frac{\text{Total Alerts}}{\text{Total Alerts} + \text{Total Incidents}} \times 100$$
+   - Categorizes telemetry triggers (Heartbeat/Comms, Charger/Battery, Vision/Sensors, Navigation Obstacles, Server Infrastructure).
+
+4. **Stale Backlog Aging Pipeline**:
+   - Groups unresolved tickets into 4 time buckets:
+     - 🟢 `< 24 Hours` (Fresh triage)
+     - 🔵 `24 – 72 Hours` (In progress)
+     - 🟠 `3 – 7 Days` (Stagnant backlog)
+     - 🔴 `> 7 Days` (Chronic debt / SLA disaster)
+
+5. **Robotic Product Line Fragility**:
+   - Segregates incident frequency and Sev 1 downtime across GreyOrange product families:
+     - **RMS** (Ranger Move / Butler AGVs)
+     - **Case Pick** (AMR carton handling)
+     - **RA** (Robotic Arm picking)
+     - **RIL** (Ranger In-Line conveyors)
+     - **Shuttle Systems**
+
+6. **Shift Continuity & Peak Influx Heatmap**:
+   - Maps case creation across the 24-hour cycle:
+     - **Morning Shift**: 06:00 – 13:59
+     - **Evening Shift**: 14:00 – 21:59
+     - **Night Shift**: 22:00 – 05:59
+   - Reveals shift handover spikes and off-hour coverage gaps.
+
+---
+
+### 3. Decoupled AI Analytics Engine ("Ask God's Eye AI")
+
+```
+                                      [User Query: "Show Sev 1 SLA breaches"]
+                                                         │
+                                                         ▼
+                                          ┌──────────────────────────────┐
+                                          │  POST /api/metrics/ai-query  │
+                                          └──────────────┬───────────────┘
+                                                         │
+                                                         ▼
+                                          ┌──────────────────────────────┐
+                                          │   Query Intent Classifier    │
+                                          │   (Regex & Heuristic Match)  │
+                                          └──────────────┬───────────────┘
+                                                         │
+                              ┌──────────────────────────┴──────────────────────────┐
+                              ▼                                                     ▼
+               ┌─────────────────────────────┐                       ┌─────────────────────────────┐
+               │    Engine Mode 1: Local     │                       │    Engine Mode 2: Gemini    │
+               │   Mathematical Synthesizer  │                       │   Generative Reasoning API  │
+               │  - Zero network latency     │                       │  - Executive summaries      │
+               │  - Deterministic charts     │                       │  - Actionable SRE guidance  │
+               │  - Never crashes/times out  │                       │  - 3.5s timeout abort guard │
+               └──────────────┬──────────────┘                       └──────────────┬──────────────┘
+                              │                                                     │
+                              └──────────────────────────┬──────────────────────────┘
+                                                         ▼
+                                          ┌──────────────────────────────┐
+                                          │ Dynamic Visual Widget Schema │
+                                          │ (Bar / Donut / KPI / Table)  │
+                                          └──────────────────────────────┘
+```
+
+#### Supported Conversational Intents:
+- **Greeting & Status**: `"hii"`, `"hello"`, `"help"`, `"status"` $\rightarrow$ Operational Cockpit Briefing.
+- **SLA & MTTR**: `"Show Sev 1 SLA breaches"`, `"Which cases missed SLA?"` $\rightarrow$ Severity breakdown chart.
+- **Chronic Facilities**: `"Top chronic problem sites"`, `"Worst downtime"` $\rightarrow$ Ranked churn bar chart.
+- **Alert Noise**: `"Alert fatigue ratio"`, `"Telemetry noise"` $\rightarrow$ Donut chart of alert triggers.
+- **Shift Transition**: `"Night vs day shifts"`, `"Peak arrival hours"` $\rightarrow$ Shift distribution comparison.
+- **Product Lines**: `"RMS vs Case Pick"`, `"Robotic arm failures"` $\rightarrow$ Product line breakdown.
+- **Facility Deep-Dive**: `"Kenco status"`, `"Essilor Luxottica"` $\rightarrow$ Site-specific incident records and health.
+
+---
+
+### 4. API Endpoints Specification (For Re-Activation)
+
+- `GET /api/metrics?timeframe=7d&bucket=incidents`: Returns computed SLA stats, chronic sites, noise ratios, and backlog aging.
+- `POST /api/metrics/ai-query`: Accepts `{ prompt: string, timeframe: string, bucket: string }` and returns dynamic widget JSON.
+- `GET /api/metrics/ai-suggestions`: Returns recommended quick-prompt chips for operational discovery.
+
+---
+
+### 5. Steps to Re-Enable in the Future
+
+1. Re-mount `aiMetricsRouter` in [`backend/server.js`](file:///c:/Users/aditya.s.ctr/Downloads/GOD-S_EYE-main/GOD-S_EYE-main/backend/server.js) at `/api/metrics`.
+2. Re-register `/metrics` route in [`Frontend/src/routes/metrics.tsx`](file:///c:/Users/aditya.s.ctr/Downloads/GOD-S_EYE-main/GOD-S_EYE-main/Frontend/src/routes/metrics.tsx) and TanStack router tree.
+3. Add navigation link back into [`Frontend/src/components/dashboard-shell.tsx`](file:///c:/Users/aditya.s.ctr/Downloads/GOD-S_EYE-main/GOD-S_EYE-main/Frontend/src/components/dashboard-shell.tsx).
+4. Configure standard Google AI Studio API key (`AIzaSy...`) in VM `.env` under `GEMINI_API_KEY`.
+

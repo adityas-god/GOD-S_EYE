@@ -558,6 +558,13 @@ export const defaultSites = [
     "opsgenie_tag": "owens-minor",
     "salesforce_account_id": "001OX00000qZcb9YAC",
     "position": 78
+  },
+  {
+    "name": "Casey's Joplin",
+    "product_line": "Case Pick",
+    "opsgenie_tag": "caseys-joplin",
+    "salesforce_account_id": "001OX00000uwSzyYAE",
+    "position": 79
   }
 ];
 

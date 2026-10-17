@@ -107,7 +107,7 @@ export function DashboardShell({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          <Button variant="nav" asChild className={!detail ? 'active' : ''}>
+          <Button variant="nav" asChild className={!detail && activeTab === 'all' ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
               All sites

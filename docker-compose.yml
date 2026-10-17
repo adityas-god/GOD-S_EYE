@@ -27,6 +27,7 @@ services:
       - SF_API_VERSION=${SF_API_VERSION:-v59.0}
       - WEBHOOK_SECRET=${WEBHOOK_SECRET:-}
       - OPSGENIE_API_KEY=${OPSGENIE_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - http_proxy=${http_proxy:-}

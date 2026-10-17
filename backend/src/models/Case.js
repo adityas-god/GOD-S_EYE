@@ -15,6 +15,8 @@ const caseSchema = new mongoose.Schema(
     is_site_down: { type: Boolean, default: false },
     created_date: { type: Date, default: null },
     last_modified_date: { type: Date, default: null },
+    closed_date: { type: Date, default: null },
+    end_time: { type: Date, default: null },
     raw_data: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   {
@@ -55,11 +57,13 @@ export const CaseRepository = {
    * Find open cases that are NOT on hold for a specific site or account.
    */
   async findOpenCasesForSite({ siteName, accountId, siteAliases = [] }) {
-    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold'];
+    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold', 'Resolved', 'resolved'];
 
     if (isDbConnected()) {
       const filter = {
         status: { $nin: notAllowedStatuses },
+        closed_date: { $in: [null, undefined] },
+        end_time: { $in: [null, undefined] },
         $or: [],
       };
 
@@ -96,6 +100,19 @@ export const CaseRepository = {
 
     for (const c of inMemoryCases.values()) {
       if (notAllowedStatuses.includes(c.status)) continue;
+      // Exclude tickets with end time, closed date, or downtime > 0
+      const hasEnd =
+        c.end_time ||
+        c.closed_date ||
+        c.End_Time__c ||
+        c.ClosedDate ||
+        c.End_Time_of_Incident__c ||
+        c.end_time_of_incident ||
+        c.Actual_End_Time__c ||
+        c.actual_end_time ||
+        (c.Downtime__c !== undefined && c.Downtime__c !== null && Number(c.Downtime__c) > 0) ||
+        (c.downtime !== undefined && c.downtime !== null && Number(c.downtime) > 0);
+      if (hasEnd) continue;
 
       let matched = false;
       if (accountId && c.account_id === accountId) matched = true;
@@ -129,15 +146,33 @@ export const CaseRepository = {
   },
 
   async findAllOpenCases() {
-    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold'];
+    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold', 'Resolved', 'resolved'];
     if (isDbConnected()) {
-      return CaseModel.find({ status: { $nin: notAllowedStatuses } })
+      return CaseModel.find({
+        status: { $nin: notAllowedStatuses },
+        closed_date: { $in: [null, undefined] },
+        end_time: { $in: [null, undefined] },
+      })
         .sort({ last_modified_date: -1 })
         .limit(100)
         .lean();
     }
     return Array.from(inMemoryCases.values())
-      .filter(c => !notAllowedStatuses.includes(c.status))
+      .filter(c => {
+        if (notAllowedStatuses.includes(c.status)) return false;
+        const hasEnd =
+          c.end_time ||
+          c.closed_date ||
+          c.End_Time__c ||
+          c.ClosedDate ||
+          c.End_Time_of_Incident__c ||
+          c.end_time_of_incident ||
+          c.Actual_End_Time__c ||
+          c.actual_end_time ||
+          (c.Downtime__c !== undefined && c.Downtime__c !== null && Number(c.Downtime__c) > 0) ||
+          (c.downtime !== undefined && c.downtime !== null && Number(c.downtime) > 0);
+        return !hasEnd;
+      })
       .sort((a, b) => new Date(b.last_modified_date || 0) - new Date(a.last_modified_date || 0));
   },
 };

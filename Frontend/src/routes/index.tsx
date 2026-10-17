@@ -12,7 +12,6 @@ import {
   Radio,
   Cloud,
   Trash2,
-  Layers,
   ChevronDown,
   ChevronUp,
   PlugZap,
@@ -25,6 +24,7 @@ import {
   User,
   X,
   Clock,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +32,27 @@ import { DashboardShell } from '@/components/dashboard-shell';
 import { ConnectionsDialog, DeleteSiteDialog, SiteEditor, SignInDialog } from '@/components/dashboard-dialogs';
 import { useAuth } from '@/components/auth-context';
 import { sitesQueryOptions, type Site } from '@/lib/sites';
-import { sfSyncOrgSites, sfFetchLiveCasesOverview, type SFCase, isAlertCase, detectSeverity, isImTicket, isDirTicket } from '@/integrations/salesforce/client';
+import {
+  sfSyncOrgSites,
+  sfFetchLiveCasesOverview,
+  type SFCase,
+  isAlertCase,
+  detectSeverity,
+  isImTicket,
+  isDirTicket,
+  isLiveOpenCase,
+  isOpenAlert,
+  isClosedAlert,
+  getTicketEndTime,
+  hasTicketEndTime,
+  compileSites,
+  findBestSiteForCase,
+  areSameSite,
+  calculateAlertDuration,
+  KNOWN_SITE_ALIASES,
+  normalizeCanonical,
+  type SiteCaseStat,
+} from '@/integrations/salesforce/client';
 import { toast } from 'sonner';
 
 export const Route = createFileRoute('/')({
@@ -82,7 +102,7 @@ function Index() {
   const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [syncingOrg, setSyncingOrg] = useState(false);
   const [showAllOperational, setShowAllOperational] = useState(false);
-  const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts'>('cases');
+  const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed'>('cases');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [ticketsCollapsed, setTicketsCollapsed] = useState(false);
   const [severityFilter, setSeverityFilter] = useState('All');
@@ -144,16 +164,32 @@ function Index() {
 
     const enriched: EnrichedSite[] = uniqueSites.map(site => {
       const siteLower = site.name.trim().toLowerCase();
-      const canonKey = siteLower.replace(/[^a-z0-9]+/g, ' ').trim();
-      let stats = sfOverview?.siteStats?.[siteLower];
-      if (!stats && sfOverview?.siteStats) {
-        for (const [k, v] of Object.entries(sfOverview.siteStats)) {
-          const kCanon = k.replace(/[^a-z0-9]+/g, ' ').trim();
-          if (kCanon === canonKey || k.includes(siteLower) || siteLower.includes(k)) {
-            stats = v;
-            break;
+      const statsMap = (sfOverview?.siteStats || {}) as Record<string, SiteCaseStat>;
+      let stats: SiteCaseStat | undefined = statsMap[siteLower];
+      if (sfOverview?.siteStats) {
+        // Collect and merge all matching stats entries for this site (handles aliases and host names)
+        let mergedStats: SiteCaseStat | null = stats ? { ...stats, caseNumbers: [...(stats.caseNumbers || [])] } : null;
+        for (const [k, rawV] of Object.entries(statsMap)) {
+          const v = rawV as SiteCaseStat;
+          if (k !== siteLower && areSameSite(k, site.name)) {
+            if (!mergedStats) {
+              mergedStats = { ...v, caseNumbers: [...(v.caseNumbers || [])] };
+            } else {
+              mergedStats.count = (mergedStats.count || 0) + (v.count || 0);
+              mergedStats.alertCount = (mergedStats.alertCount || 0) + (v.alertCount || 0);
+              mergedStats.isDown = Boolean(mergedStats.isDown || v.isDown);
+              mergedStats.sev1Count = (mergedStats.sev1Count || 0) + (v.sev1Count || 0);
+              mergedStats.sev2Count = (mergedStats.sev2Count || 0) + (v.sev2Count || 0);
+              mergedStats.sev3Count = (mergedStats.sev3Count || 0) + (v.sev3Count || 0);
+              for (const cn of v.caseNumbers || []) {
+                if (!mergedStats.caseNumbers.includes(cn)) {
+                  mergedStats.caseNumbers.push(cn);
+                }
+              }
+            }
           }
         }
+        if (mergedStats) stats = mergedStats;
       }
 
       const openCount = stats ? stats.count : (site.open_cases_count ?? 0);
@@ -220,8 +256,42 @@ function Index() {
     }
   }
 
-  const totalOpenCases = sfOverview?.totalLiveCases ?? sortedAndFilteredSites.reduce((acc, s) => acc + (s.open_cases_count ?? 0), 0);
-  const totalOpenAlerts = sfOverview?.totalLiveAlerts ?? 0;
+  // Strictly filter cases with end-time logic (no end time, no closed/hold status, no alerts, no DIR)
+  const openCases = useMemo(() => {
+    return (sfOverview?.cases ?? []).filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+  }, [sfOverview?.cases]);
+
+  // Strictly filter alerts: only open alerts (no end time, no closed/hold status)
+  const openAlerts = useMemo(() => {
+    const list = [
+      ...(sfOverview?.alerts ?? []).filter(isOpenAlert),
+      ...(sfOverview?.cases ?? []).filter(c => isAlertCase(c) && isOpenAlert(c)),
+    ];
+    const map = new Map<string, SFCase>();
+    for (const a of list) {
+      if (a && a.Id) map.set(a.Id, a);
+    }
+    return Array.from(map.values());
+  }, [sfOverview?.alerts, sfOverview?.cases]);
+
+  // Closed alerts: alerts with end time or closed status
+  const closedAlerts = useMemo(() => {
+    const list = [
+      ...(sfOverview?.closedAlerts ?? []),
+      ...(sfOverview?.alerts ?? []).filter(isClosedAlert),
+      ...(sfOverview?.cases ?? []).filter(c => isAlertCase(c) && isClosedAlert(c)),
+    ];
+    const map = new Map<string, SFCase>();
+    for (const c of list) {
+      if (c && c.Id) map.set(c.Id, c);
+    }
+    return Array.from(map.values());
+  }, [sfOverview]);
+
+  const totalOpenCases = sfOverview?.totalLiveCases !== undefined && sfOverview.totalLiveCases <= openCases.length
+    ? sfOverview.totalLiveCases
+    : openCases.length;
+  const totalOpenAlerts = openAlerts.length;
   const activeSites = useMemo(() => {
     return sortedAndFilteredSites.filter(
       s => (s.open_cases_count ?? 0) > 0 || (s.open_alerts_count ?? 0) > 0 || Boolean(s.is_down)
@@ -246,7 +316,8 @@ function Index() {
   }, [sortedAndFilteredSites]);
 
   const isTicketFromToday = (c: SFCase) => {
-    const candidates = [c.CreatedDate, (c as Record<string, unknown>).ClosedDate, c.LastModifiedDate].filter(Boolean) as string[];
+    const raw = c as Record<string, unknown>;
+    const candidates = [c.CreatedDate, raw.ClosedDate, raw.End_Time__c, raw.end_time, c.LastModifiedDate].filter(Boolean) as string[];
     if (candidates.length === 0) return false;
 
     const now = new Date();
@@ -265,34 +336,26 @@ function Index() {
     });
   };
 
-  const todayCasesCount = useMemo(() => {
-    return (sfOverview?.cases ?? []).filter(isTicketFromToday).length;
-  }, [sfOverview]);
+  const todayCasesCount = openCases.length;
+  const todayAlertsCount = openAlerts.length;
+  const todayClosedAlertsCount = closedAlerts.length;
 
-  const todayAlertsCount = useMemo(() => {
-    return (sfOverview?.alerts ?? []).filter(isTicketFromToday).length;
-  }, [sfOverview]);
+  const currentBucketItems = useMemo(() => {
+    return activeBucket === 'cases' ? openCases : activeBucket === 'alerts' ? openAlerts : closedAlerts;
+  }, [activeBucket, openCases, openAlerts, closedAlerts]);
 
   const uniqueSeverities = useMemo(() => {
-    const items = activeBucket === 'cases' ? (sfOverview?.cases ?? []) : (sfOverview?.alerts ?? []);
     const set = new Set<string>();
-    for (const c of items) {
+    for (const c of currentBucketItems) {
       const p = (c.Highest_Severity__c || c.Priority || '').trim();
       if (p) set.add(p);
     }
     return Array.from(set).sort();
-  }, [activeBucket, sfOverview]);
+  }, [currentBucketItems]);
 
   // Filter tickets with optional severity/priority filter
   const currentOrgTickets: SFCase[] = useMemo(() => {
-    const items = activeBucket === 'cases' ? (sfOverview?.cases ?? []) : (sfOverview?.alerts ?? []);
-    // For live open cases, all active tickets in the org are included;
-    // For alerts, filter to today's alerts unless a specific severity filter is selected
-    const candidateTickets = activeBucket === 'alerts' && severityFilter === 'All'
-      ? items.filter(isTicketFromToday)
-      : items;
-
-    const filtered = candidateTickets.filter(c => {
+    const filtered = currentBucketItems.filter(c => {
       if (severityFilter === 'SEV 1 URGENT') {
         return !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1';
       }
@@ -314,15 +377,41 @@ function Index() {
       const timeB = b.CreatedDate || b.LastModifiedDate ? new Date(b.CreatedDate || b.LastModifiedDate || '').getTime() : 0;
       return timeB - timeA;
     });
-  }, [activeBucket, sfOverview, severityFilter]);
+  }, [currentBucketItems, severityFilter]);
+
+  const compiledSitesList = useMemo(() => compileSites(baseSites), [baseSites]);
 
   const siteNameToId = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of baseSites) {
+      if (!s?.name) continue;
       map.set(s.name.toLowerCase(), s.id);
+      map.set(normalizeCanonical(s.name), s.id);
+      const aliases = KNOWN_SITE_ALIASES[s.name] || [];
+      for (const alias of aliases) {
+        map.set(alias.toLowerCase(), s.id);
+        map.set(normalizeCanonical(alias), s.id);
+      }
     }
     return map;
   }, [baseSites]);
+
+  const formatPreciseTime = (isoString?: string | null): string => {
+    if (!isoString) return '—';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return '—';
+      return d.toLocaleString(undefined, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      });
+    } catch {
+      return '—';
+    }
+  };
 
   const renderSiteCard = (site: EnrichedSite, i: number) => {
     const casesCount = site.open_cases_count ?? 0;
@@ -331,7 +420,6 @@ function Index() {
     const hasAlerts = alertsCount > 0;
     const sev1Count = site.sev1_count ?? 0;
     const sev2Count = site.sev2_count ?? 0;
-    const sev3Count = site.sev3_count ?? 0;
     const hasSev1 = sev1Count > 0;
     const hasSev2 = sev2Count > 0;
     const hasUrgent = hasSev1 || hasSev2;
@@ -586,7 +674,7 @@ function Index() {
               <strong className={totalOpenAlerts > 0 ? '' : 'metric-dash'}>
                 {totalOpenAlerts}
               </strong>
-              <span>{totalOpenAlerts > 0 ? 'open & today’s closed alerts' : 'all sites clear'}</span>
+              <span>{totalOpenAlerts > 0 ? 'active live open alerts' : 'all sites alert-free'}</span>
             </div>
             <div className="metric-foot">
               <span className="source-dot" style={{ background: totalOpenAlerts > 0 ? '#ef4444' : '#22c55e' }} />
@@ -639,13 +727,16 @@ function Index() {
               </p>
             </div>
 
-            {/* Pill Toggle for Cases vs Alerts */}
+            {/* Pill Toggle for Cases vs Open Alerts vs Closed Alerts */}
             <div className="sf-bucket-toggle">
               <button
                 type="button"
                 className={`sf-bucket-btn ${activeBucket === 'cases' ? 'active' : ''}`}
-                onClick={() => setActiveBucket('cases')}
-                title="Current Day's Open Cases"
+                onClick={() => {
+                  setActiveBucket('cases');
+                  setSeverityFilter('All');
+                }}
+                title="Live Open Cases"
               >
                 <span className="sf-bucket-count">{todayCasesCount}</span>
                 <span className="sf-bucket-label">
@@ -657,17 +748,60 @@ function Index() {
               <button
                 type="button"
                 className={`sf-bucket-btn ${activeBucket === 'alerts' ? 'active' : ''}`}
-                onClick={() => setActiveBucket('alerts')}
-                title="Current Day's Alerts"
+                onClick={() => {
+                  setActiveBucket('alerts');
+                  setSeverityFilter('All');
+                }}
+                title="Live Open Alerts"
               >
                 <span className="sf-bucket-count">{todayAlertsCount}</span>
                 <span className="sf-bucket-label">
                   <Radio style={{ width: 11, height: 11, color: '#ef4444' }} />
-                  Alerts
+                  Open Alerts
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className={`sf-bucket-btn ${activeBucket === 'closed' ? 'active' : ''}`}
+                onClick={() => {
+                  setActiveBucket('closed');
+                  setSeverityFilter('All');
+                }}
+                title="Closed Alerts"
+              >
+                <span className="sf-bucket-count">{todayClosedAlertsCount}</span>
+                <span className="sf-bucket-label">
+                  <CheckCircle2 style={{ width: 11, height: 11, color: '#22c55e' }} />
+                  Closed Alerts
                 </span>
               </button>
             </div>
 
+            {severityFilter !== 'All' && (
+              <button
+                type="button"
+                onClick={() => setSeverityFilter('All')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: '#ef4444',
+                  background: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  borderRadius: 4,
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  marginLeft: 8,
+                }}
+                title="Reset active severity filter"
+              >
+                <X style={{ width: 11, height: 11 }} />
+                <span>Reset filter</span>
+              </button>
+            )}
 
             <Button
               variant="ghost"
@@ -693,237 +827,328 @@ function Index() {
           {!ticketsCollapsed && (
             <>
               {/* Table Header with identical columns as in the panels */}
-              <div className="sf-panel-table-head" style={{ borderTop: '1px solid var(--border)' }}>
-            <span>CASE & SUBJECT</span>
-            <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-              <select
-                aria-label="Filter by Severity"
-                value={severityFilter}
-                onChange={e => setSeverityFilter(e.target.value)}
+              <div
+                className="sf-panel-table-head"
                 style={{
-                  background: severityFilter !== 'All' ? '#dc2626' : 'transparent',
-                  color: severityFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
-                  border: severityFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
-                  borderRadius: 4,
-                  padding: '2px 4px',
-                  fontSize: 8.5,
-                  fontWeight: 700,
-                  fontFamily: 'var(--font-mono)',
-                  cursor: 'pointer',
-                  width: '100%',
-                  textTransform: 'uppercase',
-                  outline: 'none',
-                  transition: 'all 0.15s ease',
+                  borderTop: '1px solid var(--border)',
+                  ...(activeBucket === 'alerts'
+                    ? { gridTemplateColumns: 'minmax(220px, 1.5fr) 95px 95px 135px 105px 135px 130px' }
+                    : activeBucket === 'closed'
+                    ? { gridTemplateColumns: 'minmax(200px, 1.4fr) 85px 85px 125px 95px 125px 115px 115px 100px' }
+                    : undefined),
                 }}
-                title={severityFilter !== 'All' ? `Filtered by: ${severityFilter} (Click to change)` : 'Filter by Severity'}
               >
-                <option value="All" style={{ background: '#18191e', color: '#fff' }}>
-                  {severityFilter !== 'All' ? `SEV: ${severityFilter}` : 'SEVERITY ▾'}
-                </option>
-                {severityFilter !== 'All' && (
-                  <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
-                    ✕ Clear Filter (Show All)
-                  </option>
-                )}
-                <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                  ● SEV 1 URGENT
-                </option>
-                <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                  ● SEV 2 URGENT
-                </option>
-                {uniqueSeverities
-                  .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
-                  .map(sev => (
-                    <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
-                      {sev}
+                <span>{activeBucket === 'cases' ? 'CASE & SUBJECT' : 'ALERT & SUBJECT'}</span>
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <select
+                    aria-label="Filter by Severity"
+                    value={severityFilter}
+                    onChange={e => setSeverityFilter(e.target.value)}
+                    style={{
+                      background: severityFilter !== 'All' ? '#dc2626' : 'transparent',
+                      color: severityFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                      border: severityFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 4,
+                      padding: '2px 4px',
+                      fontSize: 8.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      textTransform: 'uppercase',
+                      outline: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={severityFilter !== 'All' ? `Filtered by: ${severityFilter} (Click to change)` : 'Filter by Severity'}
+                  >
+                    <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                      {severityFilter !== 'All' ? `SEV: ${severityFilter}` : 'SEVERITY ▾'}
                     </option>
-                  ))}
-              </select>
-            </div>
-            <span>PRODUCT</span>
-            <span>CATEGORY</span>
-            <span>ASSIGNED TO</span>
-            <span>STATUS</span>
-            <span>SITE / LOCATION</span>
-            <span>CREATED / MODIFIED</span>
-          </div>
+                    {severityFilter !== 'All' && (
+                      <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                        ✕ Clear Filter (Show All)
+                      </option>
+                    )}
+                    <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
+                      ● SEV 1 URGENT ({currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length})
+                    </option>
+                    <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
+                      ● SEV 2 URGENT ({currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length})
+                    </option>
+                    {uniqueSeverities
+                      .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
+                      .map(sev => {
+                        const count = currentBucketItems.filter(c => {
+                          const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
+                          const p2 = (c.Priority || '').trim().toLowerCase();
+                          const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
+                          const sfLower = sev.toLowerCase();
+                          return p1 === sfLower || p2 === sfLower || p3 === sfLower;
+                        }).length;
+                        return (
+                          <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
+                            {sev} ({count})
+                          </option>
+                        );
+                      })}
+                  </select>
+                </div>
+                <span>PRODUCT</span>
+                {activeBucket === 'cases' && <span>CATEGORY</span>}
+                <span>ASSIGNED TO</span>
+                <span>STATUS</span>
+                <span>SITE / LOCATION</span>
+                {activeBucket === 'closed' ? (
+                  <>
+                    <span>START TIME</span>
+                    <span>END TIME</span>
+                    <span>DURATION (MTTR)</span>
+                  </>
+                ) : activeBucket === 'alerts' ? (
+                  <span>START TIME</span>
+                ) : (
+                  <span>CREATED / MODIFIED</span>
+                )}
+              </div>
 
-          {/* Scrollable Rows Container (shows 5 most recent and others in scrollable) */}
-          <div
-            className="panel-scroll"
-            tabIndex={0}
-            aria-label="Salesforce tickets scrollable table"
-            style={{ maxHeight: 285, overflowY: 'auto' }}
-          >
-            {currentOrgTickets.length > 0 ? (
-              <div>
-                {currentOrgTickets.map(c => {
-                  const isDown = Boolean(c.Is_Site_100_Down__c);
-                  const stLower = (c.Status || '').toLowerCase();
-                  const isClosedTodayAlert = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved');
-                  const statusClass = isClosedTodayAlert
-                    ? 'status-resolved'
-                    : stLower.includes('new')
-                    ? 'status-new'
-                    : stLower.includes('progress')
-                    ? 'status-progress'
-                    : stLower.includes('investigat')
-                    ? 'status-investigating'
-                    : 'status-other';
+              {/* Scrollable Rows Container (shows 5 most recent and others in scrollable) */}
+              <div
+                className="panel-scroll"
+                tabIndex={0}
+                aria-label="Salesforce tickets scrollable table"
+                style={{ maxHeight: 285, overflowY: 'auto' }}
+              >
+                {currentOrgTickets.length > 0 ? (
+                  <div>
+                    {currentOrgTickets.map(c => {
+                      const isDown = Boolean(c.Is_Site_100_Down__c);
+                      const raw = c as Record<string, unknown>;
+                      const alertEndTime = getTicketEndTime(c) || (raw.ended_at as string) || (raw.ClosedDate as string) || c.ClosedDate;
+                      const stLower = (c.Status || '').toLowerCase();
+                      const isClosedTodayAlert = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved') || Boolean(alertEndTime);
+                      const statusClass = isClosedTodayAlert
+                        ? 'status-resolved'
+                        : stLower.includes('new')
+                        ? 'status-new'
+                        : stLower.includes('progress')
+                        ? 'status-progress'
+                        : stLower.includes('investigat')
+                        ? 'status-investigating'
+                        : 'status-other';
 
-                  const sevType = detectSeverity(c);
-                  const isSev1Urgent = sevType === 'sev1';
-                  const isSev2Urgent = sevType === 'sev2';
+                      const sevType = detectSeverity(c);
+                      const isSev1Urgent = sevType === 'sev1';
+                      const isSev2Urgent = sevType === 'sev2';
 
-                  const priorityClass = isSev1Urgent
-                    ? 'p-p1'
-                    : isSev2Urgent
-                    ? 'p-p2'
-                    : 'p-p3';
+                      const priorityClass = isSev1Urgent
+                        ? 'p-p1'
+                        : isSev2Urgent
+                        ? 'p-p2'
+                        : 'p-p3';
 
-                  const priorityDisplay = isSev1Urgent
-                    ? 'SEV 1 URGENT'
-                    : isSev2Urgent
-                    ? 'SEV 2 URGENT'
-                    : c.Highest_Severity__c || c.Priority || 'Severity 3';
+                      const priorityDisplay = isSev1Urgent
+                        ? 'SEV 1 URGENT'
+                        : isSev2Urgent
+                        ? 'SEV 2 URGENT'
+                        : c.Highest_Severity__c || c.Priority || 'Severity 3';
 
-                  const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
-                  const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
-                  const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
-                  const siteDisplay = String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
-                  const matchedSiteId = siteNameToId.get(siteDisplay.toLowerCase());
+                      const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
+                      const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
+                      const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
+                      
+                      // Primary site mapping using authoritative subject parser for alert tickets!
+                      const mappedSiteName = findBestSiteForCase(c, compiledSitesList);
+                      const siteDisplay = mappedSiteName || String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
+                      const matchedSiteId = siteNameToId.get(siteDisplay.toLowerCase()) || siteNameToId.get(normalizeCanonical(siteDisplay));
 
-                  const fromToday = isTicketFromToday(c);
-                  const dateVal = c.CreatedDate || c.LastModifiedDate;
+                      const fromToday = isTicketFromToday(c);
+                      const dateVal = c.CreatedDate || c.LastModifiedDate;
+                      const durationInfo = calculateAlertDuration(
+                        c.CreatedDate || (raw.created_at as string),
+                        alertEndTime,
+                        !isClosedTodayAlert
+                      );
 
-                  return (
-                    <div
-                      key={c.Id}
-                      className="sf-case-row"
-                      onClick={() => setSelectedCase(c)}
-                      title={`Click to view full ${isAlertCase(c) ? 'alert' : 'case'} details`}
-                    >
-                      {/* Case # and Subject */}
-                      <div className="case-subject-cell">
-                        <div className="case-number-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <a
-                            href={`https://greyorangeorg.my.salesforce.com/${c.Id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="case-number-tag"
-                            title={`Open ${isAlertCase(c) ? 'Alert' : 'Case'} ${c.CaseNumber} in Salesforce`}
-                            onClick={e => e.stopPropagation()}
-                          >
-                            {c.CaseNumber}
-                            <ExternalLink style={{ width: 10, height: 10 }} />
-                          </a>
-                          {isSev1Urgent && (
-                            <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
-                              SEV 1 URGENT
+                      return (
+                        <div
+                          key={c.Id}
+                          className="sf-case-row"
+                          style={
+                            activeBucket === 'alerts'
+                              ? { gridTemplateColumns: 'minmax(220px, 1.5fr) 95px 95px 135px 105px 135px 130px' }
+                              : activeBucket === 'closed'
+                              ? { gridTemplateColumns: 'minmax(200px, 1.4fr) 85px 85px 125px 95px 125px 115px 115px 100px' }
+                              : undefined
+                          }
+                          onClick={() => setSelectedCase(c)}
+                          title={`Click to view full ${isAlertCase(c) ? 'alert' : 'case'} details`}
+                        >
+                          {/* Case # and Subject */}
+                          <div className="case-subject-cell">
+                            <div className="case-number-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <a
+                                href={`https://greyorangeorg.my.salesforce.com/${c.Id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="case-number-tag"
+                                title={`Open ${isAlertCase(c) ? 'Alert' : 'Case'} ${c.CaseNumber} in Salesforce`}
+                                onClick={e => e.stopPropagation()}
+                              >
+                                {c.CaseNumber}
+                                <ExternalLink style={{ width: 10, height: 10 }} />
+                              </a>
+                              {isSev1Urgent && (
+                                <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
+                                  SEV 1 URGENT
+                                </span>
+                              )}
+                              {isSev2Urgent && (
+                                <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
+                                  SEV 2 URGENT
+                                </span>
+                              )}
+                              {fromToday && (
+                                <span className="case-today-badge">
+                                  Today
+                                </span>
+                              )}
+                            </div>
+                            <div className="case-subject-title">{c.Subject || 'No Subject Provided'}</div>
+                            {c.Description && (
+                              <div className="case-desc-preview">{c.Description}</div>
+                            )}
+                          </div>
+
+                          {/* Severity */}
+                          <div>
+                            <span className={`case-priority-badge ${priorityClass}`}>
+                              {priorityDisplay}
                             </span>
+                          </div>
+
+                          {/* Product Type */}
+                          <div>
+                            <span className="case-product-pill">
+                              {productDisplay}
+                            </span>
+                          </div>
+
+                          {/* Category - ONLY shown in Cases view, strictly omitted in Alerts views */}
+                          {activeBucket === 'cases' && (
+                            <div className="case-category-cell" title={categoryDisplay}>
+                              {categoryDisplay}
+                            </div>
                           )}
-                          {isSev2Urgent && (
-                            <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
-                              SEV 2 URGENT
+
+                          {/* Assigned To */}
+                          <div className="case-assignee-cell" title={assignedDisplay}>
+                            <User style={{ width: 11, height: 11 }} />
+                            <span>{assignedDisplay}</span>
+                          </div>
+
+                          {/* Status */}
+                          <div>
+                            <span
+                              className={`case-status-badge ${statusClass}`}
+                              style={activeBucket === 'closed' || isClosedTodayAlert ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
+                            >
+                              {activeBucket === 'closed' ? 'Closed' : activeBucket === 'alerts' ? 'Active Open' : isClosedTodayAlert ? 'Closed (Today)' : c.Status}
                             </span>
-                          )}
-                          {fromToday && (
-                            <span className="case-today-badge">
-                              Today
-                            </span>
+                          </div>
+
+                          {/* Site / Location (clickable to site workspace if found) */}
+                          <div className="case-site-tag" title={siteDisplay}>
+                            <MapPin style={{ width: 11, height: 11, flexShrink: 0 }} />
+                            {matchedSiteId ? (
+                              <Link
+                                to="/sites/$siteId"
+                                params={{ siteId: matchedSiteId }}
+                                preload="intent"
+                                onClick={e => e.stopPropagation()}
+                                style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
+                                title={`Go to ${siteDisplay} site workspace`}
+                              >
+                                {siteDisplay}
+                              </Link>
+                            ) : (
+                              <span>{siteDisplay}</span>
+                            )}
+                          </div>
+
+                          {/* Date Cells: Start Time in Open Alerts; Start, End Time & MTTR Duration in Closed Alerts; Created/Modified in Cases */}
+                          {activeBucket === 'alerts' ? (
+                            <div className="case-date-cell" style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>
+                              {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                            </div>
+                          ) : activeBucket === 'closed' ? (
+                            <>
+                              <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
+                                {formatPreciseTime(c.CreatedDate || (raw.created_at as string))}
+                              </div>
+                              <div className="case-date-cell" style={{ fontSize: 10, color: '#34d399', fontWeight: 600 }}>
+                                {alertEndTime ? formatPreciseTime(alertEndTime) : '—'}
+                              </div>
+                              <div>
+                                <span
+                                  style={{
+                                    fontFamily: 'var(--font-mono)',
+                                    fontSize: 10,
+                                    fontWeight: 600,
+                                    color: '#34d399',
+                                    background: 'rgba(16, 185, 129, 0.12)',
+                                    border: '1px solid rgba(16, 185, 129, 0.25)',
+                                    padding: '2px 6px',
+                                    borderRadius: 4,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 4,
+                                  }}
+                                >
+                                  <Clock style={{ width: 10, height: 10 }} />
+                                  {durationInfo.text}
+                                </span>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="case-date-cell">
+                              {fromToday ? (
+                                <span style={{ color: '#ffffff', fontWeight: 600 }}>
+                                  {dateVal ? new Date(dateVal).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Today'}
+                                </span>
+                              ) : dateVal ? (
+                                <span style={{ color: '#ffffff', fontWeight: 500 }}>
+                                  {new Date(dateVal).toLocaleDateString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </div>
                           )}
                         </div>
-                        <div className="case-subject-title">{c.Subject || 'No Subject Provided'}</div>
-                        {c.Description && (
-                          <div className="case-desc-preview">{c.Description}</div>
-                        )}
-                      </div>
-
-                      {/* Severity */}
-                      <div>
-                        <span className={`case-priority-badge ${priorityClass}`}>
-                          {priorityDisplay}
-                        </span>
-                      </div>
-
-                      {/* Product Type */}
-                      <div>
-                        <span className="case-product-pill">
-                          {productDisplay}
-                        </span>
-                      </div>
-
-                      {/* Category */}
-                      <div className="case-category-cell" title={categoryDisplay}>
-                        {categoryDisplay}
-                      </div>
-
-                      {/* Assigned To */}
-                      <div className="case-assignee-cell" title={assignedDisplay}>
-                        <User style={{ width: 11, height: 11 }} />
-                        <span>{assignedDisplay}</span>
-                      </div>
-
-                      {/* Status */}
-                      <div>
-                        <span
-                          className={`case-status-badge ${statusClass}`}
-                          style={isClosedTodayAlert ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
-                        >
-                          {isClosedTodayAlert ? 'Closed (Today)' : c.Status}
-                        </span>
-                      </div>
-
-                      {/* Site / Location (clickable to site workspace if found) */}
-                      <div className="case-site-tag" title={siteDisplay}>
-                        <MapPin style={{ width: 11, height: 11, flexShrink: 0 }} />
-                        {matchedSiteId ? (
-                          <Link
-                            to="/sites/$siteId"
-                            params={{ siteId: matchedSiteId }}
-                            preload="intent"
-                            onClick={e => e.stopPropagation()}
-                            style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
-                            title={`Go to ${siteDisplay} site workspace`}
-                          >
-                            {siteDisplay}
-                          </Link>
-                        ) : (
-                          <span>{siteDisplay}</span>
-                        )}
-                      </div>
-
-                      {/* Created / Modified Date */}
-                      <div className="case-date-cell">
-                        {fromToday ? (
-                          <span style={{ color: '#ffffff', fontWeight: 600 }}>
-                            {dateVal ? new Date(dateVal).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Today'}
-                          </span>
-                        ) : dateVal ? (
-                          <span style={{ color: '#ffffff', fontWeight: 500 }}>
-                            {new Date(dateVal).toLocaleDateString(undefined, {
-                              month: 'short',
-                              day: 'numeric',
-                            })}
-                          </span>
-                        ) : (
-                          '—'
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                      );
+                    })}
               </div>
             ) : (
               <div className="source-empty" style={{ padding: '24px 16px' }}>
                 <div className="empty-source-art cloud-art">
-                  {activeBucket === 'alerts' ? <Radio style={{ color: '#ef4444' }} /> : <Cloud />}
+                  {activeBucket === 'alerts' ? (
+                    <Radio style={{ color: '#ef4444' }} />
+                  ) : activeBucket === 'closed' ? (
+                    <CheckCircle2 style={{ color: '#22c55e' }} />
+                  ) : (
+                    <Cloud />
+                  )}
                   <span />
                   <span />
                 </div>
-                <h4 style={{ marginTop: 8, fontSize: 13, fontWeight: 600 }}>No {activeBucket} logged for today</h4>
+                <h4 style={{ marginTop: 8, fontSize: 13, fontWeight: 600 }}>
+                  No {activeBucket === 'cases' ? 'open cases' : activeBucket === 'alerts' ? 'open alerts' : 'closed alerts'} found
+                </h4>
                 <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '4px 0 0' }}>
-                  All monitored sites across Salesforce org are clear of {activeBucket} for the current day.
+                  All monitored sites across Salesforce org are clear of {activeBucket === 'cases' ? 'open cases' : activeBucket === 'alerts' ? 'open alerts' : 'closed alerts'}.
                 </p>
               </div>
             )}

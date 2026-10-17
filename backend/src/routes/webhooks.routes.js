@@ -74,21 +74,35 @@ router.post('/salesforce', async (req, res) => {
 
     const caseId = caseData.Id || caseData.case_id || caseData.id;
     const caseNumber = caseData.CaseNumber || caseData.case_number;
-    const status = caseData.Status || caseData.status || 'Updated';
+    const rawStatus = caseData.Status || caseData.status || 'Updated';
     const subject = caseData.Subject || caseData.subject;
     const siteName = caseData.Snow_Sitename__c || caseData.Site_Name_Customer_Input__c || caseData.Account_Name__c || caseData.site_name;
     const accountId = caseData.AccountId || caseData.account_id;
     const isDown = Boolean(caseData.Is_Site_100_Down__c);
+
+    const endTime =
+      caseData.End_Time__c ||
+      caseData.end_time ||
+      caseData.EndTime ||
+      caseData.EndTime__c ||
+      caseData.ClosedDate ||
+      caseData.closed_date ||
+      null;
+
+    const isClosed = Boolean(endTime) || ['closed', 'solved', 'resolved', 'complete'].some(p => String(rawStatus).toLowerCase().includes(p));
+    const finalStatus = isClosed ? 'Closed' : rawStatus;
 
     if (caseId) {
       const updatedCase = await CaseRepository.upsert({
         case_id: caseId,
         case_number: caseNumber || 'Pending',
         subject: subject || null,
-        status,
+        status: finalStatus,
         site_name: siteName,
         account_id: accountId,
         is_site_down: isDown,
+        closed_date: endTime ? new Date(endTime) : null,
+        end_time: endTime ? new Date(endTime) : null,
         last_modified_date: new Date(),
         raw_data: caseData,
       });

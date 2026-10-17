@@ -401,6 +401,7 @@ router.get('/:siteId/cases', async (req, res) => {
       totalOpenCases: result.totalOpenCases,
       cases: result.cases,
       alerts: result.alerts,
+      closed: result.closed || [],
     });
   } catch (error) {
     console.error('[Site Cases Error]', error);
