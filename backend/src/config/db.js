@@ -27,3 +27,5 @@ export async function connectDB() {
 export function isDbConnected() {
   return isConnected && mongoose.connection.readyState === 1;
 }
+
+

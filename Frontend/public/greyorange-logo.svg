@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <!-- GreyOrange Brand Orange Background with Smooth Rounded Corners -->
+  <rect width="100" height="100" rx="20" fill="#F58220"/>
+  <!-- Stylized 'g' Monogram -->
+  <path
+    fill="#FFFFFF"
+    fill-rule="evenodd"
+    d="M 48 20 L 66 20 A 5 5 0 0 1 66 30 L 63 30 A 21 21 0 1 1 48 20 Z M 48 30.5 A 10.5 10.5 0 1 0 48 51.5 A 10.5 10.5 0 1 0 48 30.5 Z"
+  />
+  <!-- Curved Smile Pill Stroke -->
+  <path
+    d="M 33 70 Q 48 77 63 70"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="8.5"
+    stroke-linecap="round"
+  />
+</svg>

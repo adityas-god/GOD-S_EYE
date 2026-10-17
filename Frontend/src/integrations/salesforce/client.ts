@@ -2063,3 +2063,21 @@ export const sfTriggerSheetSync = async (
   }
 };
 
+/**
+ * Resolves the real Assignee Name, eliminating 'GreyOrange Queue' or empty fallbacks.
+ * Returns the engineer's real name, or 'Unassigned' if not assigned to an individual.
+ */
+export const getAssigneeDisplayName = (c?: Partial<SFCase> | null): string => {
+  if (!c) return 'Unassigned';
+  const val = String(
+    c.Dev_Case_Assignee__c ||
+    c.Owner?.Name ||
+    (c as Record<string, any>).assignee ||
+    (c as Record<string, any>).assigned_to ||
+    ''
+  ).trim();
+  if (!val || /^greyorange(\s*queue)?$/i.test(val) || /^queue$/i.test(val)) {
+    return 'Unassigned';
+  }
+  return val;
+};

@@ -5,12 +5,58 @@ import {
   fetchLiveCasesOverview,
   getAlertAnalyticsForSite,
   fetchRedZoneSitesOverview,
+  clearRedZoneSiteCache,
   isLiveOpenCase,
   hasTicketEndTime,
   getTicketEndTime,
 } from '../services/salesforce.service.js';
+import {
+  getSheetConfig,
+  syncRedZoneSheet,
+  updateSheetUrlAndSync,
+  syncFromCsvText,
+} from '../services/sheets.service.js';
 
 const router = Router();
+
+/**
+ * GET /api/cases/red-zone/sheet-config
+ * Return Cloud Sheet sync status, current URL, and synced Red Zone sites
+ */
+router.get('/red-zone/sheet-config', (req, res) => {
+  try {
+    const config = getSheetConfig();
+    res.json({ success: true, ...config });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * POST /api/cases/red-zone/sheet-sync
+ * Trigger cloud sheet sync, update the Google Sheet / OneDrive URL, or paste direct CSV/TSV data
+ */
+router.post('/red-zone/sheet-sync', async (req, res) => {
+  try {
+    const { url, csvData } = req.body || {};
+    let syncResult;
+    if (csvData && typeof csvData === 'string' && csvData.trim()) {
+      syncResult = await syncFromCsvText(csvData.trim());
+    } else if (url && typeof url === 'string' && url.trim()) {
+      syncResult = await updateSheetUrlAndSync(url.trim());
+    } else {
+      syncResult = await syncRedZoneSheet({ force: true });
+    }
+    clearRedZoneSiteCache();
+    res.json({
+      success: syncResult.success,
+      ...syncResult,
+      sheetConfig: getSheetConfig(),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 /**
  * GET /api/cases/red-zone

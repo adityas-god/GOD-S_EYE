@@ -10,7 +10,19 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 dotenv.config({ path: path.resolve(__dirname, '../Frontend/.env') });
 
+import fs from 'fs';
 import { connectDB, isDbConnected } from './src/config/db.js';
+
+// Auto-copy user uploaded GreyOrange logo to Frontend public folder
+try {
+  const logoSource = 'C:\\Users\\aditya.s.ctr\\.gemini\\antigravity-ide\\brain\\cf935505-4d18-4c58-8714-38813cace52e\\.user_uploaded\\media_1792269238564.jpg';
+  const logoDestDir = path.resolve(__dirname, '../Frontend/public');
+  if (fs.existsSync(logoSource)) {
+    if (!fs.existsSync(logoDestDir)) fs.mkdirSync(logoDestDir, { recursive: true });
+    fs.copyFileSync(logoSource, path.join(logoDestDir, 'greyorange-logo.jpg'));
+    fs.copyFileSync(logoSource, path.join(logoDestDir, 'greyorange-logo.png'));
+  }
+} catch {}
 import sitesRouter from './src/routes/sites.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';

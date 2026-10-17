@@ -46,6 +46,7 @@ import {
   isClosedAlert,
   calculateAlertDuration,
   type SFCase,
+  getAssigneeDisplayName,
 } from '@/integrations/salesforce/client';
 import { SiteRunbookPanel, type RunbookTabKey } from '@/components/site-runbook-panel';
 import { fetchSiteRunbook, defaultRunbook, type SiteRunbook } from '@/lib/runbook';
@@ -136,6 +137,7 @@ function SiteDetail() {
   const [severityFilter, setSeverityFilter] = useState('All');
   const [productFilter, setProductFilter] = useState('All');
   const [categoryFilter, setCategoryFilter] = useState('All');
+  const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed' | 'analytics'>('cases');
   const [analyticsRange, setAnalyticsRange] = useState<TimeRangeKey>('7d');
@@ -407,7 +409,19 @@ function SiteDetail() {
     return Array.from(set).sort();
   }, [activeItems]);
 
-  // Filter items by search, status, severity, product, and category
+  const uniqueAssignees = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of activeItems) {
+      set.add(getAssigneeDisplayName(c));
+    }
+    return Array.from(set).sort((a, b) => {
+      if (a === 'Unassigned') return 1;
+      if (b === 'Unassigned') return -1;
+      return a.localeCompare(b);
+    });
+  }, [activeItems]);
+
+  // Filter items by search, status, severity, product, category, and assignee
   const filteredCases = useMemo(() => {
     return activeItems.filter(c => {
       const q = caseSearch.toLowerCase().trim();
@@ -444,9 +458,12 @@ function SiteDetail() {
       const catStr = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
       const matchCategory = activeBucket !== 'cases' || categoryFilter === 'All' || catStr.toLowerCase() === categoryFilter.toLowerCase();
 
-      return matchSearch && matchStatus && matchSeverity && matchProduct && matchCategory;
+      const assigneeStr = getAssigneeDisplayName(c);
+      const matchAssignee = assigneeFilter === 'All' || assigneeStr.toLowerCase() === assigneeFilter.toLowerCase();
+
+      return matchSearch && matchStatus && matchSeverity && matchProduct && matchCategory && matchAssignee;
     });
-  }, [activeItems, caseSearch, statusFilter, severityFilter, productFilter, categoryFilter, siteProductLines, activeBucket]);
+  }, [activeItems, caseSearch, statusFilter, severityFilter, productFilter, categoryFilter, assigneeFilter, siteProductLines, activeBucket]);
 
   if (!site) {
     return (
@@ -750,6 +767,7 @@ function SiteDetail() {
                   setSeverityFilter('All');
                   setProductFilter('All');
                   setCategoryFilter('All');
+                  setAssigneeFilter('All');
                 }}
                 style={{
                   display: 'inline-flex',
@@ -808,6 +826,7 @@ function SiteDetail() {
                   setSeverityFilter('All');
                   setProductFilter('All');
                   setCategoryFilter('All');
+                  setAssigneeFilter('All');
                 }}
                 style={{
                   display: 'inline-flex',
@@ -866,6 +885,7 @@ function SiteDetail() {
                   setSeverityFilter('All');
                   setProductFilter('All');
                   setCategoryFilter('All');
+                  setAssigneeFilter('All');
                 }}
                 style={{
                   display: 'inline-flex',
@@ -924,6 +944,7 @@ function SiteDetail() {
                   setSeverityFilter('All');
                   setProductFilter('All');
                   setCategoryFilter('All');
+                  setAssigneeFilter('All');
                 }}
                 style={{
                   display: 'inline-flex',
@@ -975,13 +996,14 @@ function SiteDetail() {
             </div>
 
             {/* Reset All Filters Button */}
-            {activeBucket !== 'analytics' && (severityFilter !== 'All' || productFilter !== 'All' || categoryFilter !== 'All' || statusFilter !== 'All' || caseSearch.trim().length > 0) && (
+            {activeBucket !== 'analytics' && (severityFilter !== 'All' || productFilter !== 'All' || categoryFilter !== 'All' || assigneeFilter !== 'All' || statusFilter !== 'All' || caseSearch.trim().length > 0) && (
               <button
                 type="button"
                 onClick={() => {
                   setSeverityFilter('All');
                   setProductFilter('All');
                   setCategoryFilter('All');
+                  setAssigneeFilter('All');
                   setStatusFilter('All');
                   setCaseSearch('');
                 }}
@@ -1177,7 +1199,44 @@ function SiteDetail() {
                   </div>
                 )}
 
-                <span>ASSIGNED TO</span>
+                {/* Assigned To Filter Header */}
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <select
+                    aria-label="Filter by Assigned To"
+                    value={assigneeFilter}
+                    onChange={e => setAssigneeFilter(e.target.value)}
+                    style={{
+                      background: assigneeFilter !== 'All' ? '#dc2626' : 'transparent',
+                      color: assigneeFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                      border: assigneeFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 4,
+                      padding: '2px 3px',
+                      fontSize: 8,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      textTransform: 'uppercase',
+                      outline: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={assigneeFilter !== 'All' ? `Filtered by Assignee: ${assigneeFilter} (Click to change or reset)` : 'Click to filter by Assignee'}
+                  >
+                    <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                      {assigneeFilter !== 'All' ? `ASSIGNED: ${assigneeFilter}` : 'ASSIGNED TO ▾'}
+                    </option>
+                    {assigneeFilter !== 'All' && (
+                      <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                        ✕ Clear Filter (Show All)
+                      </option>
+                    )}
+                    {uniqueAssignees.map(a => (
+                      <option key={a} value={a} style={{ background: '#18191e', color: '#fff' }}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                </div>
 
                 {/* Status Filter Header */}
                 <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
@@ -1291,7 +1350,7 @@ function SiteDetail() {
 
                   const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType);
                   const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
-                  const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
+                  const assignedDisplay = getAssigneeDisplayName(c);
 
                   return (
                     <div
@@ -1791,7 +1850,7 @@ function SiteDetail() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Assigned To</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {String(selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue')}
+                  {getAssigneeDisplayName(selectedCase)}
                 </p>
               </div>
               <div>

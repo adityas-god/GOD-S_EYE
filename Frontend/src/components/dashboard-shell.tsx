@@ -5,10 +5,8 @@ import {
   PlugZap,
   ArrowUpRight,
   Bell,
-  ChevronDown,
   Radio,
   Cloud,
-  LogOut,
   Shield,
   ShieldAlert,
   CircleHelp,
@@ -25,8 +23,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-import { useAuth } from './auth-context';
-import { ConnectionsDialog, SignInDialog } from './dashboard-dialogs';
+import { ConnectionsDialog } from './dashboard-dialogs';
 import { useQuery } from '@tanstack/react-query';
 import { sitesQueryOptions } from '@/lib/sites';
 import { sfFetchRedZoneSites } from '@/integrations/salesforce/client';
@@ -61,10 +58,8 @@ export function DashboardShell({
   });
   const redZoneCount = redZoneOverview?.totalRedZoneSites ?? 0;
 
-  const [login, setLogin] = useState(false);
   const [connections, setConnections] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { user, admin, signOut } = useAuth();
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof window !== 'undefined') {
@@ -349,29 +344,36 @@ export function DashboardShell({
               <Bell />
             </Button>
             <span className="top-divider" />
-            <Button
-              variant="ghost"
-              className="account-button"
-              onClick={() => setLogin(true)}
+            <div
+              className="greyorange-logo-wrap"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title="GreyOrange"
             >
-              <span className="avatar">{user ? user.email?.slice(0, 2).toUpperCase() : 'OP'}</span>
-              <span>
-                {user ? (admin ? 'Administrator' : 'Viewer') : 'Sign in'}
-                <small>{user ? 'Operations workspace' : 'Admin access'}</small>
-              </span>
-              <ChevronDown />
-            </Button>
-            {user && (
-              <Button
-                variant="ghost"
-                size="icon"
-                title="Sign out"
-                aria-label="Sign out"
-                onClick={signOut}
-              >
-                <LogOut />
-              </Button>
-            )}
+              <img
+                src="/greyorange-logo.svg"
+                alt="GreyOrange"
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 9,
+                  border: '1.5px solid rgba(245, 130, 32, 0.45)',
+                  boxShadow: '0 1px 4px rgba(0, 0, 0, 0.25)',
+                  display: 'block',
+                  objectFit: 'cover',
+                  userSelect: 'none',
+                }}
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  if (target.src.endsWith('.svg')) {
+                    target.src = '/greyorange-logo.jpg';
+                  }
+                }}
+              />
+            </div>
           </div>
         </header>
         <main>{children}</main>
@@ -387,7 +389,6 @@ export function DashboardShell({
           </span>
         </footer>
       </div>
-      <SignInDialog open={login} onOpenChange={setLogin} />
       <ConnectionsDialog open={connections} onOpenChange={setConnections} />
     </div>
   );

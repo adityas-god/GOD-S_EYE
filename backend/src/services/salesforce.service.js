@@ -1457,7 +1457,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
@@ -1467,7 +1467,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
       'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
@@ -1475,7 +1475,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const safeSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c',
+      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed'",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
@@ -1483,7 +1483,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const ultraSafeSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Snow_Sitename__c',
+      'AccountId, Account_Name__c, Snow_Sitename__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed'",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
@@ -1530,7 +1530,9 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       const prod = normProd || inferProductLine(
         c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
       );
-      const assignee = c.Owner?.Name || 'GreyOrange Queue';
+      const rawAssignee = (c.Dev_Case_Assignee__c || c.Owner?.Name || '').trim();
+      const isGreyOrangeQueue = !rawAssignee || /^greyorange(\s*queue)?$/i.test(rawAssignee);
+      const assignee = isGreyOrangeQueue ? 'Unassigned' : rawAssignee;
       const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
       const endTime = getTicketEndTime(c);
       const isClosedByEndTime = Boolean(endTime);
@@ -1569,6 +1571,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         product_line: normProd || prod,
         Product_Line: normProd || prod,
         Dev_Case_Assignee__c: assignee,
+        assignee: assignee,
+        assigned_to: assignee,
+        Owner: c.Owner || { Name: assignee },
+        owner: c.Owner || { Name: assignee },
         Description: desc,
         description: desc,
         AccountId: c.AccountId || null,
@@ -1736,7 +1742,17 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
       Product_Type__c: normalizeProductType(c.Product_Type__c) || c.product_line || 'RMS',
       Parent_Product_Type__c: normalizeProductType(c.Parent_Product_Type__c) || null,
       product_line: normalizeProductType(c.Product_Type__c) || c.product_line || 'RMS',
-      Dev_Case_Assignee__c: c.Dev_Case_Assignee__c || 'GreyOrange Queue',
+      Dev_Case_Assignee__c: (c.Dev_Case_Assignee__c && !/^greyorange(\s*queue)?$/i.test(String(c.Dev_Case_Assignee__c).trim()))
+        ? String(c.Dev_Case_Assignee__c).trim()
+        : (c.Owner?.Name && !/^greyorange(\s*queue)?$/i.test(String(c.Owner.Name).trim()) ? String(c.Owner.Name).trim() : 'Unassigned'),
+      assignee: (c.Dev_Case_Assignee__c && !/^greyorange(\s*queue)?$/i.test(String(c.Dev_Case_Assignee__c).trim()))
+        ? String(c.Dev_Case_Assignee__c).trim()
+        : (c.Owner?.Name && !/^greyorange(\s*queue)?$/i.test(String(c.Owner.Name).trim()) ? String(c.Owner.Name).trim() : 'Unassigned'),
+      assigned_to: (c.Dev_Case_Assignee__c && !/^greyorange(\s*queue)?$/i.test(String(c.Dev_Case_Assignee__c).trim()))
+        ? String(c.Dev_Case_Assignee__c).trim()
+        : (c.Owner?.Name && !/^greyorange(\s*queue)?$/i.test(String(c.Owner.Name).trim()) ? String(c.Owner.Name).trim() : 'Unassigned'),
+      Owner: c.Owner || { Name: (c.Dev_Case_Assignee__c && !/^greyorange(\s*queue)?$/i.test(String(c.Dev_Case_Assignee__c).trim())) ? String(c.Dev_Case_Assignee__c).trim() : 'Unassigned' },
+      owner: c.Owner || { Name: (c.Dev_Case_Assignee__c && !/^greyorange(\s*queue)?$/i.test(String(c.Dev_Case_Assignee__c).trim())) ? String(c.Dev_Case_Assignee__c).trim() : 'Unassigned' },
       Description: c.Description || null,
       description: c.Description || null,
       AccountId: c.AccountId || null,

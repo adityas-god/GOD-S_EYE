@@ -53,6 +53,7 @@ import {
   KNOWN_SITE_ALIASES,
   normalizeCanonical,
   type SiteCaseStat,
+  getAssigneeDisplayName,
 } from '@/integrations/salesforce/client';
 import { toast } from 'sonner';
 
@@ -110,6 +111,10 @@ function Index() {
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [ticketsCollapsed, setTicketsCollapsed] = useState(false);
   const [severityFilter, setSeverityFilter] = useState('All');
+  const [productFilter, setProductFilter] = useState('All');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [assigneeFilter, setAssigneeFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
 
   // Fetch live cases stats across the entire org (excludes alerts & solved/on-hold)
   const {
@@ -455,22 +460,89 @@ function Index() {
     return map;
   }, [uniqueSeverities, currentBucketItems]);
 
-  // Filter tickets with optional severity/priority filter
+  const uniqueProducts = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of currentBucketItems) {
+      const p = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
+      if (p && !['null', 'undefined', 'all', 'none', 'n/a'].includes(p.toLowerCase())) {
+        set.add(p);
+      }
+    }
+    return Array.from(set).sort();
+  }, [currentBucketItems]);
+
+  const uniqueCategories = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of currentBucketItems) {
+      const cat = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
+      if (cat && !['null', 'undefined', 'all', 'none', 'n/a'].includes(cat.toLowerCase())) {
+        set.add(cat);
+      }
+    }
+    return Array.from(set).sort();
+  }, [currentBucketItems]);
+
+  const uniqueAssignees = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of currentBucketItems) {
+      set.add(getAssigneeDisplayName(c));
+    }
+    return Array.from(set).sort((a, b) => {
+      if (a === 'Unassigned') return 1;
+      if (b === 'Unassigned') return -1;
+      return a.localeCompare(b);
+    });
+  }, [currentBucketItems]);
+
+  const uniqueStatuses = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of currentBucketItems) {
+      const s = String(c.Status || '').trim();
+      if (s) set.add(s);
+    }
+    return Array.from(set).sort();
+  }, [currentBucketItems]);
+
+  // Filter tickets with severity, product, category, assignee, and status filters
   const currentOrgTickets: SFCase[] = useMemo(() => {
     const filtered = currentBucketItems.filter(c => {
+      // 1. Severity filter
       if (severityFilter === 'SEV 1 URGENT') {
-        return !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1';
-      }
-      if (severityFilter === 'SEV 2 URGENT') {
-        return !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2';
-      }
-      if (severityFilter !== 'All') {
+        if (isImTicket(c) || isDirTicket(c) || detectSeverity(c) !== 'sev1') return false;
+      } else if (severityFilter === 'SEV 2 URGENT') {
+        if (isImTicket(c) || isDirTicket(c) || detectSeverity(c) !== 'sev2') return false;
+      } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
         const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
         const sfLower = severityFilter.toLowerCase();
-        return p1 === sfLower || p2 === sfLower || p3 === sfLower;
+        if (p1 !== sfLower && p2 !== sfLower && p3 !== sfLower) return false;
       }
+
+      // 2. Product filter
+      if (productFilter !== 'All') {
+        const prod = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS').trim().toLowerCase();
+        if (prod !== productFilter.toLowerCase()) return false;
+      }
+
+      // 3. Category filter (only applicable for cases view)
+      if (categoryFilter !== 'All' && activeBucket === 'cases') {
+        const cat = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim().toLowerCase();
+        if (cat !== categoryFilter.toLowerCase()) return false;
+      }
+
+      // 4. Assignee filter
+      if (assigneeFilter !== 'All') {
+        const assignee = getAssigneeDisplayName(c);
+        if (assignee.toLowerCase() !== assigneeFilter.toLowerCase()) return false;
+      }
+
+      // 5. Status filter
+      if (statusFilter !== 'All') {
+        const st = String(c.Status || '').trim().toLowerCase();
+        if (st !== statusFilter.toLowerCase()) return false;
+      }
+
       return true;
     });
 
@@ -479,7 +551,7 @@ function Index() {
       const timeB = b.CreatedDate || b.LastModifiedDate ? new Date(b.CreatedDate || b.LastModifiedDate || '').getTime() : 0;
       return timeB - timeA;
     });
-  }, [currentBucketItems, severityFilter]);
+  }, [currentBucketItems, severityFilter, productFilter, categoryFilter, assigneeFilter, statusFilter, activeBucket]);
 
   const formatPreciseTime = (isoString?: string | null): string => {
     if (!isoString) return '—';
@@ -534,7 +606,7 @@ function Index() {
 
       const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
       const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
-      const assignedDisplay = String(c.Dev_Case_Assignee__c || c.Owner?.Name || 'GreyOrange Queue');
+      const assignedDisplay = getAssigneeDisplayName(c);
       
       const cachedSite = c?.Id ? ticketSiteMap.get(c.Id) : undefined;
       const siteDisplay = cachedSite?.siteDisplay || findBestSiteForCase(c, compiledSitesList) || String(c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || 'GreyOrange Org');
@@ -920,6 +992,10 @@ function Index() {
                 onClick={() => {
                   setActiveBucket('cases');
                   setSeverityFilter('All');
+                  setProductFilter('All');
+                  setCategoryFilter('All');
+                  setAssigneeFilter('All');
+                  setStatusFilter('All');
                 }}
                 title="Live Open Cases"
               >
@@ -936,6 +1012,10 @@ function Index() {
                 onClick={() => {
                   setActiveBucket('alerts');
                   setSeverityFilter('All');
+                  setProductFilter('All');
+                  setCategoryFilter('All');
+                  setAssigneeFilter('All');
+                  setStatusFilter('All');
                 }}
                 title="Live Open Alerts"
               >
@@ -952,6 +1032,10 @@ function Index() {
                 onClick={() => {
                   setActiveBucket('closed');
                   setSeverityFilter('All');
+                  setProductFilter('All');
+                  setCategoryFilter('All');
+                  setAssigneeFilter('All');
+                  setStatusFilter('All');
                 }}
                 title="Closed Alerts"
               >
@@ -963,10 +1047,16 @@ function Index() {
               </button>
             </div>
 
-            {severityFilter !== 'All' && (
+            {(severityFilter !== 'All' || productFilter !== 'All' || categoryFilter !== 'All' || assigneeFilter !== 'All' || statusFilter !== 'All') && (
               <button
                 type="button"
-                onClick={() => setSeverityFilter('All')}
+                onClick={() => {
+                  setSeverityFilter('All');
+                  setProductFilter('All');
+                  setCategoryFilter('All');
+                  setAssigneeFilter('All');
+                  setStatusFilter('All');
+                }}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
@@ -981,10 +1071,10 @@ function Index() {
                   cursor: 'pointer',
                   marginLeft: 8,
                 }}
-                title="Reset active severity filter"
+                title="Reset active filters"
               >
                 <X style={{ width: 11, height: 11 }} />
-                <span>Reset filter</span>
+                <span>Reset filters</span>
               </button>
             )}
 
@@ -1024,6 +1114,8 @@ function Index() {
                 }}
               >
                 <span>{activeBucket === 'cases' ? 'CASE & SUBJECT' : 'ALERT & SUBJECT'}</span>
+                
+                {/* Severity Filter Header */}
                 <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
                   <select
                     aria-label="Filter by Severity"
@@ -1072,10 +1164,165 @@ function Index() {
                       })}
                   </select>
                 </div>
-                <span>PRODUCT</span>
-                {activeBucket === 'cases' && <span>CATEGORY</span>}
-                <span>ASSIGNED TO</span>
-                <span>STATUS</span>
+
+                {/* Product Filter Header */}
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <select
+                    aria-label="Filter by Product"
+                    value={productFilter}
+                    onChange={e => setProductFilter(e.target.value)}
+                    style={{
+                      background: productFilter !== 'All' ? '#dc2626' : 'transparent',
+                      color: productFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                      border: productFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 4,
+                      padding: '2px 4px',
+                      fontSize: 8.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      textTransform: 'uppercase',
+                      outline: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={productFilter !== 'All' ? `Filtered by Product: ${productFilter} (Click to change)` : 'Filter by Product'}
+                  >
+                    <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                      {productFilter !== 'All' ? `PROD: ${productFilter}` : 'PRODUCT ▾'}
+                    </option>
+                    {productFilter !== 'All' && (
+                      <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                        ✕ Clear Filter (Show All)
+                      </option>
+                    )}
+                    {uniqueProducts.map(prod => (
+                      <option key={prod} value={prod} style={{ background: '#18191e', color: '#fff' }}>
+                        {prod}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Category Filter Header - ONLY shown in Cases view */}
+                {activeBucket === 'cases' && (
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <select
+                      aria-label="Filter by Category"
+                      value={categoryFilter}
+                      onChange={e => setCategoryFilter(e.target.value)}
+                      style={{
+                        background: categoryFilter !== 'All' ? '#dc2626' : 'transparent',
+                        color: categoryFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                        border: categoryFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '2px 4px',
+                        fontSize: 8.5,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={categoryFilter !== 'All' ? `Filtered by Category: ${categoryFilter} (Click to change)` : 'Filter by Category'}
+                    >
+                      <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                        {categoryFilter !== 'All' ? `CAT: ${categoryFilter}` : 'CATEGORY ▾'}
+                      </option>
+                      {categoryFilter !== 'All' && (
+                        <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                          ✕ Clear Filter (Show All)
+                        </option>
+                      )}
+                      {uniqueCategories.map(cat => (
+                        <option key={cat} value={cat} style={{ background: '#18191e', color: '#fff' }}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Assigned To Filter Header */}
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <select
+                    aria-label="Filter by Assigned To"
+                    value={assigneeFilter}
+                    onChange={e => setAssigneeFilter(e.target.value)}
+                    style={{
+                      background: assigneeFilter !== 'All' ? '#dc2626' : 'transparent',
+                      color: assigneeFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                      border: assigneeFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 4,
+                      padding: '2px 4px',
+                      fontSize: 8.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      textTransform: 'uppercase',
+                      outline: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={assigneeFilter !== 'All' ? `Filtered by Assignee: ${assigneeFilter} (Click to change)` : 'Filter by Assignee'}
+                  >
+                    <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                      {assigneeFilter !== 'All' ? `ASSIGNED: ${assigneeFilter}` : 'ASSIGNED TO ▾'}
+                    </option>
+                    {assigneeFilter !== 'All' && (
+                      <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                        ✕ Clear Filter (Show All)
+                      </option>
+                    )}
+                    {uniqueAssignees.map(a => (
+                      <option key={a} value={a} style={{ background: '#18191e', color: '#fff' }}>
+                        {a}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Status Filter Header */}
+                <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                  <select
+                    aria-label="Filter by Status"
+                    value={statusFilter}
+                    onChange={e => setStatusFilter(e.target.value)}
+                    style={{
+                      background: statusFilter !== 'All' ? '#dc2626' : 'transparent',
+                      color: statusFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                      border: statusFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: 4,
+                      padding: '2px 4px',
+                      fontSize: 8.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      width: '100%',
+                      textTransform: 'uppercase',
+                      outline: 'none',
+                      transition: 'all 0.15s ease',
+                    }}
+                    title={statusFilter !== 'All' ? `Filtered by Status: ${statusFilter} (Click to change)` : 'Filter by Status'}
+                  >
+                    <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                      {statusFilter !== 'All' ? `STATUS: ${statusFilter}` : 'STATUS ▾'}
+                    </option>
+                    {statusFilter !== 'All' && (
+                      <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                        ✕ Clear Filter (Show All)
+                      </option>
+                    )}
+                    {uniqueStatuses.map(st => (
+                      <option key={st} value={st} style={{ background: '#18191e', color: '#fff' }}>
+                        {st}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <span>SITE / LOCATION</span>
                 {activeBucket === 'closed' ? (
                   <>
@@ -1532,7 +1779,7 @@ function Index() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Assigned To</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {String(selectedCase.Dev_Case_Assignee__c || selectedCase.Owner?.Name || 'GreyOrange Queue')}
+                  {getAssigneeDisplayName(selectedCase)}
                 </p>
               </div>
               <div>
