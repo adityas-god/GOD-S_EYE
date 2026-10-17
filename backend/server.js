@@ -1,4 +1,4 @@
-// God's Eye Backend Server - Live Salesforce & Site Management [reload 2]
+// God's Eye Backend Server - Live Salesforce & Site Management [reload 24]
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -15,7 +15,7 @@ import sitesRouter from './src/routes/sites.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
 
-import { getSfConfig, getSalesforceToken, getLastSalesforceError } from './src/services/salesforce.service.js';
+import { getSfConfig, getSalesforceToken, getLastSalesforceError, fetchRedZoneSitesOverview } from './src/services/salesforce.service.js';
 
 // Process Safety Handlers - prevent container crashes from uncaught errors or unhandled promise rejections
 process.on('uncaughtException', (err) => {
@@ -123,9 +123,16 @@ async function startServer() {
     console.log(`  Sites API:    http://localhost:${PORT}/api/sites`);
     console.log(`  Webhooks API: http://localhost:${PORT}/api/webhooks/salesforce`);
     console.log(`=======================================================`);
+
+    // Pre-warm Red Zone telemetry cache asynchronously so initial user clicks respond in < 5ms
+    setTimeout(() => {
+      fetchRedZoneSitesOverview().catch(err => {
+        console.warn('[Startup] Red Zone cache pre-warm notice:', err.message);
+      });
+    }, 2000);
   });
 }
 
 startServer();
-// Reload trigger: 2026-10-17T04:08:00
+// Reload trigger: 2026-10-17T06:55:00
 

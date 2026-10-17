@@ -33,10 +33,6 @@ router.get('/red-zone', async (req, res) => {
   }
 });
 
-
-
-
-
 /**
  * GET /api/cases/alerts/analytics
  * Get historical alert metrics, bar/line graph buckets, MTTR, auto-resolve and breach statistics
