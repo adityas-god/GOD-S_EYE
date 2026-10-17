@@ -542,20 +542,23 @@ function RedZonePage() {
       Math.round((totalDowntimeMs / (3600 * 1000)) * 10) / 10
     );
 
+    const sev1UrgentCases = qualifyingSev12.filter(i => i.severity === 'sev1');
+    const sev2UrgentCases = qualifyingSev12.filter(i => i.severity === 'sev2');
+
     let longestOutageIncident: (RedZoneQualifyingIncident & { durationHours: number }) | null = null;
     let maxDuration = 0;
+    let sumResolvedHours = 0;
     for (const inc of outageIncidents) {
+      sumResolvedHours += (inc.durationHours || 0);
       if (inc.durationHours > maxDuration) {
         maxDuration = inc.durationHours;
         longestOutageIncident = inc;
       }
     }
 
-    // Availability estimate over operating baseline (baselineHours operating hours)
-    // Formula: (baselineHours - totalDowntimeHours) / baselineHours * 100%
-    const operationalAvailabilityPct = totalDowntimeHours >= baselineHours
-      ? 0
-      : Math.max(0, Math.min(100, Math.round(((baselineHours - totalDowntimeHours) / baselineHours) * 1000) / 10));
+    const avgResolutionHours = outageIncidents.length > 0
+      ? Math.round((sumResolvedHours / outageIncidents.length) * 10) / 10
+      : 0;
 
     // Subsystem categorization
     const catCounts = {
@@ -584,14 +587,15 @@ function RedZonePage() {
       totalDowntimeHours7d: totalDowntimeHours,
       longestOutageIncident,
       longestOutageIncident7d: longestOutageIncident,
-      operationalAvailabilityPct,
-      operationalAvailabilityPct7d: operationalAvailabilityPct,
       catCounts,
       dominantCategory,
       mtbfDeficitPct,
       failureCadenceHours,
       qualifyingSev12Count: qualifyingSev12.length,
       qualifying7dCount: qualifyingSev12.length,
+      sev1UrgentCount: sev1UrgentCases.length,
+      sev2UrgentCount: sev2UrgentCases.length,
+      avgResolutionHours,
       outageTicketsCount: outageIncidents.length,
     };
   }, [currentSite, timeframe]);
@@ -876,23 +880,23 @@ function RedZonePage() {
                 </div>
               </div>
 
-              {/* Metric 3: Cumulative Downtime (Selected Timeframe, Sev-1 & Sev-2 with End Time) */}
+              {/* Metric 3: Sev 1 & Sev 2 Urgent Cases Count */}
               <div className="metric">
                 <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                  <Timer />
-                  Cumulative Outage ({TIMEFRAME_CONFIG[timeframe].label})
+                  <AlertCircle />
+                  Sev-1 &amp; Sev-2 Urgent Cases ({TIMEFRAME_CONFIG[timeframe].label})
                 </span>
                 <div>
                   <strong>
-                    {managementInsights?.totalDowntimeHours ?? 0} hrs
+                    {managementInsights?.qualifyingSev12Count ?? 0}
                   </strong>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>
-                    {managementInsights?.operationalAvailabilityPct ?? 100}% est. availability
+                    {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2 Urgent
                   </span>
                 </div>
                 <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                  <span className="source-dot" />
-                  Peak single: {managementInsights?.longestOutageIncident ? `${managementInsights.longestOutageIncident.durationHours}h` : 'None'}
+                  <span className="source-dot" style={{ background: (managementInsights?.qualifyingSev12Count ?? 0) > 0 ? 'var(--primary)' : 'var(--muted-foreground)' }} />
+                  {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2 Urgent recorded
                 </div>
               </div>
 
