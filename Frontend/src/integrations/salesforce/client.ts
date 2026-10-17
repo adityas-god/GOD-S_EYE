@@ -136,26 +136,46 @@ export function isAlertCase(c: SFCase): boolean {
     return true;
   }
 
-  // 1. Explicit Type or Category is Alert
   const raw = c as Record<string, unknown>;
   const typeStr = String(c.Type || raw.type || '').trim().toLowerCase();
   const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // 1. Service Requests are customer/internal service requests, NEVER automated alerts:
+  // User requirement: "its Service requet and it is in alert queue"
+  const isServiceRequest =
+    typeStr.includes('request') ||
+    typeStr.includes('service') ||
+    catStr.includes('request') ||
+    catStr.includes('service') ||
+    typeStr === 'sr' ||
+    catStr === 'sr' ||
+    /^go\s+alert:/i.test(sub) ||
+    /^(\[?sr\]?|service\s*request)/i.test(sub);
+
+  if (isServiceRequest) {
+    return false;
+  }
+
+  // 2. Explicit Type or Category is Alert
   if (typeStr === 'alert' || catStr === 'alert') return true;
+
+  if (!sub) return false;
 
   // If Type or Category is explicitly Incident, Problem, or Support, require strong automated alert indicators in Subject
   const isExplicitNormalCase =
     typeStr.includes('incident') ||
     typeStr.includes('support') ||
     typeStr.includes('problem') ||
+    typeStr.includes('query') ||
     catStr.includes('incident') ||
-    catStr.includes('support');
+    catStr.includes('support') ||
+    catStr.includes('problem') ||
+    catStr.includes('query');
 
-  const sub = String(c.Subject || raw.subject || '').trim();
-  if (!sub) return false;
-
-  // 2. Strong Automated Alert Subject Signatures:
-  // Specific alert prefixes, runbook/dashboard indicators (avoids false-matching generic words like "System Alert Manager")
-  if (/(?:\[alert\]|\[opsgenie\]|\balert:|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
+  // 3. Strong Automated Alert Subject Signatures:
+  // Specific alert prefixes, runbook/dashboard indicators (avoids false-matching generic words like "System Alert Manager" or "GO Alert:")
+  if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
     return true;
   }
 
