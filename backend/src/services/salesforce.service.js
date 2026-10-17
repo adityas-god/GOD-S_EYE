@@ -369,6 +369,87 @@ export function isClosedAlertToday(c) {
 }
 
 
+export function normalizeProductType(val) {
+  if (!val) return null;
+  const s = String(val).trim();
+  if (!s || /^(null|undefined|none|n\/a|unknown|all|alert|incident|support|technical support|system|infrastructure)$/i.test(s)) {
+    return null;
+  }
+  const lower = s.toLowerCase();
+  if (lower === 'rms' || lower.includes('robotic management system') || lower === 'butler' || lower === 'fleet' || lower === 'pickstation') {
+    return 'RMS';
+  }
+  if (lower === 'ril' || lower.includes('ranger il') || lower.includes('ranger in-line') || lower.includes('ranger inline')) {
+    return 'RIL';
+  }
+  if (lower === 'ra' || lower.includes('ranger analytics') || lower.includes('active ants')) {
+    return 'RA';
+  }
+  if (lower === 'case pick' || lower === 'casepick' || lower === 'case-pick') {
+    return 'Case Pick';
+  }
+  if (lower === 'rtp' || lower.includes('robot to person') || lower.includes('robot-to-person')) {
+    return 'RTP';
+  }
+  if (lower === 'ttp' || lower.includes('tote to person') || lower.includes('tote-to-person')) {
+    return 'TTP';
+  }
+  if (lower === 'gstore' || lower.includes('greystore')) {
+    return 'GStore';
+  }
+  if (lower.includes('shuttle')) {
+    return 'Shuttle';
+  }
+  if (lower.includes('relay')) {
+    return 'Relay';
+  }
+  if (lower.includes('sortation')) {
+    return 'Sortation';
+  }
+  if (s.length <= 4) return s.toUpperCase();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// In-memory registry of dynamic product lines observed per site from live & historical Salesforce cases
+const _siteObservedProductsMap = new Map();
+
+export function recordSiteProduct(siteIdentifier, rawProd) {
+  if (!siteIdentifier || !rawProd) return;
+  const prod = normalizeProductType(rawProd);
+  if (!prod) return;
+
+  const rawStr = String(siteIdentifier).trim();
+  const keys = [
+    normalizeCanonical(rawStr),
+    rawStr.toLowerCase(),
+  ];
+
+  for (const k of keys) {
+    if (!k) continue;
+    if (!_siteObservedProductsMap.has(k)) {
+      _siteObservedProductsMap.set(k, new Set());
+    }
+    _siteObservedProductsMap.get(k).add(prod);
+  }
+}
+
+export function getObservedSiteProducts(siteIdentifier) {
+  if (!siteIdentifier) return [];
+  const rawStr = String(siteIdentifier).trim();
+  const keys = [
+    normalizeCanonical(rawStr),
+    rawStr.toLowerCase(),
+  ];
+  const prods = new Set();
+  for (const k of keys) {
+    const set = _siteObservedProductsMap.get(k);
+    if (set) {
+      for (const p of set) prods.add(p);
+    }
+  }
+  return Array.from(prods);
+}
+
 export function inferProductLine(name) {
   const n = String(name || '').toLowerCase();
   if (/\bttp\b/i.test(n)) return 'TTP';
@@ -381,11 +462,11 @@ export function inferProductLine(name) {
     return 'RIL';
   }
   if (/sodimac|click|collect|mitsubishi|trusco|casey|kenco|adams|kellanova|case pick/i.test(n)) {
-    return 'CASE PICK';
+    return 'Case Pick';
   }
-  if (/shuttle/i.test(n)) return 'SHUTTLE';
-  if (/relay/i.test(n)) return 'RELAY';
-  if (/gstore|deckers/i.test(n)) return 'GSTORE';
+  if (/shuttle/i.test(n)) return 'Shuttle';
+  if (/relay/i.test(n)) return 'Relay';
+  if (/gstore|deckers/i.test(n)) return 'GStore';
   return 'RMS';
 }
 
@@ -1197,6 +1278,25 @@ export async function syncSitesFromSalesforce({ authoritative = true } = {}) {
     }
   }
 
+  // Pre-compile site index to map cases to authoritative sites
+  const compiledSites = compileSiteIndex(baseSites);
+
+  // Dynamically query actual product lines logged in Salesforce Cases across all sites
+  try {
+    const productsSoql = `SELECT Id, AccountId, Account_Name__c, Snow_Sitename__c, Customer_Location__c, Site_Name_Customer_Input__c, Product_Type__c, Parent_Product_Type__c FROM Case WHERE CreatedDate = LAST_N_DAYS:180 AND (Product_Type__c != null OR Parent_Product_Type__c != null) ORDER BY CreatedDate DESC LIMIT 2000`;
+    const prodResult = await executeSOQL(productsSoql);
+    for (const c of (prodResult.records || [])) {
+      const best = findBestSiteForCase(c, compiledSites) || c.Account_Name__c || c.Snow_Sitename__c;
+      if (best) {
+        if (c.Product_Type__c) recordSiteProduct(best, c.Product_Type__c);
+        if (c.Parent_Product_Type__c) recordSiteProduct(best, c.Parent_Product_Type__c);
+      }
+    }
+    console.log(`[Salesforce -> Products] Extracted dynamic product lines from ${(prodResult.records || []).length} historical cases.`);
+  } catch (err) {
+    console.warn(`[Salesforce] Notice querying product types: ${err.message}`);
+  }
+
   const enrichedSites = baseSites.map((s, idx) => {
     let accId = s.salesforce_account_id;
     let loc = s.location || null;
@@ -1211,10 +1311,25 @@ export async function syncSitesFromSalesforce({ authoritative = true } = {}) {
     const slug = s.opsgenie_tag || clean.replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     const id = `sf-site-${slug}`;
 
+    const baseP = Array.isArray(s.product_lines) && s.product_lines.length > 0
+      ? s.product_lines
+      : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+    const observed = getObservedSiteProducts(s.name);
+    const prodSet = new Set(baseP);
+    for (const op of observed) {
+      prodSet.add(op);
+    }
+    if (prodSet.size === 0) {
+      prodSet.add(inferProductLine(s.name));
+    }
+    const finalProductLines = Array.from(prodSet);
+    const finalProductLine = finalProductLines.join(', ');
+
     return {
       id,
       name: s.name,
-      product_line: s.product_line || inferProductLine(s.name),
+      product_line: finalProductLine,
+      product_lines: finalProductLines,
       opsgenie_tag: slug,
       salesforce_account_id: accId || null,
       salesforce_site_name: s.name,
@@ -1331,7 +1446,8 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
       const cat = c.Snow_Category__c || c.Type || 'Technical Support';
       const rawProd = (c.Product_Type__c || c.Parent_Product_Type__c || '').trim();
-      const prod = rawProd || inferProductLine(
+      const normProd = normalizeProductType(rawProd);
+      const prod = normProd || inferProductLine(
         c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
       );
       const assignee = c.Owner?.Name || 'GreyOrange Queue';
@@ -1368,10 +1484,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         Category: cat,
         category: cat,
         Category__c: cat,
-        Product_Type__c: rawProd || prod,
-        Parent_Product_Type__c: c.Parent_Product_Type__c || null,
-        product_line: rawProd || prod,
-        Product_Line: rawProd || prod,
+        Product_Type__c: normProd || prod,
+        Parent_Product_Type__c: normalizeProductType(c.Parent_Product_Type__c) || null,
+        product_line: normProd || prod,
+        Product_Line: normProd || prod,
         Dev_Case_Assignee__c: assignee,
         Description: desc,
         description: desc,
@@ -1422,6 +1538,19 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     const closedAlerts = raw.filter(c => isAlertCase(c) && isClosedTicket(c)).map(mapRecord);
     const allAlerts = raw.filter(isAlertForShiftBucket).map(mapRecord);
     const closed = raw.filter(c => isClosedTicket(c)).map(mapRecord);
+
+    // Record observed products across all fetched cases
+    try {
+      const allSites = await SiteRepository.findAll();
+      const compiledSites = compileSiteIndex(allSites);
+      for (const c of raw) {
+        const bestSite = findBestSiteForCase(c, compiledSites);
+        if (bestSite) {
+          if (c.Product_Type__c) recordSiteProduct(bestSite, c.Product_Type__c);
+          if (c.Parent_Product_Type__c) recordSiteProduct(bestSite, c.Parent_Product_Type__c);
+        }
+      }
+    } catch {}
 
     _backendCasesCache = { cases, alerts: openAlerts, openAlerts, closedAlerts, allAlerts, closed, fetchedAt: Date.now() };
     _overviewCache = { data: null, cachedAt: 0 };
@@ -1524,9 +1653,9 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
       type: c.Category__c || c.Snow_Category__c || c.Type || 'Technical Support',
       Category__c: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
       category: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
-      Product_Type__c: c.Product_Type__c || c.product_line || 'RMS',
-      Parent_Product_Type__c: c.Parent_Product_Type__c || null,
-      product_line: c.product_line || c.Product_Type__c || 'RMS',
+      Product_Type__c: normalizeProductType(c.Product_Type__c) || c.product_line || 'RMS',
+      Parent_Product_Type__c: normalizeProductType(c.Parent_Product_Type__c) || null,
+      product_line: normalizeProductType(c.Product_Type__c) || c.product_line || 'RMS',
       Dev_Case_Assignee__c: c.Dev_Case_Assignee__c || 'GreyOrange Queue',
       Description: c.Description || null,
       description: c.Description || null,
@@ -1576,9 +1705,46 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId }) {
     }
   }
 
+  // Aggregate all unique product lines observed for this site
+  const siteObservedProds = new Set([
+    ...(Array.isArray(targetSite?.product_lines) ? targetSite.product_lines : (targetSite?.product_line ? targetSite.product_line.split(',').map(x => x.trim()) : [])),
+    ...getObservedSiteProducts(effectiveSiteName),
+  ].filter(Boolean));
+
+  for (const c of [...strictlyOpenCases, ...matchedAlerts, ...allMatchedClosed]) {
+    const p1 = normalizeProductType(c.Product_Type__c);
+    const p2 = normalizeProductType(c.Parent_Product_Type__c);
+    if (p1) {
+      siteObservedProds.add(p1);
+      recordSiteProduct(effectiveSiteName, p1);
+    }
+    if (p2) {
+      siteObservedProds.add(p2);
+      recordSiteProduct(effectiveSiteName, p2);
+    }
+  }
+  if (siteObservedProds.size === 0) {
+    siteObservedProds.add(inferProductLine(effectiveSiteName));
+  }
+  const siteProductLines = Array.from(siteObservedProds);
+  const siteProductLine = siteProductLines.join(', ');
+
+  // Persist updated product lines to repository
+  if (targetSite && siteProductLines.length > (targetSite.product_lines?.length || 0)) {
+    try {
+      await SiteRepository.upsert({
+        ...targetSite,
+        product_lines: siteProductLines,
+        product_line: siteProductLine,
+      });
+    } catch {}
+  }
+
   return {
     siteName: effectiveSiteName,
     accountId: effectiveAccountId,
+    product_line: siteProductLine,
+    product_lines: siteProductLines,
     totalOpenCases: casesToStore.length,
     cases: casesToStore,
     alerts: matchedAlerts,
@@ -1626,8 +1792,13 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
   // Pre-compile site index once for O(S) lightning-fast resolution
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
-  // Strictly open cases: omit any ticket having an end time or downtime!
-  const strictlyOpenCases = liveCases.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+  // Strictly open cases: omit any ticket having an end time or downtime, and strictly limit to open tickets of today's date!
+  const strictlyOpenCases = liveCases.filter(c => 
+    isLiveOpenCase(c) && 
+    !hasTicketEndTime(c) && 
+    !getTicketEndTime(c) &&
+    isTodayDate(c.CreatedDate || c.created_date)
+  );
 
   for (const c of strictlyOpenCases) {
     const bestSite = findBestSiteForCase(c, compiledSites);
@@ -1641,6 +1812,9 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
       if (c.CaseNumber && !siteStats[key].caseNumbers.includes(c.CaseNumber)) {
         siteStats[key].caseNumbers.push(c.CaseNumber);
       }
+
+      if (c.Product_Type__c) recordSiteProduct(bestSite, c.Product_Type__c);
+      if (c.Parent_Product_Type__c) recordSiteProduct(bestSite, c.Parent_Product_Type__c);
 
       // Live Sev 1 and Sev 2: Strictly count live open cases, and DO NOT count IM or DIR tickets at the panel!
       if (!isImTicket(c) && !isDirTicket(c)) {
@@ -1664,7 +1838,30 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
         siteStats[key] = { siteName: bestSite, count: 0, alertCount: 0, isDown: false, caseNumbers: [], sev1Count: 0, sev2Count: 0, sev3Count: 0 };
       }
       siteStats[key].alertCount = (siteStats[key].alertCount || 0) + 1;
+      if (a.Product_Type__c) recordSiteProduct(bestSite, a.Product_Type__c);
+      if (a.Parent_Product_Type__c) recordSiteProduct(bestSite, a.Parent_Product_Type__c);
       // Note: Automated monitoring alerts are internal IM alerts and must NEVER count as Sev 1 or Sev 2 customer tickets at the panel
+    }
+  }
+
+  // Attach all active product lines to siteStats
+  for (const sName of allSiteNames) {
+    const key = sName.toLowerCase();
+    const siteObj = allSites.find(s => s.name?.toLowerCase() === key);
+    const baseP = Array.isArray(siteObj?.product_lines) && siteObj.product_lines.length > 0
+      ? siteObj.product_lines
+      : (siteObj?.product_line ? siteObj.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+    const prods = new Set([
+      ...baseP,
+      ...getObservedSiteProducts(sName),
+    ]);
+    if (prods.size === 0) {
+      prods.add(inferProductLine(sName));
+    }
+    const lines = Array.from(prods);
+    if (siteStats[key]) {
+      siteStats[key].product_lines = lines;
+      siteStats[key].product_line = lines.join(', ');
     }
   }
 
@@ -2384,14 +2581,39 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     }
     const sev = detectSeverity(c);
     const createdTime = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
+    const endTime = getTicketEndTime(c) || c.ClosedDate || null;
+    const endTimeMs = endTime ? new Date(endTime).getTime() : 0;
+    let durationHours = null;
+    if (c.Downtime__c !== undefined && c.Downtime__c !== null && c.Downtime__c !== '') {
+      const dtNum = Number(c.Downtime__c);
+      if (!isNaN(dtNum) && dtNum > 0) {
+        durationHours = Math.round(dtNum * 10) / 10;
+      }
+    }
+    if (durationHours === null && endTimeMs > 0 && createdTime > 0 && endTimeMs >= createdTime) {
+      durationHours = Math.round(((endTimeMs - createdTime) / (3600 * 1000)) * 10) / 10;
+    } else if (durationHours === null && createdTime > 0 && !endTime) {
+      durationHours = Math.round(((now - createdTime) / (3600 * 1000)) * 10) / 10;
+    }
+
+    if (c.Product_Type__c) recordSiteProduct(matchedSite, c.Product_Type__c);
+    if (c.Parent_Product_Type__c) recordSiteProduct(matchedSite, c.Parent_Product_Type__c);
+
     siteIncidentsMap.get(key).incidents.push({
       id: c.Id,
       caseNumber: c.CaseNumber,
       subject: c.Subject || 'No Subject',
       severity: sev,
-      status: c.Status || 'Active',
+      rawSeverity: c.Highest_Severity__c || c.Priority || (sev === 'sev1' ? 'Sev 1' : sev === 'sev2' ? 'Sev 2' : 'Sev 3'),
+      productType: normalizeProductType(c.Product_Type__c || c.Parent_Product_Type__c) || 'RMS',
+      status: c.Status || (endTime ? 'Closed' : 'Active'),
       createdDate: c.CreatedDate,
       createdTime,
+      closedDate: c.ClosedDate || null,
+      endTime,
+      durationHours,
+      description: c.Description || null,
+      isSiteDown: Boolean(c.Is_Site_100_Down__c),
     });
   }
 
@@ -2484,10 +2706,62 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
     // Match site model for id and location
     const siteObj = allSites.find(s => normalizeCanonical(s.name) === normalizeCanonical(siteName));
 
+    // Compute 21-day daily metrics for executive timeline graph (aligns with 21-day Red Zone cycle)
+    const dailyMetrics = [];
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    for (let dayOffset = 20; dayOffset >= 0; dayOffset--) {
+      const d = new Date(now - dayOffset * DAY_MS);
+      const dateStr = d.toISOString().slice(0, 10);
+      const dayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const dayEnd = dayStart + DAY_MS;
+
+      const dayIncidents = incidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
+      const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
+      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
+      const resolvedOnDay = incidents.filter(i => {
+        const eStr = i.endTime || i.closedDate;
+        if (!eStr) return false;
+        const eTime = new Date(eStr).getTime();
+        return eTime >= dayStart && eTime < dayEnd;
+      }).length;
+      const downtimeOnDay = Math.round(
+        dayIncidents.reduce((acc, curr) => acc + (curr.durationHours || 0), 0) * 10
+      ) / 10;
+
+      dailyMetrics.push({
+        date: dateStr,
+        dayLabel,
+        sev1Count: sev1OnDay,
+        sev2Count: sev2OnDay,
+        totalIncidents: dayIncidents.length,
+        resolvedCount: resolvedOnDay,
+        downtimeHours: downtimeOnDay,
+      });
+    }
+
+    const resolvedIncidents = incidents.filter(i => typeof i.durationHours === 'number' && i.durationHours > 0);
+    const meanTimeToResolveHours = resolvedIncidents.length > 0
+      ? Math.round((resolvedIncidents.reduce((acc, i) => acc + (i.durationHours || 0), 0) / resolvedIncidents.length) * 10) / 10
+      : null;
+
+    const observedRzProds = new Set([
+      ...(Array.isArray(siteObj?.product_lines) ? siteObj.product_lines : (siteObj?.product_line ? siteObj.product_line.split(',').map(p => p.trim()) : [])),
+      ...getObservedSiteProducts(siteName),
+    ].filter(Boolean));
+    for (const inc of incidents) {
+      if (inc.productType) observedRzProds.add(inc.productType);
+    }
+    if (observedRzProds.size === 0) {
+      observedRzProds.add(inferProductLine(siteName));
+    }
+    const rzProductLines = Array.from(observedRzProds);
+
     redZoneSites.push({
       siteName,
       siteId: siteObj?.id || `sf-site-${siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-      product_line: siteObj?.product_line || 'RMS',
+      product_line: rzProductLines.join(', '),
+      product_lines: rzProductLines,
       location: siteObj?.location || null,
       status: isCurrentBreach ? 'ACTIVE_BREACH' : 'EXIT_PENDING',
       isCurrentBreach,
@@ -2509,13 +2783,23 @@ export async function fetchRedZoneSitesOverview({ forceRefresh = false } = {}) {
         incidentCount14d: N,
         thresholdMtbf: 36,
       },
-      qualifyingIncidents: incidents.slice(0, 15).map(i => ({
+      meanTimeToResolveHours,
+      dailyMetrics,
+      qualifyingIncidents: incidents.map(i => ({
         id: i.id,
         caseNumber: i.caseNumber,
         subject: i.subject,
         severity: i.severity,
+        rawSeverity: i.rawSeverity,
+        productType: i.productType || 'RMS',
         status: i.status,
         createdDate: i.createdDate,
+        createdTime: i.createdTime,
+        closedDate: i.closedDate,
+        endTime: i.endTime,
+        durationHours: i.durationHours,
+        description: i.description,
+        isSiteDown: i.isSiteDown,
       })),
     });
   }

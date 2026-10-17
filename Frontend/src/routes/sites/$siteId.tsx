@@ -320,7 +320,36 @@ function SiteDetail() {
       ? closedAlerts
       : analyticsAlerts;
 
-  const siteProductType = site?.product_line || 'RMS';
+  // Dynamically resolve all product lines for this site from API response, loaded cases, or site config
+  const siteProductLines: string[] = useMemo(() => {
+    // 1. Check if backend returned product_lines
+    const fromSf = (sfData as unknown as { product_lines?: string[] })?.product_lines;
+    if (Array.isArray(fromSf) && fromSf.length > 0) {
+      return fromSf.filter(Boolean);
+    }
+    // 2. Check site.product_lines
+    if (site?.product_lines && Array.isArray(site.product_lines) && site.product_lines.length > 0) {
+      return site.product_lines.filter(Boolean);
+    }
+    // 3. Dynamically observe from loaded cases & alerts
+    const observed = new Set<string>();
+    for (const c of [...rawCases, ...rawAlerts]) {
+      const p = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
+      if (p && !['null', 'undefined', 'all', 'none', 'n/a', 'na'].includes(p.toLowerCase())) {
+        observed.add(p);
+      }
+    }
+    if (observed.size > 0) {
+      return Array.from(observed);
+    }
+    // 4. Fallback to comma-separated site.product_line
+    if (site?.product_line) {
+      return site.product_line.split(',').map((p: string) => p.trim()).filter(Boolean);
+    }
+    return ['RMS'];
+  }, [sfData, site?.product_lines, site?.product_line, rawCases, rawAlerts]);
+
+  const siteProductType = site?.product_line || siteProductLines.join(', ') || 'RMS';
 
   const uniqueStatuses = useMemo(() => {
     const set = new Set(activeItems.map(c => c.Status).filter(Boolean));
@@ -338,12 +367,19 @@ function SiteDetail() {
 
   const uniqueProducts = useMemo(() => {
     const set = new Set<string>();
+    for (const p of siteProductLines) {
+      if (p && !['null', 'undefined', 'all', 'none', 'n/a'].includes(p.toLowerCase())) {
+        set.add(p);
+      }
+    }
     for (const c of activeItems) {
-      const prod = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType).trim();
-      if (prod) set.add(prod);
+      const prod = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
+      if (prod && !['null', 'undefined', 'all', 'none', 'n/a'].includes(prod.toLowerCase())) {
+        set.add(prod);
+      }
     }
     return Array.from(set).sort();
-  }, [activeItems, siteProductType]);
+  }, [activeItems, siteProductLines]);
 
   const uniqueCategories = useMemo(() => {
     const set = new Set<string>();
@@ -381,15 +417,19 @@ function SiteDetail() {
         matchSeverity = p1 === sfLower || p2 === sfLower || p3 === sfLower;
       }
 
-      const prodStr = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType).trim();
-      const matchProduct = activeBucket === 'analytics' || productFilter === 'All' || prodStr.toLowerCase() === productFilter.toLowerCase();
+      const prodStr = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
+      const matchProduct =
+        activeBucket === 'analytics' ||
+        productFilter === 'All' ||
+        prodStr.toLowerCase() === productFilter.toLowerCase() ||
+        (prodStr === '' && siteProductLines.some(p => p.toLowerCase() === productFilter.toLowerCase()));
 
       const catStr = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
       const matchCategory = activeBucket !== 'cases' || categoryFilter === 'All' || catStr.toLowerCase() === categoryFilter.toLowerCase();
 
       return matchSearch && matchStatus && matchSeverity && matchProduct && matchCategory;
     });
-  }, [activeItems, caseSearch, statusFilter, severityFilter, productFilter, categoryFilter, siteProductType, activeBucket]);
+  }, [activeItems, caseSearch, statusFilter, severityFilter, productFilter, categoryFilter, siteProductLines, activeBucket]);
 
   if (!site) {
     return (
@@ -430,10 +470,10 @@ function SiteDetail() {
               <span className="heading-dot">.</span>
             </h1>
             <p className="detail-subtitle">
-              {siteProductType && siteProductType !== 'Unassigned' && (
+              {siteProductLines.length > 0 && siteProductLines[0] !== 'Unassigned' && (
                 <>
                   <Building2 />
-                  {siteProductType}
+                  <span>{siteProductLines.join(', ')}</span>
                 </>
               )}
               <span className="source-dot" style={{ background: isCriticalSiteDown ? '#ef4444' : allCases.length > 0 ? '#f59e0b' : '#22c55e' }} />

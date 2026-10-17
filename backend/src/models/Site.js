@@ -12,6 +12,7 @@ const siteSchema = new mongoose.Schema(
     id: { type: String, required: true, unique: true, index: true },
     name: { type: String, required: true, index: true },
     product_line: { type: String, default: null },
+    product_lines: { type: [String], default: [] },
     opsgenie_tag: { type: String, default: null },
     salesforce_account_id: { type: String, default: null, index: true },
     salesforce_site_name: { type: String, default: null },
@@ -138,10 +139,14 @@ try {
   const sites = loadAuthoritativeSitesSnapshot();
   for (const s of sites) {
     const id = `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+    const pLines = Array.isArray(s.product_lines) && s.product_lines.length > 0
+      ? s.product_lines
+      : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
     inMemorySites.set(id, {
       id,
       name: s.name,
-      product_line: s.product_line || null,
+      product_line: s.product_line || (pLines.length > 0 ? pLines.join(', ') : null),
+      product_lines: pLines,
       opsgenie_tag: s.opsgenie_tag || null,
       salesforce_account_id: s.salesforce_account_id || null,
       salesforce_site_name: s.name,
@@ -260,7 +265,14 @@ export const SiteRepository = {
         if ((site.open_cases_count ?? 0) > (existing.open_cases_count ?? 0)) {
           existing.open_cases_count = site.open_cases_count;
         }
-        if (site.product_line && !existing.product_line) {
+        const existingProds = new Set([
+          ...(Array.isArray(existing.product_lines) ? existing.product_lines : (existing.product_line ? existing.product_line.split(',').map(x => x.trim()) : [])),
+          ...(Array.isArray(site.product_lines) ? site.product_lines : (site.product_line ? site.product_line.split(',').map(x => x.trim()) : []))
+        ].filter(Boolean));
+        existing.product_lines = Array.from(existingProds);
+        if (existing.product_lines.length > 0) {
+          existing.product_line = existing.product_lines.join(', ');
+        } else if (site.product_line && !existing.product_line) {
           existing.product_line = site.product_line;
         }
         if (site.location && !existing.location) {
@@ -280,17 +292,38 @@ export const SiteRepository = {
         });
     }
 
-    return Array.from(seen.values());
+    const resultSites = Array.from(seen.values());
+    for (const s of resultSites) {
+      if (!Array.isArray(s.product_lines) || s.product_lines.length === 0) {
+        s.product_lines = s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : [];
+      }
+      if (!s.product_line && s.product_lines.length > 0) {
+        s.product_line = s.product_lines.join(', ');
+      }
+    }
+
+    return resultSites;
   },
 
   async findById(id) {
     if (!id) return null;
+    let site = null;
     if (isDbConnected()) {
       const doc = await SiteModel.findOne(buildSiteFilter(id)).lean();
-      return doc ? normalizeRunbook(doc) : null;
+      site = doc ? normalizeRunbook(doc) : null;
+    } else {
+      const mem = findInMemorySite(id);
+      site = mem ? normalizeRunbook(mem) : null;
     }
-    const mem = findInMemorySite(id);
-    return mem ? normalizeRunbook(mem) : null;
+    if (site) {
+      if (!Array.isArray(site.product_lines) || site.product_lines.length === 0) {
+        site.product_lines = site.product_line ? site.product_line.split(',').map(x => x.trim()).filter(Boolean) : [];
+      }
+      if (!site.product_line && site.product_lines.length > 0) {
+        site.product_line = site.product_lines.join(', ');
+      }
+    }
+    return site;
   },
 
   async findByName(name) {
@@ -314,6 +347,12 @@ export const SiteRepository = {
       if (existing) {
         // Non-destructive update: ONLY update base metadata, NEVER wipe runbook arrays!
         existing.name = cleanName;
+        if (siteData.product_lines !== undefined) {
+          existing.product_lines = siteData.product_lines;
+          if (Array.isArray(siteData.product_lines) && siteData.product_lines.length > 0) {
+            existing.product_line = siteData.product_lines.join(', ');
+          }
+        }
         if (siteData.product_line !== undefined) existing.product_line = siteData.product_line;
         if (siteData.salesforce_account_id !== undefined) existing.salesforce_account_id = siteData.salesforce_account_id;
         if (siteData.salesforce_site_name !== undefined) existing.salesforce_site_name = siteData.salesforce_site_name;
@@ -329,6 +368,8 @@ export const SiteRepository = {
       const created = await SiteModel.create({
         ...siteData,
         name: cleanName,
+        product_lines: siteData.product_lines || (siteData.product_line ? siteData.product_line.split(',').map(x => x.trim()).filter(Boolean) : []),
+        product_line: siteData.product_line || (siteData.product_lines ? siteData.product_lines.join(', ') : null),
         monitoring_links: siteData.monitoring_links || [],
         zoom_call: siteData.zoom_call || { url: null, topic: null, is_active: false, last_started_at: null },
         vm_ips: siteData.vm_ips || [],
@@ -355,6 +396,8 @@ export const SiteRepository = {
       ...siteData,
       name: cleanName,
       id: targetId,
+      product_lines: siteData.product_lines || existing.product_lines || (siteData.product_line ? siteData.product_line.split(',').map(x => x.trim()).filter(Boolean) : []),
+      product_line: siteData.product_line || (siteData.product_lines ? siteData.product_lines.join(', ') : existing.product_line),
       // Preserve existing runbooks in memory
       monitoring_links: existing.monitoring_links || siteData.monitoring_links || [],
       zoom_call: existing.zoom_call || siteData.zoom_call || { url: null, topic: null, is_active: false, last_started_at: null },

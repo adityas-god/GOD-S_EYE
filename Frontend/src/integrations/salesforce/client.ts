@@ -69,6 +69,8 @@ export interface SiteCaseStat {
   sev1Count: number;
   sev2Count: number;
   sev3Count: number;
+  product_lines?: string[];
+  product_line?: string;
 }
 
 export const ALL_SITE_NAMES: string[] = (sitesData as { name: string }[]).map(s => s.name);
@@ -1256,6 +1258,9 @@ export const sfFetchCasesForSite = async (params: {
           records: strictlyFiltered,
           alerts: alertsFiltered,
           closed: closedFiltered,
+          product_lines: (json.product_lines as string[]) || (json.site?.product_lines as string[]) || [],
+          product_line: (json.product_line as string) || (json.site?.product_line as string) || null,
+          site: json.site || null,
         };
       }
     }
@@ -1552,19 +1557,37 @@ export const sfFetchAlertAnalytics = async (
 
 // ─── RED Zone Sites Types & API Client ─────────────────────────────────────────
 
+export interface RedZoneDailyMetric {
+  date: string;
+  dayLabel: string;
+  sev1Count: number;
+  sev2Count: number;
+  totalIncidents: number;
+  resolvedCount: number;
+  downtimeHours: number;
+}
+
 export interface RedZoneQualifyingIncident {
   id: string;
   caseNumber: string;
   subject: string;
   severity: 'sev1' | 'sev2' | 'sev3';
+  rawSeverity?: string | null;
   status: string;
   createdDate: string;
+  createdTime?: number;
+  closedDate?: string | null;
+  endTime?: string | null;
+  durationHours?: number | null;
+  description?: string | null;
+  isSiteDown?: boolean;
 }
 
 export interface RedZoneSiteInfo {
   siteName: string;
   siteId: string;
   product_line: string;
+  product_lines?: string[];
   location?: string | null;
   status: 'ACTIVE_BREACH' | 'EXIT_PENDING';
   isCurrentBreach: boolean;
@@ -1590,6 +1613,8 @@ export interface RedZoneSiteInfo {
     incidentCount14d: number;
     thresholdMtbf: number;
   };
+  meanTimeToResolveHours?: number | null;
+  dailyMetrics?: RedZoneDailyMetric[];
   qualifyingIncidents: RedZoneQualifyingIncident[];
 }
 
@@ -1644,15 +1669,37 @@ export function computeRedZoneSitesClientSide(
       siteIncidentsMap.set(key, { siteName: matchedSite, incidents: [] });
     }
     const sev = detectSeverity(c);
+    const endTimeStr = getTicketEndTime(c);
     const createdTime = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
+    const endTimeMs = endTimeStr ? new Date(endTimeStr).getTime() : c.ClosedDate ? new Date(c.ClosedDate).getTime() : 0;
+    let durationHours: number | null = null;
+    const rawDt = (c as any).Downtime__c;
+    if (rawDt !== undefined && rawDt !== null && rawDt !== '') {
+      const dtNum = Number(rawDt);
+      if (!isNaN(dtNum) && dtNum > 0) {
+        durationHours = Math.round(dtNum * 10) / 10;
+      }
+    }
+    if (durationHours === null && endTimeMs > 0 && createdTime > 0 && endTimeMs >= createdTime) {
+      durationHours = Math.round(((endTimeMs - createdTime) / (1000 * 60 * 60)) * 10) / 10;
+    } else if (durationHours === null && createdTime > 0 && !endTimeStr && !c.ClosedDate) {
+      durationHours = Math.round(((now - createdTime) / (1000 * 60 * 60)) * 10) / 10;
+    }
+
     siteIncidentsMap.get(key)!.incidents.push({
       id: c.Id,
       caseNumber: c.CaseNumber,
       subject: c.Subject || 'No Subject',
       severity: sev,
-      status: c.Status || 'Active',
+      rawSeverity: String(c.Highest_Severity__c || c.Severity__c || ''),
+      status: c.Status || (endTimeStr ? 'Closed' : 'Active'),
       createdDate: c.CreatedDate,
       createdTime,
+      closedDate: endTimeStr || c.ClosedDate || null,
+      endTime: endTimeStr || null,
+      durationHours,
+      description: c.Description || (c as any).description || null,
+      isSiteDown: Boolean(c.Is_Site_100_Down__c || (c as any).is_site_down),
     });
   }
 
@@ -1736,6 +1783,45 @@ export function computeRedZoneSitesClientSide(
     if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
     if (!isCurrentBreach) reasons.push(`In 21-Day Exit Probation: ${daysSinceBreach} clean days observed, ${daysRemainingToExit} days remaining to exit`);
 
+    // Compute 21-day daily metrics for executive timeline graph (aligns with 21-day Red Zone cycle)
+    const dailyMetrics: RedZoneDailyMetric[] = [];
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    for (let dayOffset = 20; dayOffset >= 0; dayOffset--) {
+      const d = new Date(now - dayOffset * DAY_MS);
+      const dateStr = d.toISOString().slice(0, 10);
+      const dayLabel = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const dayEnd = dayStart + DAY_MS;
+
+      const dayIncidents = incidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
+      const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
+      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
+      const resolvedOnDay = incidents.filter(i => {
+        const eStr = i.endTime || i.closedDate;
+        if (!eStr) return false;
+        const eTime = new Date(eStr).getTime();
+        return eTime >= dayStart && eTime < dayEnd;
+      }).length;
+      const downtimeOnDay = Math.round(
+        dayIncidents.reduce((acc, curr) => acc + (curr.durationHours || 0), 0) * 10
+      ) / 10;
+
+      dailyMetrics.push({
+        date: dateStr,
+        dayLabel,
+        sev1Count: sev1OnDay,
+        sev2Count: sev2OnDay,
+        totalIncidents: dayIncidents.length,
+        resolvedCount: resolvedOnDay,
+        downtimeHours: downtimeOnDay,
+      });
+    }
+
+    const resolvedIncidents = incidents.filter(i => typeof i.durationHours === 'number' && i.durationHours > 0);
+    const meanTimeToResolveHours = resolvedIncidents.length > 0
+      ? Math.round((resolvedIncidents.reduce((acc, i) => acc + (i.durationHours || 0), 0) / resolvedIncidents.length) * 10) / 10
+      : null;
+
     redZoneSites.push({
       siteName,
       siteId: `sf-site-${siteName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
@@ -1760,13 +1846,22 @@ export function computeRedZoneSitesClientSide(
         incidentCount14d: N,
         thresholdMtbf: 36,
       },
-      qualifyingIncidents: incidents.slice(0, 15).map(i => ({
+      meanTimeToResolveHours,
+      dailyMetrics,
+      qualifyingIncidents: incidents.map(i => ({
         id: i.id,
         caseNumber: i.caseNumber,
         subject: i.subject,
         severity: i.severity,
+        rawSeverity: i.rawSeverity,
         status: i.status,
         createdDate: i.createdDate,
+        createdTime: i.createdTime,
+        closedDate: i.closedDate,
+        endTime: i.endTime,
+        durationHours: i.durationHours,
+        description: i.description,
+        isSiteDown: i.isSiteDown,
       })),
     });
   }

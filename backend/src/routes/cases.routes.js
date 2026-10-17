@@ -90,6 +90,9 @@ router.get('/', async (req, res) => {
         cases: result.cases,
         alerts: result.alerts,
         closed: result.closed || [],
+        product_lines: result.product_lines || [],
+        product_line: result.product_line || null,
+        site: result.site || null,
       });
     }
 

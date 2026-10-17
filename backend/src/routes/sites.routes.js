@@ -51,19 +51,26 @@ async function ensureInitialSites(forceSync = false) {
       const count = await SiteRepository.count();
       // If count is less than the authoritative active sites, or forceSync is true, reset cleanly
       if (count < sites.length || forceSync) {
-        const toInsert = sites.map((s, idx) => ({
-          id: `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
-          name: s.name,
-          product_line: s.product_line || null,
-          opsgenie_tag: s.opsgenie_tag || null,
-          salesforce_account_id: s.salesforce_account_id || null,
-          salesforce_site_name: s.name,
-          account_name: s.name,
-          position: s.position || idx + 1,
-          open_cases_count: 0,
-          is_down: false,
-          source: 'authoritative_snapshot',
-        }));
+        const toInsert = sites.map((s, idx) => {
+          const pLines = Array.isArray(s.product_lines) && s.product_lines.length > 0
+            ? s.product_lines
+            : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+          const pLine = s.product_line || (pLines.length > 0 ? pLines.join(', ') : null);
+          return {
+            id: `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`,
+            name: s.name,
+            product_line: pLine,
+            product_lines: pLines,
+            opsgenie_tag: s.opsgenie_tag || null,
+            salesforce_account_id: s.salesforce_account_id || null,
+            salesforce_site_name: s.name,
+            account_name: s.name,
+            position: s.position || idx + 1,
+            open_cases_count: 0,
+            is_down: false,
+            source: 'authoritative_snapshot',
+          };
+        });
         await SiteRepository.replaceAll(toInsert);
         console.log(`[Sites] Seeded exactly ${toInsert.length} active sites into MongoDB repository.`);
       } else {
@@ -75,10 +82,15 @@ async function ensureInitialSites(forceSync = false) {
           const key = s.name.trim().toLowerCase();
           if (!existingKeys.has(key)) {
             const id = `sf-site-${String(s.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+            const pLines = Array.isArray(s.product_lines) && s.product_lines.length > 0
+              ? s.product_lines
+              : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
+            const pLine = s.product_line || (pLines.length > 0 ? pLines.join(', ') : null);
             await SiteRepository.upsert({
               id,
               name: s.name,
-              product_line: s.product_line || null,
+              product_line: pLine,
+              product_lines: pLines,
               opsgenie_tag: s.opsgenie_tag || null,
               salesforce_account_id: s.salesforce_account_id || null,
               salesforce_site_name: s.name,
@@ -397,7 +409,11 @@ router.get('/:siteId/cases', async (req, res) => {
 
     res.json({
       success: true,
-      site: site || { id: siteId, name: siteName },
+      site: {
+        ...(site || { id: siteId, name: siteName }),
+        product_line: result.product_line || site?.product_line || null,
+        product_lines: result.product_lines || site?.product_lines || [],
+      },
       totalOpenCases: result.totalOpenCases,
       cases: result.cases,
       alerts: result.alerts,

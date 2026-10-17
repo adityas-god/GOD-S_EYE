@@ -4,6 +4,7 @@ export type SiteRow = {
   id: string;
   name: string;
   product_line: string | null;
+  product_lines?: string[];
   opsgenie_tag: string | null;
   salesforce_account_id: string | null;
   position: number;
@@ -24,14 +25,19 @@ export const getSites = async (): Promise<SiteRow[]> => {
   const unique = new Map<string, SiteRow>();
   const rawList = sitesData as Omit<SiteRow, 'id' | 'created_at'>[];
 
-  // 1. Pre-populate with all 77 authoritative sites
+  // 1. Pre-populate with all authoritative sites
   for (const s of rawList) {
     if (!s?.name) continue;
     const key = s.name.trim().toLowerCase();
     if (!unique.has(key)) {
+      const pLines = Array.isArray(s.product_lines) && s.product_lines.length > 0
+        ? s.product_lines
+        : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : []);
       unique.set(key, {
         ...s,
         name: s.name.trim(),
+        product_line: s.product_line || (pLines.length > 0 ? pLines.join(', ') : null),
+        product_lines: pLines,
         id: makeId(s.position),
         created_at: new Date().toISOString(),
       });
@@ -44,19 +50,37 @@ export const getSites = async (): Promise<SiteRow[]> => {
       signal: AbortSignal.timeout(10000),
     });
     if (res.ok) {
-      const data = await res.json() as { success: boolean; sites: Array<{ id: string; name: string; product_line?: string; opsgenie_tag?: string; salesforce_account_id?: string; position?: number; open_cases_count?: number; is_down?: boolean; createdAt?: string }> };
+      const data = await res.json() as {
+        success: boolean;
+        sites: Array<{
+          id: string;
+          name: string;
+          product_line?: string;
+          product_lines?: string[];
+          opsgenie_tag?: string;
+          salesforce_account_id?: string;
+          position?: number;
+          open_cases_count?: number;
+          is_down?: boolean;
+          createdAt?: string;
+        }>;
+      };
       if (data.success && Array.isArray(data.sites)) {
         for (let idx = 0; idx < data.sites.length; idx++) {
           const s = data.sites[idx];
           if (!s?.name) continue;
           const key = s.name.trim().toLowerCase();
           const existing = unique.get(key);
+          const pLines = Array.isArray(s.product_lines) && s.product_lines.length > 0
+            ? s.product_lines
+            : (s.product_line ? s.product_line.split(',').map(x => x.trim()).filter(Boolean) : existing?.product_lines || []);
           if (existing) {
             unique.set(key, {
               ...existing,
               id: s.id || existing.id,
               salesforce_account_id: s.salesforce_account_id || existing.salesforce_account_id,
-              product_line: s.product_line || existing.product_line,
+              product_line: s.product_line || (pLines.length > 0 ? pLines.join(', ') : existing.product_line),
+              product_lines: pLines,
               opsgenie_tag: s.opsgenie_tag || existing.opsgenie_tag,
               position: s.position ?? existing.position,
               open_cases_count: s.open_cases_count ?? existing.open_cases_count,
@@ -66,7 +90,8 @@ export const getSites = async (): Promise<SiteRow[]> => {
             unique.set(key, {
               id: s.id || makeId(s.position ?? unique.size + 1),
               name: s.name.trim(),
-              product_line: s.product_line ?? null,
+              product_line: s.product_line ?? (pLines.length > 0 ? pLines.join(', ') : null),
+              product_lines: pLines,
               opsgenie_tag: s.opsgenie_tag ?? null,
               salesforce_account_id: s.salesforce_account_id ?? null,
               position: s.position ?? unique.size + 1,

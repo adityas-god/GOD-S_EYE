@@ -25,7 +25,6 @@ import {
   X,
   Clock,
   CheckCircle2,
-  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +35,6 @@ import { sitesQueryOptions, type Site } from '@/lib/sites';
 import {
   sfSyncOrgSites,
   sfFetchLiveCasesOverview,
-  sfFetchRedZoneSites,
   type SFCase,
   isAlertCase,
   detectSeverity,
@@ -47,6 +45,7 @@ import {
   isClosedAlert,
   getTicketEndTime,
   hasTicketEndTime,
+  isTodayDate,
   compileSites,
   findBestSiteForCase,
   areSameSite,
@@ -124,21 +123,6 @@ function Index() {
     refetchInterval: 60_000, // automatic background refresh every 60 seconds
   });
 
-  const { data: redZoneOverview } = useQuery({
-    queryKey: ['salesforce-red-zone'],
-    queryFn: () => sfFetchRedZoneSites(),
-    staleTime: 45_000,
-    refetchInterval: 60_000,
-  });
-
-  const redZoneSiteNamesSet = useMemo(() => {
-    const s = new Set<string>();
-    for (const rz of redZoneOverview?.redZoneSites || []) {
-      if (rz?.siteName) s.add(rz.siteName.toLowerCase().trim());
-    }
-    return s;
-  }, [redZoneOverview]);
-
   const refetchOverviewRef = useRef(refetchOverview);
   refetchOverviewRef.current = refetchOverview;
 
@@ -215,6 +199,10 @@ function Index() {
                   mergedStats.caseNumbers.push(cn);
                 }
               }
+              if (v.product_lines && v.product_lines.length > 0) {
+                const combined = new Set([...(mergedStats.product_lines || []), ...v.product_lines]);
+                mergedStats.product_lines = Array.from(combined);
+              }
             }
           }
         }
@@ -229,8 +217,16 @@ function Index() {
       const sev2Count = stats ? (stats.sev2Count ?? 0) : 0;
       const sev3Count = stats ? (stats.sev3Count ?? 0) : 0;
 
+      const productLines = (stats?.product_lines && stats.product_lines.length > 0)
+        ? stats.product_lines
+        : (site.product_lines && site.product_lines.length > 0)
+        ? site.product_lines
+        : site.product_line ? site.product_line.split(',').map(x => x.trim()).filter(Boolean) : ['RMS'];
+
       return {
         ...site,
+        product_lines: productLines,
+        product_line: productLines.join(', '),
         open_cases_count: openCount,
         open_alerts_count: alertCount,
         is_down: isDown,
@@ -278,8 +274,11 @@ function Index() {
     return enrichedSites.filter(s => {
       if (q && !s.name.toLowerCase().includes(q)) return false;
       if (!isAll) {
-        const siteProd = (s.product_line || '').toUpperCase().replace(/[\s_-]+/g, '');
-        if (siteProd !== normProduct) return false;
+        const siteProds = (s.product_lines && s.product_lines.length > 0)
+          ? s.product_lines.map(p => p.toUpperCase().replace(/[\s_-]+/g, ''))
+          : (s.product_line || '').toUpperCase().replace(/[\s_-]+/g, '').split(',');
+        const matchesProduct = siteProds.some(p => p.includes(normProduct) || normProduct.includes(p));
+        if (!matchesProduct) return false;
       }
       return true;
     });
@@ -300,8 +299,14 @@ function Index() {
   }
 
   // Strictly filter cases with end-time logic (no end time, no closed/hold status, no alerts, no DIR)
+  // User requirement: strictly open tickets of today's date on this main operational dashboard
   const openCases = useMemo(() => {
-    return (sfOverview?.cases ?? []).filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    return (sfOverview?.cases ?? []).filter(c => 
+      isLiveOpenCase(c) && 
+      !hasTicketEndTime(c) && 
+      !getTicketEndTime(c) &&
+      isTodayDate(c.CreatedDate || (c as unknown as { created_at?: string }).created_at)
+    );
   }, [sfOverview?.cases]);
 
   // Strictly filter alerts: only open alerts (no end time, no closed/hold status)
@@ -587,13 +592,12 @@ function Index() {
     const hasSev2 = sev2Count > 0;
     const hasUrgent = hasSev1 || hasSev2;
 
-    // Any site with Sev 1 Urgent, Sev 2 Urgent, site down, or Red Zone goes RED!
+    // Any site with Sev 1 Urgent, Sev 2 Urgent, or site down goes RED!
     // Top sites with standard non-urgent issues get subtle yellow tint.
-    const isRedZone = redZoneSiteNamesSet.has(site.name.toLowerCase().trim());
     const isTop4 = top4IssueSiteIds.has(site.id);
     let highlightColor: 'red' | 'orange' | 'yellow' | 'green' | null = null;
 
-    if (sev1Count > 0 || sev2Count > 0 || site.is_down || isRedZone) {
+    if (sev1Count > 0 || sev2Count > 0 || site.is_down) {
       highlightColor = 'red';
     } else if (isTop4 && (hasAlerts || hasCases)) {
       highlightColor = 'yellow';
@@ -611,28 +615,6 @@ function Index() {
                 <Building2 />
               </span>
               <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
-                {isRedZone && (
-                  <span
-                    style={{
-                      background: 'rgba(239, 68, 68, 0.16)',
-                      border: '1px solid rgba(239, 68, 68, 0.45)',
-                      color: '#ef4444',
-                      fontSize: 9,
-                      fontWeight: 700,
-                      fontFamily: 'var(--font-mono)',
-                      padding: '2.5px 6px',
-                      borderRadius: 4,
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      lineHeight: 1,
-                    }}
-                    title="Site qualified under RED Zone criteria"
-                  >
-                    <ShieldAlert style={{ width: 10, height: 10 }} />
-                    RED ZONE
-                  </span>
-                )}
                 {hasCases && (
                   <div
                     style={{
@@ -728,6 +710,34 @@ function Index() {
               <h3 style={{ fontSize: 19, fontWeight: 700, letterSpacing: '-0.015em' }}>{site.name}</h3>
               <ArrowUpRight />
             </div>
+
+            {/* Dynamic Product Badges: Displays all active/assigned product lines */}
+            {((site.product_lines && site.product_lines.length > 0) || site.product_line) && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4, marginBottom: 8 }}>
+                {(site.product_lines && site.product_lines.length > 0
+                  ? site.product_lines
+                  : site.product_line ? site.product_line.split(',').map(p => p.trim()).filter(Boolean) : ['RMS']
+                ).map(prod => (
+                  <span
+                    key={prod}
+                    className="case-product-pill"
+                    style={{
+                      fontSize: 9.5,
+                      padding: '1.5px 6px',
+                      borderRadius: 4,
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.12)',
+                      color: '#cbd5e1',
+                      fontFamily: 'var(--font-mono)',
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {prod}
+                  </span>
+                ))}
+              </div>
+            )}
 
             <div className="site-card-subtitle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
