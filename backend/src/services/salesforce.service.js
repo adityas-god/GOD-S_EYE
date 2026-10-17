@@ -69,8 +69,44 @@ const EXCLUDED_STATUS_PATTERNS = [
   'waiting for customer',
 ];
 
+/**
+ * Detects if a ticket contains an Opsgenie URL or link.
+ * Requirement: "if there is opesgenie url present imideatly it will be considered as alert"
+ */
+export function hasOpsgenieUrl(c) {
+  if (!c) return false;
+  const raw = c;
+  const check = (val) => {
+    if (!val || typeof val !== 'string') return false;
+    return (
+      /(?:https?:\/\/)?(?:[a-zA-Z0-9._-]+\.)?opsgenie\.com/i.test(val) ||
+      /https?:\/\/[^\s]*opsgenie/i.test(val) ||
+      (/\bopsgenie\b/i.test(val) && /https?:\/\//i.test(val))
+    );
+  };
+
+  if (check(raw.Description || raw.description)) return true;
+  if (check(raw.Subject || raw.subject)) return true;
+  if (check(raw.Incident_Url__c || raw.incident_url)) return true;
+  if (check(raw.Alert_Url__c || raw.alert_url)) return true;
+
+  for (const k of Object.keys(raw)) {
+    if (typeof raw[k] === 'string' && check(raw[k])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function isAlertCase(c) {
   if (!c) return false;
+
+  // 0. Immediate Opsgenie URL check:
+  // User requirement: "if there is opesgenie url present imideatly it will be considered as alert"
+  if (hasOpsgenieUrl(c)) {
+    return true;
+  }
 
   // 1. Explicit Type or Category is Alert
   const typeStr = String(c.Type || c.type || '').trim().toLowerCase();
@@ -89,8 +125,8 @@ export function isAlertCase(c) {
   if (!sub) return false;
 
   // 2. Strong Automated Alert Subject Signatures:
-  // Opsgenie / Runbook / Dashboard / Ranger Infra anywhere in subject
-  if (/(?:\[?alert\]?|\[?opsgenie\]?|runbook\s+for|dashboard\s+for|ranger\s+infra|alert:)/i.test(sub)) {
+  // Specific alert prefixes, runbook/dashboard indicators (avoids false-matching generic words like "System Alert Manager")
+  if (/(?:\[alert\]|\[opsgenie\]|\balert:|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
     return true;
   }
 
