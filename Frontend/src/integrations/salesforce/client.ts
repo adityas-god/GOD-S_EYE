@@ -293,11 +293,14 @@ export function isOpenAlert(c: SFCase): boolean {
     status.includes('progress') ||
     status.includes('investigat') ||
     status.includes('active') ||
-    status.includes('assigned');
+    status.includes('assigned') ||
+    status.includes('escalat') ||
+    status.includes('queue') ||
+    status.includes('triag') ||
+    status.includes('review') ||
+    status.includes('pending');
 
   if (isActiveOpen) {
-    // If it has an explicit closed date and status is closed, omit
-    if (c.ClosedDate && !isActiveOpen) return false;
     return true;
   }
 
@@ -327,7 +330,12 @@ export function isClosedAlert(c: SFCase): boolean {
     status.includes('progress') ||
     status.includes('investigat') ||
     status.includes('active') ||
-    status.includes('assigned');
+    status.includes('assigned') ||
+    status.includes('escalat') ||
+    status.includes('queue') ||
+    status.includes('triag') ||
+    status.includes('review') ||
+    status.includes('pending');
   if (isActiveOpen) return false;
 
   const endTime = getTicketEndTime(c);

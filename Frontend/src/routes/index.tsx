@@ -317,7 +317,7 @@ function Index() {
   // Strictly filter alerts: only open alerts (no end time, no closed/hold status)
   const openAlerts = useMemo(() => {
     const list = [
-      ...(sfOverview?.alerts ?? []).filter(isOpenAlert),
+      ...(sfOverview?.alerts ?? []),
       ...(sfOverview?.cases ?? []).filter(c => isAlertCase(c) && isOpenAlert(c)),
     ];
     const map = new Map<string, SFCase>();

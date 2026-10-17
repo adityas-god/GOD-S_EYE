@@ -347,11 +347,14 @@ export function isOpenAlert(c) {
     status.includes('progress') ||
     status.includes('investigat') ||
     status.includes('active') ||
-    status.includes('assigned');
+    status.includes('assigned') ||
+    status.includes('escalat') ||
+    status.includes('queue') ||
+    status.includes('triag') ||
+    status.includes('review') ||
+    status.includes('pending');
 
   if (isActiveOpen) {
-    // If it has an explicit closed date and status is closed, omit
-    if (c.ClosedDate && !isActiveOpen) return false;
     return true;
   }
 
@@ -381,7 +384,12 @@ export function isClosedAlert(c) {
     status.includes('progress') ||
     status.includes('investigat') ||
     status.includes('active') ||
-    status.includes('assigned');
+    status.includes('assigned') ||
+    status.includes('escalat') ||
+    status.includes('queue') ||
+    status.includes('triag') ||
+    status.includes('review') ||
+    status.includes('pending');
   if (isActiveOpen) return false;
 
   const endTime = getTicketEndTime(c);
@@ -1481,7 +1489,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
+      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
@@ -1491,7 +1499,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = TODAY OR LastModifiedDate = TODAY",
+      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
@@ -1499,7 +1507,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed'",
+      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
     ].join(' ');
 
@@ -1507,7 +1515,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Snow_Sitename__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed'",
+      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 400',
     ].join(' ');
 
