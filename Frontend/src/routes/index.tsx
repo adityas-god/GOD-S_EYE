@@ -25,6 +25,7 @@ import {
   X,
   Clock,
   CheckCircle2,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -345,6 +346,18 @@ function Index() {
     ? sfOverview.totalLiveCases
     : openCases.length;
   const totalOpenAlerts = openAlerts.length;
+
+  const totalActiveSev1 = useMemo(() => {
+    const fromCases = openCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length;
+    const fromSites = enrichedSites.reduce((sum, s) => sum + (s.sev1_count ?? 0), 0);
+    return Math.max(fromCases, fromSites);
+  }, [openCases, enrichedSites]);
+
+  const totalActiveSev2 = useMemo(() => {
+    const fromCases = openCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
+    const fromSites = enrichedSites.reduce((sum, s) => sum + (s.sev2_count ?? 0), 0);
+    return Math.max(fromCases, fromSites);
+  }, [openCases, enrichedSites]);
   const activeSites = useMemo(() => {
     return sortedAndFilteredSites.filter(
       s => (s.open_cases_count ?? 0) > 0 || (s.open_alerts_count ?? 0) > 0 || Boolean(s.is_down)
@@ -993,18 +1006,49 @@ function Index() {
               {activeSites.length} sites with open tickets
             </div>
           </div>
-          <div className="metric">
+          <div 
+            className="metric" 
+            style={{ cursor: 'pointer' }}
+            title="Click to view live urgent cases in the table below"
+            onClick={() => {
+              setActiveBucket('cases');
+              if (severityFilter === 'All') {
+                setSeverityFilter(totalActiveSev1 > 0 ? 'SEV 1 URGENT' : 'SEV 2 URGENT');
+              } else {
+                setSeverityFilter('All');
+              }
+            }}
+          >
             <span className="metric-label">
-              <Radio />
-              Opsgenie alerts
+              <ShieldAlert style={{ width: 14, height: 14, color: totalActiveSev1 > 0 ? '#ef4444' : totalActiveSev2 > 0 ? '#f59e0b' : 'var(--muted-foreground)' }} />
+              Active urgent cases
             </span>
-            <div>
-              <strong className="metric-dash">—</strong>
-              <span>awaiting connection</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginTop: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: totalActiveSev1 > 0 ? '#ef4444' : 'var(--muted-foreground)' }}>
+                  SEV 1 URGENT :
+                </span>
+                <strong className={totalActiveSev1 > 0 ? '' : 'metric-dash'} style={{ fontSize: 24, fontWeight: 450, color: totalActiveSev1 > 0 ? '#ef4444' : undefined, lineHeight: 1 }}>
+                  {totalActiveSev1}
+                </strong>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 11, fontWeight: 500, color: totalActiveSev2 > 0 ? '#f59e0b' : 'var(--muted-foreground)' }}>
+                  SEV 2 URGENT :
+                </span>
+                <strong className={totalActiveSev2 > 0 ? '' : 'metric-dash'} style={{ fontSize: 24, fontWeight: 450, color: totalActiveSev2 > 0 ? '#f59e0b' : undefined, lineHeight: 1 }}>
+                  {totalActiveSev2}
+                </strong>
+              </div>
             </div>
             <div className="metric-foot">
-              <span className="source-dot" />
-              Source not connected
+              <span 
+                className="source-dot" 
+                style={{ background: totalActiveSev1 > 0 ? '#ef4444' : totalActiveSev2 > 0 ? '#f59e0b' : '#22c55e' }} 
+              />
+              {totalActiveSev1 + totalActiveSev2 > 0 
+                ? `${totalActiveSev1 + totalActiveSev2} urgent ${totalActiveSev1 + totalActiveSev2 === 1 ? 'case' : 'cases'} across workspace` 
+                : 'All sites clear of urgent cases'}
             </div>
           </div>
         </div>

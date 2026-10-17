@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="100%" height="100%">
+  <defs>
+    <linearGradient id="sp-pulse-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7A00"/>
+      <stop offset="50%" stop-color="#FF5400"/>
+      <stop offset="100%" stop-color="#EA3A00"/>
+    </linearGradient>
+    <linearGradient id="sp-bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1c1d24"/>
+      <stop offset="100%" stop-color="#0e0f13"/>
+    </linearGradient>
+    <filter id="sp-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#FF5400" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <!-- Premium rounded dark badge -->
+  <rect width="64" height="64" rx="15" fill="url(#sp-bg-grad)"/>
+  <rect width="62" height="62" x="1" y="1" rx="14" fill="none" stroke="#2c2e38" stroke-width="1.5"/>
+
+  <!-- Sitepulse 3-bar brand mark with signature -15deg skew -->
+  <g transform="translate(32, 32) skewY(-15) translate(-32, -32)" filter="url(#sp-glow)">
+    <!-- Bar 1 (Left - 22px) -->
+    <rect x="15" y="21" width="8" height="22" rx="3.5" fill="url(#sp-pulse-grad)"/>
+    <!-- Bar 2 (Center - 38px) -->
+    <rect x="28" y="13" width="8" height="38" rx="3.5" fill="url(#sp-pulse-grad)"/>
+    <!-- Bar 3 (Right - 28px) -->
+    <rect x="41" y="18" width="8" height="28" rx="3.5" fill="url(#sp-pulse-grad)"/>
+  </g>
+</svg>
