@@ -330,6 +330,7 @@ select option { background: var(--card); }
 .sf-panel-table-head { display: grid; grid-template-columns: minmax(180px, 1.4fr) 85px 85px 105px 125px 95px 125px 90px; gap: 10px; padding: 13px 23px; color: var(--muted-foreground); font-family: var(--font-mono); font-size: 8px; border-bottom: 1px solid var(--border); align-items: center; }
 .sf-case-row { display: grid; grid-template-columns: minmax(180px, 1.4fr) 85px 85px 105px 125px 95px 125px 90px; gap: 10px; padding: 12px 23px; align-items: center; border-bottom: 1px solid var(--border); content-visibility: auto; contain-intrinsic-size: 52px; transition: background 0.1s ease; cursor: pointer; text-decoration: none; color: inherit; }
 .sf-case-row:hover { background: var(--secondary); }
+.site-table-row:hover { background: var(--secondary) !important; }
 .case-subject-cell { display: flex; flex-direction: column; gap: 4px; overflow: hidden; padding-right: 10px; }
 .case-number-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
 .case-number-tag { display: inline-flex; align-items: center; gap: 4px; font-family: var(--font-mono); font-size: 10.5px; color: #ffffff !important; background: #2563eb; border: 1px solid #1d4ed8; padding: 2px 7px; border-radius: 4px; font-weight: 600; text-decoration: none; transition: all 0.15s ease; cursor: pointer; box-shadow: none !important; }
@@ -1034,4 +1035,44 @@ select option { background: var(--card); }
     grid-template-columns: 120px 90px 100px 125px 125px 80px 1fr 75px;
     min-width: 860px;
   }
+}
+
+/* Severity Distribution Telemetry Cards */
+.severity-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 1180px) {
+  .severity-cards-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .severity-cards-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .severity-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@keyframes telemetryPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.35);
+    opacity: 0.55;
+  }
+}
+
+.telemetry-live-dot {
+  animation: telemetryPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

@@ -27,6 +27,7 @@ try {
 import sitesRouter from './src/routes/sites.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
+import analyticsRouter from './src/routes/analytics.routes.js';
 
 import { getSfConfig, getSalesforceToken, getLastSalesforceError, fetchRedZoneSitesOverview } from './src/services/salesforce.service.js';
 
@@ -111,6 +112,7 @@ app.get('/api/health', async (req, res) => {
 app.use('/api/sites', sitesRouter);
 app.use('/api/cases', casesRouter);
 app.use('/api/webhooks', webhooksRouter);
+app.use('/api/analytics', analyticsRouter);
 
 // 404 Handler
 app.use((req, res) => {

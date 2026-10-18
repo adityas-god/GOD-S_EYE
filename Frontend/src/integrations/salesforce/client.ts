@@ -400,32 +400,109 @@ export function isDirTicket(c: SFCase): boolean {
 
   const raw = c as Record<string, unknown>;
 
-  // 1. Explicit DIR approval field (e.g. 'DIR Approved', 'Pending Approval', 'DIR Rejected', etc.)
+  // 1. Explicit Type: In GreyOrange Salesforce & ITIL, 'Problem' is the post-incident DIR/RCA tracking case
+  const typeStr = String(raw.Type || raw.type || raw.rawType || raw.raw_type || '').trim().toLowerCase();
+  if (
+    typeStr === 'problem' ||
+    typeStr.includes('problem') ||
+    typeStr === 'dir' ||
+    typeStr.includes('dir') ||
+    typeStr === 'rca' ||
+    typeStr.includes('rca') ||
+    typeStr === 'pir' ||
+    typeStr.includes('post incident') ||
+    typeStr.includes('investigation')
+  ) {
+    return true;
+  }
+
+  // 2. Explicit DIR approval field populated with ANY state (e.g. 'DIR Draft Pending', 'DIR Approved', 'DIR Submitted', etc.)
   const dirApproval = String(raw.DIR_Approval__c || raw.dir_approval || '').trim().toLowerCase();
-  if (dirApproval && (dirApproval.includes('dir') || dirApproval.includes('approved') || dirApproval.includes('pending') || dirApproval.includes('rejected'))) {
+  if (
+    dirApproval &&
+    dirApproval !== 'null' &&
+    dirApproval !== 'undefined' &&
+    dirApproval !== 'none' &&
+    dirApproval !== 'n/a' &&
+    dirApproval !== ''
+  ) {
     return true;
   }
 
-  // 2. Approval status contains 'DIR' or 'Documentation' or 'CM Review'
+  // 3. Approval status contains 'DIR', 'Documentation', 'CM Review', 'Review', 'Approval', etc.
   const appStatus = String(raw.Approval_status__c || raw.approval_status || '').trim().toLowerCase();
-  if (appStatus.includes('dir') || appStatus.includes('documentation') || appStatus.includes('cm review')) {
+  if (
+    appStatus &&
+    appStatus !== 'null' &&
+    appStatus !== 'undefined' &&
+    appStatus !== 'none' &&
+    (appStatus.includes('dir') ||
+      appStatus.includes('documentation') ||
+      appStatus.includes('cm review') ||
+      appStatus.includes('review') ||
+      appStatus.includes('approval') ||
+      appStatus.includes('pending'))
+  ) {
     return true;
   }
 
-  // 3. Current RCA status is populated (e.g. 'Pending on IM', 'RCA Submitted', etc.)
+  // 4. Current RCA status is populated (e.g. 'Pending on IM', 'RCA Submitted', etc.)
   const rcaStatus = String(raw.Current_RCA_Status__c || raw.current_rca_status || '').trim().toLowerCase();
-  if (rcaStatus && rcaStatus !== 'none' && rcaStatus !== 'null' && rcaStatus !== 'n/a') {
+  if (
+    rcaStatus &&
+    rcaStatus !== 'none' &&
+    rcaStatus !== 'null' &&
+    rcaStatus !== 'undefined' &&
+    rcaStatus !== 'n/a' &&
+    rcaStatus !== ''
+  ) {
     return true;
   }
 
-  // 4. Default ticket problem reference is populated (indicates this is a child problem/DIR tracking ticket)
+  // 5. RCA Approval field
+  const rcaApproval = String(raw.RCA_Approval__c || raw.rca_approval || '').trim().toLowerCase();
+  if (
+    rcaApproval &&
+    rcaApproval !== 'none' &&
+    rcaApproval !== 'null' &&
+    rcaApproval !== 'undefined' &&
+    rcaApproval !== 'n/a' &&
+    rcaApproval !== ''
+  ) {
+    return true;
+  }
+
+  // 6. Default ticket problem reference is populated (indicates this is a child problem/DIR tracking ticket)
   if (raw.Default_Ticket_For_Problem__c) {
     return true;
   }
 
-  // 5. Subject patterns explicitly mentioning DIR or RCA
+  // 7. Subject patterns explicitly mentioning DIR, RCA, PIR, Safety Incident Reporting, Post Incident
   const sub = String(c.Subject || raw.subject || '').trim();
-  if (/\b(DIR|RCA)\b/i.test(sub)) {
+  if (
+    /\b(DIR|RCA|PIR)\b/i.test(sub) ||
+    /safety\s+incident\s+reporting/i.test(sub) ||
+    /detailed\s+incident\s+report/i.test(sub) ||
+    /root\s+cause\s+analysis/i.test(sub) ||
+    /root\s+cause/i.test(sub) ||
+    /post\s+incident/i.test(sub) ||
+    /problem\s+investigation/i.test(sub) ||
+    /post[- ]?mortem/i.test(sub) ||
+    /^\[?DIR\]?[:\s-]/i.test(sub) ||
+    /^\[?RCA\]?[:\s-]/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // 8. Description check for DIR/RCA templates
+  const desc = String(raw.Description || raw.description || '').toLowerCase();
+  if (
+    desc &&
+    (desc.includes('detailed incident report') ||
+      desc.includes('root cause analysis (rca)') ||
+      desc.includes('dir approval') ||
+      desc.includes('rca status:'))
+  ) {
     return true;
   }
 
@@ -606,6 +683,7 @@ export function isIncidentTicket(c: SFCase): boolean {
   if (!c) return false;
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
+  if (isImTicket(c)) return false;
   return true;
 }
 

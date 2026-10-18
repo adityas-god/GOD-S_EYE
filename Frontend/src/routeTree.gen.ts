@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AnalyticsRouteImport } from './routes/analytics'
 import { Route as RedZoneRouteImport } from './routes/red-zone'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SfTestRouteImport } from './routes/sf-test'
@@ -18,6 +19,11 @@ import { Route as SitesSiteIdRouteImport } from './routes/sites/$siteId'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnalyticsRoute = AnalyticsRouteImport.update({
+  id: '/analytics',
+  path: '/analytics',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RedZoneRoute = RedZoneRouteImport.update({
@@ -43,6 +49,7 @@ const SitesSiteIdRoute = SitesSiteIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/red-zone': typeof RedZoneRoute
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
@@ -50,6 +57,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/red-zone': typeof RedZoneRoute
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
@@ -58,6 +66,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/analytics': typeof AnalyticsRoute
   '/red-zone': typeof RedZoneRoute
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
@@ -65,14 +74,15 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
+  fullPaths: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
-  id: '__root__' | '/' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
+  to: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
+  id: '__root__' | '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AnalyticsRoute: typeof AnalyticsRoute
   RedZoneRoute: typeof RedZoneRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
   SfTestRoute: typeof SfTestRoute
@@ -86,6 +96,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/analytics': {
+      id: '/analytics'
+      path: '/analytics'
+      fullPath: '/analytics'
+      preLoaderRoute: typeof AnalyticsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/red-zone': {
@@ -121,6 +138,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AnalyticsRoute: AnalyticsRoute,
   RedZoneRoute: RedZoneRoute,
   ResetPasswordRoute: ResetPasswordRoute,
   SfTestRoute: SfTestRoute,

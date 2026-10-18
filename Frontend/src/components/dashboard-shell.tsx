@@ -20,6 +20,7 @@ import {
   History,
   Settings,
   Activity,
+  BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -46,6 +47,7 @@ export function DashboardShell({
   const routerState = useRouterState();
   const currentPath = routerState?.location?.pathname ?? '';
   const isRedZoneActive = currentPath === '/red-zone';
+  const isAnalyticsActive = currentPath === '/analytics';
 
   const { data: sites } = useQuery(sitesQueryOptions());
   const actualSitesCount = sites?.length ?? 78;
@@ -117,7 +119,7 @@ export function DashboardShell({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          <Button variant="nav" asChild className={!detail && !isRedZoneActive && activeTab === 'all' ? 'active' : ''}>
+          <Button variant="nav" asChild className={!detail && !isRedZoneActive && !isAnalyticsActive && activeTab === 'all' ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
               All sites
@@ -134,6 +136,17 @@ export function DashboardShell({
               <ShieldAlert />
               RED zone sites
               <span className="nav-count">{redZoneCount}</span>
+            </Link>
+          </Button>
+
+          <Button
+            variant="nav"
+            asChild
+            className={isAnalyticsActive ? 'active' : ''}
+          >
+            <Link to="/analytics">
+              <BarChart3 />
+              GO analytics
             </Link>
           </Button>
 
@@ -308,7 +321,7 @@ export function DashboardShell({
             </button>
             <span>Workspace</span>
             <span className="crumb-slash">/</span>
-            <span>{detail ? 'Site details' : isRedZoneActive ? 'RED zone sites' : 'Site overview'}</span>
+            <span>{detail ? 'Site details' : isRedZoneActive ? 'RED zone sites' : isAnalyticsActive ? 'GO analytics' : 'Site overview'}</span>
           </div>
           <div className="top-actions">
             <span className="workspace-status">

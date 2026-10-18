@@ -242,32 +242,111 @@ export function isLiveOpenCase(c) {
 export function isDirTicket(c) {
   if (!c) return false;
 
-  // 1. Explicit DIR approval field (e.g. 'DIR Approved', 'Pending Approval', 'DIR Rejected', etc.)
-  const dirApproval = String(c.DIR_Approval__c || c.dir_approval || '').trim().toLowerCase();
-  if (dirApproval && (dirApproval.includes('dir') || dirApproval.includes('approved') || dirApproval.includes('pending') || dirApproval.includes('rejected'))) {
+  const raw = c;
+
+  // 1. Explicit Type: In GreyOrange Salesforce & ITIL, 'Problem' is the post-incident DIR/RCA tracking case
+  const typeStr = String(raw.Type || raw.type || raw.rawType || raw.raw_type || '').trim().toLowerCase();
+  if (
+    typeStr === 'problem' ||
+    typeStr.includes('problem') ||
+    typeStr === 'dir' ||
+    typeStr.includes('dir') ||
+    typeStr === 'rca' ||
+    typeStr.includes('rca') ||
+    typeStr === 'pir' ||
+    typeStr.includes('post incident') ||
+    typeStr.includes('investigation')
+  ) {
     return true;
   }
 
-  // 2. Approval status contains 'DIR' or 'Documentation' or 'CM Review'
-  const appStatus = String(c.Approval_status__c || c.approval_status || '').trim().toLowerCase();
-  if (appStatus.includes('dir') || appStatus.includes('documentation') || appStatus.includes('cm review')) {
+  // 2. Explicit DIR approval field populated with ANY state (e.g. 'DIR Draft Pending', 'DIR Approved', 'DIR Submitted', etc.)
+  const dirApproval = String(raw.DIR_Approval__c || raw.dir_approval || '').trim().toLowerCase();
+  if (
+    dirApproval &&
+    dirApproval !== 'null' &&
+    dirApproval !== 'undefined' &&
+    dirApproval !== 'none' &&
+    dirApproval !== 'n/a' &&
+    dirApproval !== ''
+  ) {
     return true;
   }
 
-  // 3. Current RCA status is populated (e.g. 'Pending on IM', 'RCA Submitted', etc.)
-  const rcaStatus = String(c.Current_RCA_Status__c || c.current_rca_status || '').trim().toLowerCase();
-  if (rcaStatus && rcaStatus !== 'none' && rcaStatus !== 'null' && rcaStatus !== 'n/a') {
+  // 3. Approval status contains 'DIR', 'Documentation', 'CM Review', 'Review', 'Approval', etc.
+  const appStatus = String(raw.Approval_status__c || raw.approval_status || '').trim().toLowerCase();
+  if (
+    appStatus &&
+    appStatus !== 'null' &&
+    appStatus !== 'undefined' &&
+    appStatus !== 'none' &&
+    (appStatus.includes('dir') ||
+      appStatus.includes('documentation') ||
+      appStatus.includes('cm review') ||
+      appStatus.includes('review') ||
+      appStatus.includes('approval') ||
+      appStatus.includes('pending'))
+  ) {
     return true;
   }
 
-  // 4. Default ticket problem reference is populated (indicates this is a child problem/DIR tracking ticket)
-  if (c.Default_Ticket_For_Problem__c) {
+  // 4. Current RCA status is populated (e.g. 'Pending on IM', 'RCA Submitted', etc.)
+  const rcaStatus = String(raw.Current_RCA_Status__c || raw.current_rca_status || '').trim().toLowerCase();
+  if (
+    rcaStatus &&
+    rcaStatus !== 'none' &&
+    rcaStatus !== 'null' &&
+    rcaStatus !== 'undefined' &&
+    rcaStatus !== 'n/a' &&
+    rcaStatus !== ''
+  ) {
     return true;
   }
 
-  // 5. Subject patterns explicitly mentioning DIR or RCA
-  const sub = String(c.Subject || c.subject || '').trim();
-  if (/\b(DIR|RCA)\b/i.test(sub)) {
+  // 5. RCA Approval field
+  const rcaApproval = String(raw.RCA_Approval__c || raw.rca_approval || '').trim().toLowerCase();
+  if (
+    rcaApproval &&
+    rcaApproval !== 'none' &&
+    rcaApproval !== 'null' &&
+    rcaApproval !== 'undefined' &&
+    rcaApproval !== 'n/a' &&
+    rcaApproval !== ''
+  ) {
+    return true;
+  }
+
+  // 6. Default ticket problem reference is populated (indicates this is a child problem/DIR tracking ticket)
+  if (raw.Default_Ticket_For_Problem__c) {
+    return true;
+  }
+
+  // 7. Subject patterns explicitly mentioning DIR, RCA, PIR, Safety Incident Reporting, Post Incident
+  const sub = String(raw.Subject || raw.subject || '').trim();
+  if (
+    /\b(DIR|RCA|PIR)\b/i.test(sub) ||
+    /safety\s+incident\s+reporting/i.test(sub) ||
+    /detailed\s+incident\s+report/i.test(sub) ||
+    /root\s+cause\s+analysis/i.test(sub) ||
+    /root\s+cause/i.test(sub) ||
+    /post\s+incident/i.test(sub) ||
+    /problem\s+investigation/i.test(sub) ||
+    /post[- ]?mortem/i.test(sub) ||
+    /^\[?DIR\]?[:\s-]/i.test(sub) ||
+    /^\[?RCA\]?[:\s-]/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // 8. Description check for DIR/RCA templates
+  const desc = String(raw.Description || raw.description || '').toLowerCase();
+  if (
+    desc &&
+    (desc.includes('detailed incident report') ||
+      desc.includes('root cause analysis (rca)') ||
+      desc.includes('dir approval') ||
+      desc.includes('rca status:'))
+  ) {
     return true;
   }
 
@@ -448,6 +527,7 @@ export function isIncidentTicket(c) {
   if (!c) return false;
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
+  if (isImTicket(c)) return false;
   return true;
 }
 
@@ -1978,9 +2058,9 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
-      "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND (Type = null OR Type != 'Alert')) OR ClosedDate = TODAY)",
+      "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))) OR ClosedDate = TODAY)",
       'ORDER BY LastModifiedDate DESC LIMIT 800',
     ].join(' ');
 
@@ -1988,7 +2068,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
       'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 800',
@@ -3294,22 +3374,24 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   // Single-site drilldown fetches dedicated 30 days for that single site with pagination (up to 3000 records)
   const isGlobalOverview = !siteName;
   const overviewPrimarySoql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Priority,',
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
+    'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c',
     'FROM Case',
-    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
+    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))",
     'ORDER BY CreatedDate DESC LIMIT 6000',
   ].join(' ');
 
   const sitePrimarySoql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Priority,',
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
+    'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c',
     'FROM Case',
-    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
+    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))",
     siteFilterClause,
     'ORDER BY CreatedDate DESC',
   ].filter(Boolean).join(' ');
