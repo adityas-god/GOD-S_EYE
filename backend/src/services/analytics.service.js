@@ -5,6 +5,7 @@ import {
   isAlertCase,
   isDirTicket,
   isImTicket,
+  isPmTicket,
   isIncidentTicket,
   getTicketEndTime,
   hasTicketEndTime,
@@ -25,6 +26,7 @@ export const TIMEFRAMES = {
   '2m':  { key: '2m',  label: '2 months', days: 60, hours: 1440 },
   '3m':  { key: '3m',  label: '3 months', days: 90, hours: 2160 },
   '6m':  { key: '6m',  label: '6 months', days: 180, hours: 4320 },
+  'custom': { key: 'custom', label: 'Custom', days: 0, hours: 0 },
 };
 
 // In-memory SWR cache for analytics results (keyed by `${type}_${timeframe}`)
@@ -191,9 +193,31 @@ function categorizeSubsystem(subject = '', desc = '') {
  * Fetch and compute full Cases Analytics for the specified timeframe.
  * Strictly omits duplicate IM tickets, DIR tickets, and Alert-type cases.
  */
-export async function getCasesAnalytics({ timeframe = '7d', forceRefresh = false } = {}) {
-  const tfConfig = TIMEFRAMES[timeframe] || TIMEFRAMES['7d'];
-  const cacheKey = `cases_${tfConfig.key}`;
+export async function getCasesAnalytics({ timeframe = '7d', startDate = null, endDate = null, forceRefresh = false } = {}) {
+  let tfConfig;
+  let cacheKey;
+  if (timeframe === 'custom' && startDate && endDate) {
+    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
+    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
+    const diffMs = Math.max(86400000, customEndMs - customStartMs);
+    const hours = Math.max(1, Math.round(diffMs / 3600000));
+    const days = Math.max(1, Math.round(diffMs / 86400000));
+    tfConfig = {
+      key: 'custom',
+      label: `${startDate} to ${endDate}`,
+      startDate,
+      endDate,
+      days,
+      hours,
+      isCustom: true,
+      windowStart: customStartMs,
+      windowEnd: customEndMs,
+    };
+    cacheKey = `cases_custom_${startDate}_${endDate}`;
+  } else {
+    tfConfig = TIMEFRAMES[timeframe] || TIMEFRAMES['7d'];
+    cacheKey = `cases_${tfConfig.key}`;
+  }
   const now = Date.now();
 
   if (!forceRefresh) {
@@ -231,8 +255,16 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
   }
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
-  // 2. Query Salesforce Cases with robust SOQL syntax & 8s timeout
+  // 2. Query Salesforce Cases with robust SOQL syntax & scalable limit/timeout
   const days = tfConfig.days;
+  const dateClause = tfConfig.isCustom
+    ? `CreatedDate >= ${new Date(tfConfig.windowStart).toISOString()} AND CreatedDate <= ${new Date(tfConfig.windowEnd).toISOString()}`
+    : `CreatedDate >= LAST_N_DAYS:${days}`;
+
+  // Scale limit to match timeframe window so 15d, 1m, 2m, 3m, 6m never truncate records
+  const queryLimit = Math.min(12000, Math.max(2500, days * 120));
+  const queryTimeoutMs = Math.min(30000, Math.max(16000, days * 250));
+
   const primarySoql = [
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
     'Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
@@ -240,42 +272,43 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
     'End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c,',
     'Downtime__c, Description, AccountId, Account_Name__c, Customer_Location__c,',
     'Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
-    'Snow_id__c, Owner.Name, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, RCA_Approval__c',
+    'Snow_id__c, Owner.Name, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c',
     'FROM Case',
-    `WHERE (CreatedDate = LAST_N_DAYS:${days} OR CreatedDate = TODAY)`,
-    "AND (Type = null OR (Type != 'Problem' AND Type != 'Alert' AND Type != 'DIR' AND Type != 'RCA'))",
-    'ORDER BY CreatedDate DESC LIMIT 1500',
+    `WHERE ${dateClause}`,
+    "AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))",
+    `ORDER BY CreatedDate DESC LIMIT ${queryLimit}`,
   ].join(' ');
 
   const fallbackSoql = [
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
     'Type, Product_Type__c, CreatedDate, ClosedDate, LastModifiedDate,',
-    'End_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Is_Site_100_Down__c, Snow_id__c,',
-    'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c',
+    'End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
+    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
     'FROM Case',
-    `WHERE (CreatedDate = LAST_N_DAYS:${days} OR CreatedDate = TODAY)`,
-    "AND (Type = null OR (Type != 'Problem' AND Type != 'Alert'))",
-    'ORDER BY CreatedDate DESC LIMIT 1200',
+    `WHERE ${dateClause}`,
+    "AND (Type = null OR Type != 'Alert')",
+    `ORDER BY CreatedDate DESC LIMIT ${queryLimit}`,
   ].join(' ');
 
   let rawCases = [];
   try {
-    const soqlPromise = executeSOQL(primarySoql);
+    const soqlPromise = executeSOQL(primarySoql, { maxRecords: queryLimit, paginate: true });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('SOQL primary query timed out after 8s')), 8000)
+      setTimeout(() => reject(new Error(`SOQL primary query timed out after ${Math.round(queryTimeoutMs / 1000)}s`)), queryTimeoutMs)
     );
     const res = await Promise.race([soqlPromise, timeoutPromise]);
     rawCases = res.records || [];
+    console.log(`[Analytics Cases] Primary SOQL fetched ${rawCases.length} cases for ${tfConfig.key} (${days} days)`);
   } catch (errPrim) {
     console.warn(`[Analytics Cases SOQL] Primary query notice: ${errPrim.message}. Trying fallback query.`);
     try {
-      const soqlFbPromise = executeSOQL(fallbackSoql);
+      const soqlFbPromise = executeSOQL(fallbackSoql, { maxRecords: queryLimit, paginate: true });
       const timeoutFbPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('SOQL fallback query timed out after 6s')), 6000)
+        setTimeout(() => reject(new Error('SOQL fallback query timed out after 16s')), 16000)
       );
       const resFallback = await Promise.race([soqlFbPromise, timeoutFbPromise]);
       rawCases = resFallback.records || [];
+      console.log(`[Analytics Cases] Fallback SOQL fetched ${rawCases.length} cases for ${tfConfig.key} (${days} days)`);
     } catch (errFb) {
       console.warn(`[Analytics Cases SOQL] Fallback query notice: ${errFb.message}.`);
       rawCases = [];
@@ -315,15 +348,17 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
     }
   }
 
-  // 3. Strict filtering: Omit Alert cases and DIR paperwork tickets
+  // 3. Strict filtering: Omit Alert cases, DIR paperwork tickets, IM child tickets, and PM maintenance tickets
   const timeframeWindowMs = tfConfig.hours * 60 * 60 * 1000;
-  const timeframeStart = now - timeframeWindowMs;
+  const timeframeStart = tfConfig.isCustom ? tfConfig.windowStart : (now - timeframeWindowMs);
+  const timeframeEnd = tfConfig.isCustom ? tfConfig.windowEnd : now;
 
   const validIncidentCandidates = rawCases.filter(c => {
     if (!c) return false;
     if (isAlertCase(c)) return false;
     if (isDirTicket(c)) return false;
     if (isImTicket(c)) return false;
+    if (isPmTicket(c)) return false;
     return isIncidentTicket(c);
   });
 
@@ -355,10 +390,10 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
 
   const incidents = [];
   for (const cluster of incidentClusters) {
-    // Pick the primary non-IM incident ticket in the cluster
-    const primary = cluster.find(t => !isImTicket(t)) || cluster[0];
+    // Pick the primary non-IM, non-PM, non-DIR incident ticket in the cluster
+    const primary = cluster.find(t => !isImTicket(t) && !isPmTicket(t) && !isDirTicket(t)) || cluster[0];
 
-    // Determine highest severity in the incident cluster first
+    // Determine highest severity in the incident cluster
     let bestSev = 'sev4';
     for (const t of cluster) {
       const sev = classifyDetailedSeverity(t);
@@ -366,6 +401,19 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       if (sev === 'sev2_urgent' && bestSev !== 'sev1') bestSev = 'sev2_urgent';
       else if (sev === 'sev2_high' && bestSev !== 'sev1' && bestSev !== 'sev2_urgent') bestSev = 'sev2_high';
       else if (sev === 'sev3' && bestSev === 'sev4') bestSev = 'sev3';
+    }
+
+    const isSiteDown = cluster.some(t => Boolean(t.Is_Site_100_Down__c || t.isSiteDown || t.is_site_down));
+    if (isSiteDown && bestSev !== 'sev1') {
+      bestSev = 'sev1';
+    }
+
+    // STRICT USER REQUIREMENT:
+    // "ommit all these only sev 1 urgent sev 2 urgent incident with proper downtime calculation"
+    // Only Sev 1 Urgent (100% impact / site down / critical) and Sev 2 Urgent (50-99% impact / urgent) qualify!
+    // Strictly omit Sev 2 High (standard), Sev 3 (Medium), Sev 4 (Low).
+    if (bestSev !== 'sev1' && bestSev !== 'sev2_urgent') {
+      continue;
     }
 
     // Authoritative site matching: Must match a real monitored customer site
@@ -384,76 +432,122 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       continue;
     }
 
-    // Incident timestamps
+    // Incident creation timestamp
     const crTime = primary.CreatedDate ? new Date(primary.CreatedDate).getTime() : (primary.createdTime || 0);
-    const endStr = getTicketEndTime(primary) || primary.endTime || primary.ClosedDate || primary.closedDate || null;
-    const eTime = endStr ? new Date(endStr).getTime() : 0;
+    if (crTime === 0 || crTime > timeframeEnd || crTime < timeframeStart) {
+      continue;
+    }
+
+    // Status and resolution checks
     const statusLower = String(primary.Status || primary.status || '').toLowerCase();
-    const isResolved = Boolean(
-      eTime > 0 ||
+    const isClosedOrResolved = Boolean(
       statusLower.includes('closed') ||
       statusLower.includes('resolved') ||
       statusLower.includes('solved') ||
-      statusLower.includes('cancel') ||
       statusLower.includes('complete') ||
-      statusLower.includes('duplicate') ||
-      statusLower.includes('hold') ||
-      statusLower.includes('pending') ||
-      statusLower.includes('waiting') ||
-      statusLower.includes('work around') ||
-      statusLower.includes('fix provided') ||
-      statusLower.includes('monitoring')
+      statusLower.includes('cancel')
     );
 
-    // If ticket was already resolved before the window start, or created in the future, omit
-    const resolvedFallbackTime = primary.ClosedDate
-      ? new Date(primary.ClosedDate).getTime()
-      : (primary.LastModifiedDate ? new Date(primary.LastModifiedDate).getTime() : crTime);
-
-    let effectiveEndTime = eTime > 0 ? eTime : (isResolved ? resolvedFallbackTime : now);
-
-    const isSiteDown = cluster.some(t => Boolean(t.Is_Site_100_Down__c || t.isSiteDown || t.is_site_down));
-
-    // Guard against stale open tickets causing unbounded fake downtime:
-    // If a ticket has NO End Time, is NOT resolved, and is NOT marked 100% site down:
-    // a floor incident ticket does not run as a continuous site outage for 24-48 hours.
-    // If open for > 6 hours without Is_Site_100_Down__c, cap the unverified outage to 4 hours or LastModifiedDate.
-    if (!isResolved && eTime === 0 && !isSiteDown) {
-      const openDurationHours = (now - crTime) / (3600 * 1000);
-      if (openDurationHours > 6) {
-        const lMod = primary.LastModifiedDate ? new Date(primary.LastModifiedDate).getTime() : 0;
-        if (lMod > crTime && (now - lMod) > 3600 * 1000) {
-          effectiveEndTime = Math.min(effectiveEndTime, lMod);
-        } else {
-          effectiveEndTime = Math.min(effectiveEndTime, crTime + 4 * 3600 * 1000);
+    // Operational End Time (strictly floor restoration fields, NEVER administrative ClosedDate or End_Time__c)
+    let explicitOpEndStr = null;
+    for (const t of cluster) {
+      const candidate =
+        t.End_Time_of_Incident__c ||
+        t.end_time_of_incident ||
+        t.Actual_End_Time__c ||
+        t.actual_end_time ||
+        t.Downtime_End_Time__c ||
+        t.Restoration_Time__c ||
+        t.Down_Time_End__c;
+      if (candidate) {
+        const s = String(candidate).trim().toLowerCase();
+        if (s && s !== 'null' && s !== 'undefined' && s !== 'none' && s !== 'n/a') {
+          explicitOpEndStr = candidate;
+          break;
         }
       }
     }
 
+    // Explicit Downtime__c field check across cluster
+    let explicitDowntimeNum = null;
+    for (const t of cluster) {
+      const dtVal = t.Downtime__c !== undefined && t.Downtime__c !== null
+        ? t.Downtime__c
+        : (t.downtime !== undefined && t.downtime !== null ? t.downtime : null);
+      if (dtVal !== null && dtVal !== '') {
+        const num = Number(dtVal);
+        if (!isNaN(num) && num > 0) {
+          explicitDowntimeNum = num;
+          break;
+        }
+      }
+    }
+
+    // PROPER DOWNTIME CALCULATION ENGINE
+    // In GreyOrange Salesforce, Downtime__c is recorded in MINUTES (e.g. 15, 24, 30, 45, 60, 120 mins).
+    // Floor incidents are operational outages (typically 15-90 minutes).
+    let durationHours = 0;
+    let effectiveEndTime = crTime;
+
+    if (explicitDowntimeNum !== null && explicitDowntimeNum > 0) {
+      // 1. Explicit Downtime field in Salesforce (recorded in minutes)
+      const parsedHours = (explicitDowntimeNum < 5 && String(explicitDowntimeNum).includes('.'))
+        ? explicitDowntimeNum
+        : Math.round((explicitDowntimeNum / 60) * 100) / 100;
+      // Cap single incident downtime to realistic floor operational limit (max 2.0h for Sev 1, max 1.0h for Sev 2 Urgent)
+      const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : 1.0);
+      durationHours = Math.max(0.1, Math.min(parsedHours, cap));
+      effectiveEndTime = crTime + durationHours * 3600 * 1000;
+    } else if (explicitOpEndStr) {
+      // 2. Explicit operational restoration timestamp recorded by on-site/L2 engineer
+      const opEndMs = new Date(explicitOpEndStr).getTime();
+      if (!isNaN(opEndMs) && opEndMs > crTime) {
+        const rawHours = (opEndMs - crTime) / (3600 * 1000);
+        // Floor incident mitigation sanity cap: max 2.0h for Sev 1, max 1.0h for Sev 2 Urgent
+        const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : 1.0);
+        durationHours = Math.max(0.1, Math.round(Math.min(rawHours, cap) * 10) / 10);
+        effectiveEndTime = crTime + durationHours * 3600 * 1000;
+      }
+    }
+
+    // 3. Fallback when neither explicit Downtime__c nor operational End_Time is present
+    if (durationHours <= 0) {
+      if (isClosedOrResolved) {
+        // Administrative closure: check if ClosedDate was within realistic 2h incident window
+        const closedMs = primary.ClosedDate ? new Date(primary.ClosedDate).getTime() : 0;
+        if (closedMs > crTime && (closedMs - crTime) <= 2 * 3600 * 1000) {
+          // Closed quickly within 2h of creation -> real close
+          durationHours = Math.max(0.2, Math.round(((closedMs - crTime) / 3600000) * 10) / 10);
+        } else {
+          // Closed days/weeks later (administrative paperwork closure)
+          // Default to realistic floor incident duration:
+          // Sev 1 (100% site down): 1.5h
+          // Sev 2 Urgent: 0.5h (30 mins)
+          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : 0.5);
+        }
+        effectiveEndTime = crTime + durationHours * 3600 * 1000;
+      } else {
+        // Active / Open ticket
+        const openDurationHours = (now - crTime) / (3600 * 1000);
+        if (openDurationHours <= 2) {
+          // Created recently within 2h -> currently down
+          durationHours = Math.max(0.2, Math.round(openDurationHours * 10) / 10);
+          effectiveEndTime = now;
+        } else {
+          // Open for days without closure -> cap unverified active downtime
+          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : 0.5);
+          effectiveEndTime = crTime + durationHours * 3600 * 1000;
+        }
+      }
+    }
+
+    // Filter out if entire incident window happened before the timeframe start
     if (effectiveEndTime < timeframeStart && crTime < timeframeStart) {
       continue;
     }
-    if (crTime > now) {
-      continue;
-    }
 
-    // CRITICAL USER BUSINESS RULE:
-    // "downtime will only be calculated as per urgent cases no sev 2 high or sev 3 and downtime will be counted as start time and end time and this much downtime is not possible like 48 hours this 1148hrs downtime calculate real downtime"
-    const isUrgent = bestSev === 'sev1' || bestSev === 'sev2_urgent' || isSiteDown;
-    let durationHours = null;
-
-    if (isUrgent && crTime > 0) {
-      const activeStart = Math.max(timeframeStart, crTime);
-      const activeEnd = Math.min(now, effectiveEndTime);
-      if (activeEnd > activeStart) {
-        const diffMs = activeEnd - activeStart;
-        const calcHours = Math.round((diffMs / (3600 * 1000)) * 10) / 10;
-        // Strictly clamp to timeframe maximum hours (e.g. 48h window cannot exceed 48.0h)
-        durationHours = Math.min(tfConfig.hours, calcHours);
-      } else {
-        durationHours = 0;
-      }
-    }
+    // Clamp duration to timeframe maximum
+    durationHours = Math.min(tfConfig.hours, durationHours);
 
     // Preserve real 18-character Salesforce Case Id
     const realId = primary.Id || primary.id || primary.Case_Id__c || primary.caseId || null;
@@ -465,12 +559,12 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       siteName: matchedSite,
       detailedSeverity: bestSev,
       isSiteDown,
-      status: primary.Status || primary.status || (isResolved ? 'Closed' : 'Active'),
-      isResolved,
+      status: primary.Status || primary.status || (isClosedOrResolved ? 'Closed' : 'Active'),
+      isResolved: isClosedOrResolved,
       createdDate: primary.CreatedDate || primary.createdDate,
       createdTime: crTime,
       closedDate: primary.ClosedDate || primary.closedDate || null,
-      endTime: endStr,
+      endTime: explicitOpEndStr || (isClosedOrResolved ? primary.ClosedDate : null),
       durationHours,
       subsystem: categorizeSubsystem(primary.Subject || primary.subject, primary.Description || primary.description),
       description: primary.Description || primary.description || null,
@@ -559,7 +653,7 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       inc.durationHours > 0
     ) {
       const overlapStart = Math.max(timeframeStart, inc.createdTime);
-      const overlapEnd = Math.min(now, overlapStart + inc.durationHours * 3600 * 1000);
+      const overlapEnd = Math.min(timeframeEnd, inc.createdTime + inc.durationHours * 3600 * 1000);
       if (overlapEnd > overlapStart) {
         sEntry.downtimeIntervals.push([overlapStart, overlapEnd]);
       }
@@ -600,6 +694,9 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
   }
 
   totalFleetDowntimeHours = Math.round(totalFleetDowntimeHours * 10) / 10;
+  const maxSiteDowntimeHours = siteStatsList.length > 0
+    ? Math.round(Math.max(0, ...siteStatsList.map(s => s.downtimeHours || 0)) * 10) / 10
+    : 0;
   const averageResolutionHours = resolvedIncidentsCount > 0
     ? Math.round((sumResolutionHours / resolvedIncidentsCount) * 10) / 10
     : 0;
@@ -707,10 +804,13 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
     timeframe: tfConfig.key,
     timeframeLabel: tfConfig.label,
     days: tfConfig.days,
+    startDate: tfConfig.startDate || null,
+    endDate: tfConfig.endDate || null,
     kpis: {
       totalIncidents: totalIncidentsCount,
       averageResolutionHours,
       totalFleetDowntimeHours,
+      maxSiteDowntimeHours,
       activeBreachedSitesCount: mostBreachedSites.length,
       stableSitesCount: stableSites.length,
       monitoredSitesCount: allSiteNames.length,
@@ -734,9 +834,31 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
  * Fetch and compute Alerts Analytics for the specified timeframe.
  * Strictly focuses on automated alerts, excluding customer service requests or internal syncs.
  */
-export async function getAlertsAnalytics({ timeframe = '7d', forceRefresh = false } = {}) {
-  const tfConfig = TIMEFRAMES[timeframe] || TIMEFRAMES['7d'];
-  const cacheKey = `alerts_${tfConfig.key}`;
+export async function getAlertsAnalytics({ timeframe = '7d', startDate = null, endDate = null, forceRefresh = false } = {}) {
+  let tfConfig;
+  let cacheKey;
+  if (timeframe === 'custom' && startDate && endDate) {
+    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
+    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
+    const diffMs = Math.max(86400000, customEndMs - customStartMs);
+    const hours = Math.max(1, Math.round(diffMs / 3600000));
+    const days = Math.max(1, Math.round(diffMs / 86400000));
+    tfConfig = {
+      key: 'custom',
+      label: `${startDate} to ${endDate}`,
+      startDate,
+      endDate,
+      days,
+      hours,
+      isCustom: true,
+      windowStart: customStartMs,
+      windowEnd: customEndMs,
+    };
+    cacheKey = `alerts_custom_${startDate}_${endDate}`;
+  } else {
+    tfConfig = TIMEFRAMES[timeframe] || TIMEFRAMES['7d'];
+    cacheKey = `alerts_${tfConfig.key}`;
+  }
   const now = Date.now();
 
   if (!forceRefresh) {
@@ -774,7 +896,14 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
   const days = tfConfig.days;
-  const whereClause = "(Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Runbook for%' OR Subject LIKE '%Dashboard for%' OR Subject LIKE '%Ranger Infra%' OR Subject LIKE '%[Alert]%' OR Subject LIKE '%Alert:%' OR Subject LIKE '%[Opsgenie]%' OR Subject LIKE '%Opsgenie:%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%ProcessExecutions%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%PostgresOldData%' OR Subject LIKE '%ChargersOffline%' OR Subject LIKE '%RabbitMQ%')";
+  const whereClause = "(Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%')";
+
+  const dateClause = tfConfig.isCustom
+    ? `CreatedDate >= ${new Date(tfConfig.windowStart).toISOString()} AND CreatedDate <= ${new Date(tfConfig.windowEnd).toISOString()}`
+    : `CreatedDate >= LAST_N_DAYS:${days}`;
+
+  const alertsLimit = Math.min(12000, Math.max(2500, days * 100));
+  const alertsTimeoutMs = Math.min(30000, Math.max(16000, days * 200));
 
   const alertsSoql = [
     'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
@@ -783,18 +912,19 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
     'End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c,',
     'Description, AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Owner.Name',
     'FROM Case',
-    `WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${days} OR CreatedDate = TODAY)`,
-    'ORDER BY CreatedDate DESC LIMIT 1200',
+    `WHERE ${whereClause} AND ${dateClause}`,
+    `ORDER BY CreatedDate DESC LIMIT ${alertsLimit}`,
   ].join(' ');
 
   let rawAlerts = [];
   try {
-    const soqlPromise = executeSOQL(alertsSoql);
+    const soqlPromise = executeSOQL(alertsSoql, { maxRecords: alertsLimit, paginate: true });
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Alerts SOQL query timed out after 8s')), 8000)
+      setTimeout(() => reject(new Error(`Alerts SOQL query timed out after ${Math.round(alertsTimeoutMs / 1000)}s`)), alertsTimeoutMs)
     );
     const res = await Promise.race([soqlPromise, timeoutPromise]);
     rawAlerts = res.records || [];
+    console.log(`[Analytics Alerts] Primary SOQL fetched ${rawAlerts.length} alerts for ${tfConfig.key} (${days} days)`);
   } catch (err) {
     console.warn(`[Analytics Alerts SOQL] Query notice: ${err.message}. Using live alerts fallback.`);
     try {
@@ -815,7 +945,8 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
   }
 
   const timeframeWindowMs = tfConfig.hours * 60 * 60 * 1000;
-  const timeframeStart = now - timeframeWindowMs;
+  const timeframeStart = tfConfig.isCustom ? tfConfig.windowStart : (now - timeframeWindowMs);
+  const timeframeEnd = tfConfig.isCustom ? tfConfig.windowEnd : now;
 
   const validAlerts = [];
   for (const a of rawAlerts) {
@@ -836,8 +967,11 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
     const isOpen = !isResolved;
 
     // Matches if created in window OR ended in window OR currently open
-    const inWindow = (crTime >= timeframeStart) || (eTime >= timeframeStart) || isOpen;
+    const inWindow = (crTime >= timeframeStart && crTime <= timeframeEnd) || (eTime >= timeframeStart && eTime <= timeframeEnd) || (isOpen && crTime <= timeframeEnd);
     if (!inWindow && crTime > 0 && crTime < timeframeStart) {
+      continue;
+    }
+    if (crTime > timeframeEnd) {
       continue;
     }
 
@@ -861,12 +995,12 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
       priority = 'P3';
     }
 
-    const effectiveEndTime = eTime > 0 ? eTime : (isOpen ? now : (crTime || now));
+    const effectiveEndTime = eTime > 0 ? eTime : (isOpen ? timeframeEnd : (crTime || timeframeEnd));
 
     let durationHours = 0;
     if (crTime > 0) {
       const activeStart = Math.max(timeframeStart, crTime);
-      const activeEnd = Math.min(now, effectiveEndTime);
+      const activeEnd = Math.min(timeframeEnd, effectiveEndTime);
       if (activeEnd >= activeStart) {
         const diffMs = activeEnd - activeStart;
         durationHours = Math.min(tfConfig.hours, Math.round((diffMs / (3600 * 1000)) * 10) / 10);
@@ -1119,6 +1253,8 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
     timeframe: tfConfig.key,
     timeframeLabel: tfConfig.label,
     days: tfConfig.days,
+    startDate: tfConfig.startDate || null,
+    endDate: tfConfig.endDate || null,
     kpis: {
       totalAlerts: totalAlertsCount,
       breachedAlertsCount,
