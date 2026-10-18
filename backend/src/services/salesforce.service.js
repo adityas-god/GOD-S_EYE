@@ -1074,6 +1074,7 @@ export function normalizeCanonical(str) {
     .replace(/\b(sams\s+atl|sam\s+atl|samatl|samsatl|samprod|samsprod|samsatlprod|samatlprod)\b/gi, 'sams club atl')
     .replace(/\b(sams\s+lax|sam\s+lax|samlax|samslax|samslaxprod|samlaxprod)\b/gi, 'sams club lax')
     .replace(/\b(casey|caseys|caseyprod|caseysprod|casey's|caseys\s+joplin|casey's\s+joplin)\b/gi, "caseys joplin")
+    .replace(/\bxpo\b/gi, 'gxo')
     .replace(/&/g, ' ')
     .replace(/[^a-z0-9]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -1087,7 +1088,11 @@ export const KNOWN_SITE_ALIASES = {
   'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california', 'samslaxprod', 'samslax', 'samlaxprod', 'samlax', 'sams-lax', '8799.us', '9476.us'],
   'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs-usa (goodyear, az)', 'dhl figs usa goodyear az', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
-  'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'xpo-hnm', 'xpo_anf'],
+  'GXO-H&M Prod': [
+    'gxo hm prod', 'gxo-h&m prod', 'gxo h&m', 'gxo hm', 'gxo hnm',
+    'xpo hnm', 'xpo-hnm', 'xpo -hnm', 'xpo - hnm', 'xpo_hnm', 'xpo hm', 'xpo-hm', 'xpo -hm',
+    'gxo hm perris', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'gxo perris', 'xpo perris', 'gxo-hm-prod'
+  ],
   'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond', 'evergreenprod'],
   'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)'],
   'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania', 'farmacia tei-romania'],
@@ -1134,11 +1139,11 @@ export const KNOWN_SITE_ALIASES = {
   'Flaconi': ['flaconi', 'flaconi berlin', 'flaconi-berlin(germany)'],
   'Fujirebio-Ambient': ['fujirebio ambient', 'fujirebio-ambient'],
   'Fujirebio-Chill': ['fujirebio chill', 'fujirebio-chill'],
-  'GXO-Apple': ['gxo apple', 'gxo-apple'],
-  'GXO-Lacoste': ['gxo lacoste', 'gxo-lacoste'],
-  'GXO-Nike': ['gxo nike', 'gxo nike bloomington', 'gxo-nike-bloomington(california)'],
-  'GXO-Verizon': ['gxo verizon', 'gxo verizon dallas', 'gxo-verizon-dallas(texas,usa)'],
-  'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo a&f arizona', 'gxo-a&f-arizona(usa)'],
+  'GXO-Apple': ['gxo apple', 'gxo-apple', 'xpo apple', 'xpo-apple', 'xpo -apple', 'xpo - apple', 'xpo_apple'],
+  'GXO-Lacoste': ['gxo lacoste', 'gxo-lacoste', 'xpo lacoste', 'xpo-lacoste', 'xpo -lacoste', 'xpo - lacoste', 'xpo_lacoste'],
+  'GXO-Nike': ['gxo nike', 'gxo-nike', 'gxo nike bloomington', 'gxo-nike-bloomington(california)', 'xpo nike', 'xpo-nike', 'xpo -nike', 'xpo - nike', 'xpo_nike'],
+  'GXO-Verizon': ['gxo verizon', 'gxo-verizon', 'gxo verizon dallas', 'gxo-verizon-dallas(texas,usa)', 'xpo verizon', 'xpo-verizon', 'xpo -verizon', 'xpo - verizon', 'xpo_verizon'],
+  'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo anf', 'gxo a&f arizona', 'gxo-a&f-arizona(usa)', 'xpo af', 'xpo-af', 'xpo -af', 'xpo - af', 'xpo_af', 'xpo a&f', 'xpo a f', 'xpo anf', 'xpo_anf', 'xpo-anf'],
   'Jysk': ['jysk', 'jysk denmark', 'jysk-denmark'],
   'Lixil': ['lixil'],
   'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon'],
@@ -1224,6 +1229,45 @@ export function compileSiteIndex(siteList) {
 export function extractSiteFromAlertSubject(subject, compiledSites) {
   if (!subject || typeof subject !== 'string' || !compiledSites || compiledSites.length === 0) return null;
   const sub = subject.trim();
+
+  // Pattern 0a: Dedicated prefix for XPO / GXO site naming, e.g. "XPO -hnm", "XPO - hnm", "XPO-hnm", "XPO_hnm", "GXO - nike", "[XPO -hnm]"
+  // Resolves "all xpo - site_name are GXO _sitename"
+  const xpoGxoPrefixMatch = sub.match(/^[<\[]?(?:xpo|gxo)\s*[-_ ]+\s*([a-z0-9._-]+)/i) || sub.match(/\b(?:xpo|gxo)\s*[-_ ]+\s*([a-z0-9._-]+)\b/i);
+  if (xpoGxoPrefixMatch && xpoGxoPrefixMatch[1]) {
+    const rawSubToken = xpoGxoPrefixMatch[1].toLowerCase().trim();
+    if (/^(?:hnm|hm|h&m|perris)/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*(h&m|hm)/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-H&M Prod';
+    }
+    if (/^nike/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*nike/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-Nike';
+    }
+    if (/^apple/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*apple/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-Apple';
+    }
+    if (/^lacoste/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*lacoste/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-Lacoste';
+    }
+    if (/^verizon/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*verizon/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-Verizon';
+    }
+    if (/^(?:af|a&f|anf)/i.test(rawSubToken)) {
+      const gxoSite = compiledSites.find(x => /gxo.*af/i.test(x.originalName));
+      if (gxoSite) return gxoSite.originalName;
+      return 'GXO-AF';
+    }
+    const resolved = resolveSiteFromToken('gxo-' + rawSubToken, compiledSites) || resolveSiteFromToken(rawSubToken, compiledSites);
+    if (resolved) return resolved;
+  }
 
   // Pattern 0: Direct host prefix with brackets, colon, hyphen, pipe, cluster, etc.
   // e.g. "samprod:", "samprod :", "[samprod]", "<samprod>", "samsatlprod - ...", "sedicoprod:", "owensminorprod:", "cc-temuco:", "samsatlprod-cluster-prod-greymatter"
@@ -1363,6 +1407,36 @@ export function resolveSiteFromToken(token, compiledSites) {
     const s = compiledSites.find(x => /cc7|temuco/i.test(x.originalName));
     return s ? s.originalName : 'Sodimac-CC7';
   }
+  // GXO-H&M Prod / XPO-HNM: xpo-hnm, gxo-hnm, xpo-hm, gxo-hm, gxo-perris, xpo-perris, xpo_hnm
+  if (/^(?:xpo|gxo)[-_]?(?:hnm|hm|h&m|perris)/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*(h&m|hm)/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-H&M Prod';
+  }
+  // GXO-Nike / XPO-Nike
+  if (/^(?:xpo|gxo)[-_]?nike/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*nike/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-Nike';
+  }
+  // GXO-Apple / XPO-Apple
+  if (/^(?:xpo|gxo)[-_]?apple/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*apple/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-Apple';
+  }
+  // GXO-Lacoste / XPO-Lacoste
+  if (/^(?:xpo|gxo)[-_]?lacoste/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*lacoste/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-Lacoste';
+  }
+  // GXO-Verizon / XPO-Verizon
+  if (/^(?:xpo|gxo)[-_]?verizon/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*verizon/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-Verizon';
+  }
+  // GXO-AF / XPO-AF
+  if (/^(?:xpo|gxo)[-_]?(?:af|a&f|anf)/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gxo.*af/i.test(x.originalName));
+    return s ? s.originalName : 'GXO-AF';
+  }
   // H&M Canada Ajax: hnm-canada, hm-canada, flexo-hnm
   if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm/i.test(rawToken)) {
     const s = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
@@ -1481,6 +1555,36 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
     caseRecord.Account_Name__c || caseRecord.account_name,
   ].filter(Boolean).join(' ').toLowerCase();
 
+  // Primary authoritative XPO -> GXO site resolution:
+  // "all xpo - site_name are GXO _sitename so do it accordingly"
+  // Guarantees alerts like "XPO -hnm", "XPO - hnm", "XPO-hnm" map to GXO-H&M Prod and NEVER leak into H&M Canada Ajax.
+  if (/\b(?:xpo|gxo)\b/i.test(combinedContext) || /\b(?:xpo|gxo)[-_]/i.test(combinedContext)) {
+    if (/\b(hnm|hm|h\s*&\s*m|perris)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*(h&m|hm)/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-H&M Prod';
+    }
+    if (/\b(nike)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*nike/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-Nike';
+    }
+    if (/\b(apple)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*apple/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-Apple';
+    }
+    if (/\b(lacoste)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*lacoste/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-Lacoste';
+    }
+    if (/\b(verizon)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*verizon/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-Verizon';
+    }
+    if (/\b(af|a\s*&\s*f|anf)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*af/i.test(x.originalName));
+      return gxo ? gxo.originalName : 'GXO-AF';
+    }
+  }
+
   // Essilor Luxottica multi-site resolution:
   if (/essilor|luxottica/i.test(combinedContext) || /el[-_]?atl|el[-_]?col|sedico/i.test(combinedContext)) {
     if (/\b(atl|atlanta|el-atl|elatl)\b/i.test(combinedContext)) {
@@ -1535,15 +1639,15 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
 
   // H&M multi-site resolution:
   if (/h\s*&\s*m|hnm|flexo[-_]?hnm/i.test(combinedContext)) {
-    if (/\b(ajax|canada)\b/i.test(combinedContext) && !/perris|gxo/i.test(combinedContext)) {
+    if (/\b(perris|xpo|gxo)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo.*(h&m|hm)/i.test(x.originalName));
+      if (gxo) return gxo.originalName;
+      return 'GXO-H&M Prod';
+    }
+    if (/\b(ajax|canada)\b/i.test(combinedContext) && !/perris|xpo|gxo/i.test(combinedContext)) {
       const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
       if (hm) return hm.originalName;
       return 'H&M Canada Ajax';
-    }
-    if (/\b(perris|xpo|gxo)\b/i.test(combinedContext)) {
-      const gxo = compiledSites.find(x => /gxo/i.test(x.originalName));
-      if (gxo) return gxo.originalName;
-      return 'GXO-H&M Prod';
     }
     if (/\b(robbinsville|p1)\b/i.test(combinedContext)) {
       const p1 = compiledSites.find(x => /p1/i.test(x.originalName));
@@ -1553,7 +1657,7 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
   }
 
   if (sub) {
-    if (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub)) {
+    if (isAlertCase(caseRecord) || /\b(xpo|gxo|samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub)) {
       const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
       if (siteFromSub) return siteFromSub;
     }
@@ -2481,6 +2585,10 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
         const seenClosedIds = new Set(matchedClosed.map(c => c.Id));
         for (const ha of historicalAlertsResult) {
           if (!ha || !ha.Id) continue;
+          const haSite = findBestSiteForCase(ha, compiledSites);
+          if (haSite && !areSameSite(haSite, effectiveSiteName, compiledSites)) {
+            continue; // Strictly ensure historical alert belongs to this site and didn't leak from another site
+          }
           if (isOpenAlert(ha) && !seenAlertIds.has(ha.Id)) {
             seenAlertIds.add(ha.Id);
             matchedAlerts.push(ha);
@@ -2812,9 +2920,10 @@ export function extractAlertSignature(alert) {
       return linuxMatch[1].trim();
     }
 
-    // 4. Strip site host prefixes like "flexo-hnm-canada:", "xpo-hnm:", "hnm-canada:", "walmartmxprod:", "cc-temuco:"
+    // 4. Strip site host prefixes like "flexo-hnm-canada:", "xpo-hnm:", "XPO -hnm:", "XPO - hnm:", "hnm-canada:", "walmartmxprod:", "cc-temuco:"
+    cleaned = cleaned.replace(/^[<\[]?(?:xpo|gxo)\s*[-_ ]+\s*[a-z0-9._-]+[>\]]?\s*[:|–—\-]?\s*/i, '').trim();
     cleaned = cleaned.replace(/^[a-z0-9_-]+(?:'s|:|-)\s*/i, (match) => {
-      if (/(?:hnm|walmart|evergreen|activewear|arvato|gap|flipkart|target|ikea|cc-|flexo-|prod-|qa[0-9]-|xpo-|sams|lacoste|elatl|figs|dhl|ykk|stryker)/i.test(match)) {
+      if (/(?:hnm|walmart|evergreen|activewear|arvato|gap|flipkart|target|ikea|cc-|flexo-|prod-|qa[0-9]-|xpo-|gxo-|sams|lacoste|elatl|figs|dhl|ykk|stryker)/i.test(match)) {
         return '';
       }
       return match;
@@ -2880,13 +2989,12 @@ export function getSiteMatchSOQLParts(siteName) {
   const clean = cleanText(siteName);
   const parts = [];
 
-  if (clean.includes('ajax') || clean.includes('canada')) {
+  if (clean.includes('ajax') || (clean.includes('canada') && !clean.includes('walmart') && !clean.includes('aritzia') && !clean.includes('apple express'))) {
     parts.push(
-      "Subject LIKE '%hnm%'",
       "Subject LIKE '%flexo-hnm%'",
-      "Subject LIKE '%xpo-hnm%'",
+      "Subject LIKE '%hnm-canada%'",
+      "Subject LIKE '%hm-canada%'",
       "Account_Name__c LIKE '%Ajax%'",
-      "Account_Name__c LIKE '%H&M%'",
       "Snow_Sitename__c LIKE '%Ajax%'"
     );
   } else if (clean.includes('atlanta') || clean.includes('elatl') || clean.includes('el-atl')) {
@@ -2932,12 +3040,63 @@ export function getSiteMatchSOQLParts(siteName) {
     parts.push("Subject LIKE '%dhlfigs%'", "Account_Name__c LIKE '%DHL%Figs%'", "Snow_Sitename__c LIKE '%Goodyear%'");
   } else if (clean.includes('dhl')) {
     parts.push("Subject LIKE '%dhlnl%'", "Account_Name__c LIKE '%DHL%'");
-  } else if (clean.includes('gxo') && clean.includes('lacoste')) {
-    parts.push("Subject LIKE '%lacoste%'", "Account_Name__c LIKE '%Lacoste%'");
-  } else if (clean.includes('gxo') && clean.includes('nike')) {
-    parts.push("Subject LIKE '%gxo-nike%'", "Account_Name__c LIKE '%Nike%Bloomington%'");
-  } else if (clean.includes('gxo') && clean.includes('perris')) {
-    parts.push("Subject LIKE '%gxo-h&m%'", "Account_Name__c LIKE '%Perris%'");
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && (clean.includes('hm') || clean.includes('hnm') || clean.includes('perris'))) {
+    parts.push(
+      "Subject LIKE '%gxo-h&m%'",
+      "Subject LIKE '%gxo-hm%'",
+      "Subject LIKE '%gxo -hnm%'",
+      "Subject LIKE '%gxo - hnm%'",
+      "Subject LIKE '%gxo-hnm%'",
+      "Subject LIKE '%xpo-hnm%'",
+      "Subject LIKE '%xpo -hnm%'",
+      "Subject LIKE '%xpo - hnm%'",
+      "Subject LIKE '%xpo_hnm%'",
+      "Subject LIKE '%xpo-hm%'",
+      "Account_Name__c LIKE '%Perris%'",
+      "Account_Name__c LIKE '%GXO%H&M%'",
+      "Snow_Sitename__c LIKE '%Perris%'"
+    );
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && clean.includes('lacoste')) {
+    parts.push(
+      "Subject LIKE '%gxo-lacoste%'",
+      "Subject LIKE '%xpo-lacoste%'",
+      "Subject LIKE '%xpo -lacoste%'",
+      "Subject LIKE '%lacoste%'",
+      "Account_Name__c LIKE '%Lacoste%'"
+    );
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && clean.includes('nike')) {
+    parts.push(
+      "Subject LIKE '%gxo-nike%'",
+      "Subject LIKE '%xpo-nike%'",
+      "Subject LIKE '%xpo -nike%'",
+      "Subject LIKE '%xpo - nike%'",
+      "Account_Name__c LIKE '%Nike%Bloomington%'",
+      "Account_Name__c LIKE '%GXO%Nike%'"
+    );
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && clean.includes('apple')) {
+    parts.push(
+      "Subject LIKE '%gxo-apple%'",
+      "Subject LIKE '%xpo-apple%'",
+      "Subject LIKE '%xpo -apple%'",
+      "Account_Name__c LIKE '%GXO%Apple%'"
+    );
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && clean.includes('verizon')) {
+    parts.push(
+      "Subject LIKE '%gxo-verizon%'",
+      "Subject LIKE '%xpo-verizon%'",
+      "Subject LIKE '%xpo -verizon%'",
+      "Account_Name__c LIKE '%Verizon%Dallas%'",
+      "Account_Name__c LIKE '%GXO%Verizon%'"
+    );
+  } else if ((clean.includes('gxo') || clean.includes('xpo')) && (clean.includes('af') || clean.includes('anf'))) {
+    parts.push(
+      "Subject LIKE '%gxo-af%'",
+      "Subject LIKE '%xpo-af%'",
+      "Subject LIKE '%xpo -af%'",
+      "Subject LIKE '%xpo_anf%'",
+      "Account_Name__c LIKE '%A&F%Arizona%'",
+      "Account_Name__c LIKE '%GXO%AF%'"
+    );
   } else if (clean.includes('temuco')) {
     parts.push("Subject LIKE '%cc-temuco%'", "Account_Name__c LIKE '%Temuco%'");
   } else if (clean.includes('condes')) {
