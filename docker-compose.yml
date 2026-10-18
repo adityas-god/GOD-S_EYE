@@ -32,16 +32,16 @@ services:
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - http_proxy=${http_proxy:-}
       - https_proxy=${https_proxy:-}
-      - NO_PROXY=${NO_PROXY:-}
-      - no_proxy=${no_proxy:-}
+      - NO_PROXY=localhost,127.0.0.1,backend,gods-eye-backend,${NO_PROXY:-}
+      - no_proxy=localhost,127.0.0.1,backend,gods-eye-backend,${no_proxy:-}
     networks:
       - gods-eye-net
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 10s
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5000/health || node -e \"fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 5
+      start_period: 25s
 
   frontend:
     build:

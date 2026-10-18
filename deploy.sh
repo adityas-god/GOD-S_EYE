@@ -37,7 +37,11 @@ echo "🔨 Building Docker images..."
 docker compose build
 
 echo "▶️ Starting Docker stack..."
-docker compose up -d --remove-orphans
+if ! docker compose up -d --remove-orphans; then
+  echo "⚠️ docker compose up encountered an issue, checking container logs..."
+  docker compose logs --tail=100
+  exit 1
+fi
 
 echo "🩺 Verifying health on http://127.0.0.1:${HOST_PORT}/health..."
 HEALTHY=0

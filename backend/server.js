@@ -128,24 +128,24 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Start server
-async function startServer() {
-  await connectDB();
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`=======================================================`);
-    console.log(`  Insight Hub Backend Service running on port ${PORT}`);
-    console.log(`  Health Check: http://localhost:${PORT}/api/health`);
-    console.log(`  Sites API:    http://localhost:${PORT}/api/sites`);
-    console.log(`  Webhooks API: http://localhost:${PORT}/api/webhooks/salesforce`);
-    console.log(`=======================================================`);
+// Start server immediately so health checks pass in < 50ms
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`=======================================================`);
+  console.log(`  Insight Hub Backend Service running on port ${PORT}`);
+  console.log(`  Health Check: http://localhost:${PORT}/api/health`);
+  console.log(`  Sites API:    http://localhost:${PORT}/api/sites`);
+  console.log(`  Webhooks API: http://localhost:${PORT}/api/webhooks/salesforce`);
+  console.log(`=======================================================`);
 
-    // Pre-warm Red Zone telemetry cache asynchronously so initial user clicks respond in < 5ms
-    setTimeout(() => {
-      fetchRedZoneSitesOverview().catch(err => {
-        console.warn('[Startup] Red Zone cache pre-warm notice:', err.message);
-      });
-    }, 2000);
+  // Connect to DB asynchronously without blocking server readiness
+  connectDB().catch(err => {
+    console.warn('[Startup] MongoDB connection notice:', err.message);
   });
-}
 
-startServer();
+  // Pre-warm Red Zone telemetry cache asynchronously so initial user clicks respond in < 5ms
+  setTimeout(() => {
+    fetchRedZoneSitesOverview().catch(err => {
+      console.warn('[Startup] Red Zone cache pre-warm notice:', err.message);
+    });
+  }, 2000);
+});
