@@ -35,6 +35,8 @@ export interface SFCase {
   Is_Site_100_Down__c?: boolean;
   ParentId?: string | null;
   parent_id?: string | null;
+  Snow_id__c?: string | null;
+  snow_id?: string | null;
   product_line?: string | null;
   Product_Type__c?: string | null;
   Parent_Product_Type__c?: string | null;
@@ -160,28 +162,22 @@ export function isAlertCase(c: SFCase): boolean {
   // 2. Explicit Type or Category is Alert
   if (typeStr === 'alert' || catStr === 'alert') return true;
 
+  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
+  // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
+  if (isImTicket(c)) {
+    return false;
+  }
+
   if (!sub) return false;
 
-  // If Type or Category is explicitly Incident, Problem, or Support, require strong automated alert indicators in Subject
-  const isExplicitNormalCase =
-    typeStr.includes('incident') ||
-    typeStr.includes('support') ||
-    typeStr.includes('problem') ||
-    typeStr.includes('query') ||
-    catStr.includes('incident') ||
-    catStr.includes('support') ||
-    catStr.includes('problem') ||
-    catStr.includes('query');
-
-  // 3. Strong Automated Alert Subject Signatures:
-  // Specific alert prefixes, runbook/dashboard indicators (avoids false-matching generic words like "System Alert Manager" or "GO Alert:")
+  // 4. Strong Automated Alert Subject Signatures:
   if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
     return true;
   }
 
   // Automated monitoring rule signatures (case-insensitive substring/word matching)
   if (
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia)/i.test(
+    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
       sub
     )
   ) {
@@ -192,20 +188,12 @@ export function isAlertCase(c: SFCase): boolean {
     return true;
   }
 
-  // Host prefix with alert pattern ONLY if not an explicit customer support ticket: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "cc-temuco: Bots..."
-  if (!isExplicitNormalCase && /^[a-z0-9._-]+:\s*[a-z0-9._-]+/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
+  // Host prefix with alert pattern: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "flexo-hnm-canada: ..."
+  if (/^[a-z0-9._-]+prod:\s*/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
     return true;
   }
 
-  // Host tokens matching automated alert patterns
-  if (!isExplicitNormalCase && /\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod)\b/i.test(sub) && /(?:process|bot|disk|mem|cpu|postgres|util|lag|fail|retry|offline|error|warn|high|low|alert|monitor|runbook|dashboard)/i.test(sub)) {
-    return true;
-  }
-
-  // If it's an explicit normal customer support or incident case, DO NOT match generic words
-  if (isExplicitNormalCase) return false;
-
-  // 3. Fallback check on description ONLY if automated alert signatures exist
+  // 5. Fallback check on description ONLY if automated alert signatures exist
   const desc = String(c.Description || raw.description || '');
   if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
     return true;
@@ -334,6 +322,9 @@ export function isOpenAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
+  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
+  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
+
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
 
@@ -341,28 +332,6 @@ export function isOpenAlert(c: SFCase): boolean {
   for (const pattern of CLOSED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
-
-  // If status is explicitly active in Salesforce, it IS an active open alert!
-  const isActiveOpen =
-    status.includes('new') ||
-    status.includes('open') ||
-    status.includes('progress') ||
-    status.includes('investigat') ||
-    status.includes('active') ||
-    status.includes('assigned') ||
-    status.includes('escalat') ||
-    status.includes('queue') ||
-    status.includes('triag') ||
-    status.includes('review') ||
-    status.includes('pending');
-
-  if (isActiveOpen) {
-    return true;
-  }
-
-  // If status is not explicitly active and has an end time or on-hold status
-  if (hasTicketEndTime(c)) return false;
-
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
@@ -464,61 +433,387 @@ export function isDirTicket(c: SFCase): boolean {
 }
 
 /**
- * Checks if a ticket is an IM ticket (Incident Management, ServiceNow Incident, internal monitoring alert).
- * Requirement: "dont count im ticket as sev 1 or sev 2 ticket at the pannel"
+ * Checks if a ticket is an IM ticket (Incident Management, ServiceNow Incident, internal monitoring, internal maintenance, service requests, child tickets).
+ * User requirement: "im tickets also being contributing in count increase of urgent cases"
+ * Strictly identifies:
+ * 1. Automated monitoring / Opsgenie alert cases
+ * 2. Child / linked tickets: ANY ticket with ParentId (in Salesforce, root incidents have no ParentId; child cases are sub-tasks/child IMs)
+ * 3. ServiceNow Incident IDs: Snow_id__c / snow_id populated or matching IM... / INC... / CS... / TASK... / SR... / REQ... / RITM... / PRB... / CHG...
+ * 4. Explicit Type: im, inc, incident management, internal maintenance, internal incident, maintenance, service request, child im, child case, subtask, etc.
+ * 5. Category: Category__c, Snow_Category__c containing IM, INC, internal maintenance, incident management, service request, etc.
+ * 6. Subject patterns: [IM], (IM), IM:, IM-, IM_, IM#, IM123, [INC], (INC), INC:, INC-, INC_, INC#, INC123, ServiceNow, SNOW, child IM, sub-case, etc.
+ * 7. Description patterns: IM/INC ticket references, child IM/case mentions, ServiceNow references.
  */
 export function isImTicket(c: SFCase): boolean {
   if (!c) return false;
 
-  // 1. Child / linked IM ticket: only if it has explicit IM indicators
-  if ((c.ParentId || (c as Record<string, unknown>).parent_id) && (isAlertCase(c) || /^(im|inc)[\s-:\d]/i.test(String(c.Subject || (c as Record<string, unknown>).subject || '')))) {
-    return true;
+  const raw = c as Record<string, unknown>;
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // If the ticket has automated alert signatures, it is an ALERT, NEVER an IM ticket
+  if (
+    hasOpsgenieUrl(c) ||
+    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub) ||
+    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(sub)
+  ) {
+    return false;
   }
 
-  // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
-  if (isAlertCase(c)) return true;
+  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  if (parentId !== undefined && parentId !== null) {
+    const pStr = String(parentId).trim().toLowerCase();
+    if (pStr && pStr !== 'null' && pStr !== 'undefined' && pStr !== '0' && pStr !== 'false' && pStr !== '') {
+      return true;
+    }
+  }
 
-  // 3. ServiceNow Incident ID prefix (IM... or INC...)
-  const snowId = String(c.Snow_id__c || (c as Record<string, unknown>).snow_id || '').trim().toUpperCase();
-  if (snowId.startsWith('IM') || snowId.startsWith('INC')) return true;
+  // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
+  // In GreyOrange Salesforce, Snow_id__c is only populated for ServiceNow-synced internal IM tickets
+  const snowId = String(
+    c.Snow_id__c || raw.Snow_Id__c || raw.Snow_ID__c || raw.snow_id || raw.snow_id__c || raw.SnowId || raw.snowId || raw.Snow_Incident_Number__c || ''
+  ).trim().toUpperCase();
+  if (
+    snowId &&
+    snowId !== 'NULL' &&
+    snowId !== 'UNDEFINED' &&
+    snowId !== 'NONE' &&
+    snowId !== 'N/A' &&
+    snowId !== '0'
+  ) {
+    if (
+      snowId.startsWith('IM') ||
+      snowId.startsWith('INC') ||
+      snowId.startsWith('CS') ||
+      snowId.startsWith('SR') ||
+      snowId.startsWith('REQ') ||
+      snowId.startsWith('RITM') ||
+      snowId.startsWith('PRB') ||
+      snowId.startsWith('CHG') ||
+      snowId.startsWith('TASK') ||
+      snowId.includes('IM') ||
+      snowId.includes('INC') ||
+      /\b(IM|INC)\b/i.test(snowId) ||
+      /\b(IM|INC)\d+/i.test(snowId)
+    ) {
+      return true;
+    }
+  }
 
-  // 4. Explicit Type field
-  const type = String(c.Type || (c as Record<string, unknown>).type || '').trim().toLowerCase();
+  // 3. Explicit Type field (Incident Management, Internal Maintenance, Service Request, etc.)
+  // (Notice: 'incident' alone is the default Salesforce case type, NOT an IM ticket)
+  const type = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Case_Type__c || '').trim().toLowerCase();
   if (
     type === 'im' ||
-    type.includes('incident management') ||
-    type.includes('internal monitoring') ||
-    type.startsWith('im ') ||
+    type === 'inc' ||
     type.startsWith('im-') ||
-    type.startsWith('im:')
+    type.startsWith('im_') ||
+    type.startsWith('im ') ||
+    type.startsWith('inc-') ||
+    type.startsWith('inc_') ||
+    type.startsWith('inc ') ||
+    type === 'sr' ||
+    type === 'cr' ||
+    type === 'internal' ||
+    type.includes('incident management') ||
+    type.includes('internal maintenance') ||
+    type.includes('internal monitoring') ||
+    type.includes('internal incident') ||
+    type.includes('child im') ||
+    type.includes('child case') ||
+    type.includes('child incident') ||
+    type.includes('sub-task') ||
+    type.includes('subtask') ||
+    type.includes('work order') ||
+    type.includes('preventive')
   ) {
     return true;
   }
 
-  // 5. Category field
-  const cat = String(c.Category__c || (c as Record<string, unknown>).category || c.Snow_Category__c || '').trim().toLowerCase();
+  // 4. Category field
+  const cat = String(
+    c.Category__c || raw.category || c.Snow_Category__c || raw.Snow_Category || raw.Category || raw.Sub_Category__c || ''
+  ).trim().toLowerCase();
   if (
     cat === 'im' ||
-    cat.includes('incident management') ||
-    cat.includes('internal monitoring') ||
-    cat.startsWith('im ') ||
+    cat === 'inc' ||
     cat.startsWith('im-') ||
-    cat.startsWith('im:')
+    cat.startsWith('im_') ||
+    cat.startsWith('im ') ||
+    cat.startsWith('inc-') ||
+    cat.startsWith('inc_') ||
+    cat.startsWith('inc ') ||
+    cat === 'sr' ||
+    cat === 'cr' ||
+    cat === 'internal' ||
+    cat.includes('incident management') ||
+    cat.includes('internal maintenance') ||
+    cat.includes('internal monitoring') ||
+    cat.includes('internal incident') ||
+    cat.includes('child im') ||
+    cat.includes('child case') ||
+    cat.includes('child incident') ||
+    cat.includes('sub-task') ||
+    cat.includes('subtask') ||
+    cat.includes('work order') ||
+    cat.includes('preventive')
   ) {
     return true;
   }
 
-  // 5. Subject pattern
-  const sub = String(c.Subject || c.subject || '').trim();
-  if (/^(\[?im\]?|im[-:\s\d]|incident\s*management)/i.test(sub)) {
+  // 5. Subject pattern (matches anywhere in subject)
+  if (
+    // IM pattern: [IM], (IM), IM:, IM-, IM_, IM#, IM 123, IM123, etc.
+    /(?:^|[\s\[\(_\-])IM(?:[:\s#\d\-_\]\)]|$)/i.test(sub) ||
+    /\bIM\d+\b/i.test(sub) ||
+    /\bIM[-_:\s#]+\d+/i.test(sub) ||
+    /\[\s*IM\s*\]/i.test(sub) ||
+    /\bIM\s+ticket\b/i.test(sub) ||
+    // INC pattern: [INC], (INC), INC:, INC-, INC_, INC#, INC 123, INC123, etc.
+    /(?:^|[\s\[\(_\-])INC(?:[:\s#\d\-_\]\)]|$)/i.test(sub) ||
+    /\bINC\d+\b/i.test(sub) ||
+    /\bINC[-_:\s#]+\d+/i.test(sub) ||
+    /\[\s*INC\s*\]/i.test(sub) ||
+    /\bINC\s+ticket\b/i.test(sub) ||
+    // Full words
+    /\b(incident\s*management|internal\s*maintenance|internal\s*monitoring|internal\s*incident)\b/i.test(sub) ||
+    /\b(service\s*request|change\s*request|work\s*order)\b/i.test(sub) ||
+    /\b(child\s*im|child\s*case|child\s*ticket|child\s*incident|sub[- ]*(case|task|ticket))\b/i.test(sub) ||
+    /\b(servicenow|snow)\s*(?:incident|ticket|im|inc|#|:)/i.test(sub) ||
+    /\b(planned|preventive|routine)\s*maintenance\b/i.test(sub) ||
+    /\b(PRB|CHG|RITM|SCTASK)\d+\b/i.test(sub)
+  ) {
     return true;
   }
-  if (/\b(im ticket|incident ticket)\b/i.test(sub)) {
+
+  // 6. Description patterns
+  const desc = String(c.Description || raw.description || '').trim();
+  if (
+    /(?:^|[\s\[\(_\-])(?:IM|INC)[-_:\s#]*\d{4,}/i.test(desc) ||
+    /\b(incident\s*management|child\s*im|child\s*case|servicenow\s*incident)\b/i.test(desc)
+  ) {
     return true;
   }
 
   return false;
 }
+
+/**
+ * Checks if a ticket is a valid incident ticket.
+ * Excludes alert tickets and DIR tickets.
+ */
+export function isIncidentTicket(c: SFCase): boolean {
+  if (!c) return false;
+  if (isAlertCase(c)) return false;
+  if (isDirTicket(c)) return false;
+  return true;
+}
+
+/**
+ * Determines whether two tickets represent the same operational incident
+ * (e.g., an urgent incident case and its automatically generated child IM ticket).
+ * User requirement: "what happenes whenver an urgent case comes or made then an automated im ticket is created i just want that 1sev with automated im ticket creation counts to only one sev 1 respectively goes for sev 2 urgent also no double count due to automated im ticket creation just count the incident urgent"
+ */
+export function areSameIncident(t1: SFCase, t2: SFCase): boolean {
+  if (!t1 || !t2) return false;
+  if (t1.Id && t2.Id && t1.Id === t2.Id) return true;
+  if (t1.CaseNumber && t2.CaseNumber && t1.CaseNumber === t2.CaseNumber) return true;
+
+  const raw1 = t1 as Record<string, unknown>;
+  const raw2 = t2 as Record<string, unknown>;
+
+  // 1. Direct ParentId link (automated IM ticket created for parent case, or child ticket)
+  const p1 = String(t1.ParentId || raw1.parent_id || raw1.Parent_Case__c || raw1.Parent_Case_Number__c || '').trim();
+  const p2 = String(t2.ParentId || raw2.parent_id || raw2.Parent_Case__c || raw2.Parent_Case_Number__c || '').trim();
+
+  if (p1 && (p1 === t2.Id || p1 === t2.CaseNumber)) return true;
+  if (p2 && (p2 === t1.Id || p2 === t1.CaseNumber)) return true;
+  if (p1 && p2 && p1.toLowerCase() === p2.toLowerCase()) return true;
+
+  // 2. Shared ServiceNow Incident ID (Snow_id__c / Snow_Incident_Number__c)
+  const snow1 = String(t1.Snow_id__c || raw1.Snow_Id__c || raw1.snow_id || raw1.Snow_Incident_Number__c || '').trim().toUpperCase();
+  const snow2 = String(t2.Snow_id__c || raw2.Snow_Id__c || raw2.snow_id || raw2.Snow_Incident_Number__c || '').trim().toUpperCase();
+  if (snow1 && snow2 && snow1 !== 'NULL' && snow1 !== 'UNDEFINED' && snow1 !== 'NONE' && snow1 === snow2) {
+    return true;
+  }
+
+  // 3. One ticket references the other ticket's CaseNumber in Subject or Description
+  const sub1 = String(t1.Subject || raw1.subject || '');
+  const sub2 = String(t2.Subject || raw2.subject || '');
+  const desc1 = String(t1.Description || raw1.description || '');
+  const desc2 = String(t2.Description || raw2.description || '');
+
+  if (t1.CaseNumber && (sub2.includes(t1.CaseNumber) || desc2.includes(t1.CaseNumber))) return true;
+  if (t2.CaseNumber && (sub1.includes(t2.CaseNumber) || desc1.includes(t2.CaseNumber))) return true;
+
+  // 4. Automated IM ticket created alongside the incident on the same site
+  const isIm1 = isImTicket(t1);
+  const isIm2 = isImTicket(t2);
+  if (isIm1 !== isIm2) {
+    const cleanSub1 = sub1.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').trim().toLowerCase();
+    const cleanSub2 = sub2.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').trim().toLowerCase();
+    if (cleanSub1 && cleanSub2 && (cleanSub1.includes(cleanSub2) || cleanSub2.includes(cleanSub1))) {
+      return true;
+    }
+  }
+
+  // 5. Duplicate or concurrent incident cases for the same event on the same site:
+  const t1Time = (t1 as any).createdTime || (t1.CreatedDate ? new Date(t1.CreatedDate).getTime() : 0);
+  const t2Time = (t2 as any).createdTime || (t2.CreatedDate ? new Date(t2.CreatedDate).getTime() : 0);
+  const timeDiffMs = (t1Time > 0 && t2Time > 0) ? Math.abs(t1Time - t2Time) : Infinity;
+
+  const normSub1 = sub1.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').replace(/[^a-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const normSub2 = sub2.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').replace(/[^a-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+  if (timeDiffMs <= 4 * 3600 * 1000) {
+    // Exact or substring match within 4 hours
+    if (normSub1 && normSub2 && (normSub1 === normSub2 || normSub1.includes(normSub2) || normSub2.includes(normSub1))) {
+      return true;
+    }
+    // Shared specific keywords (e.g. both reference pps 08 or pps08)
+    const pps1 = normSub1.match(/\bpps\s*\d+\b/);
+    const pps2 = normSub2.match(/\bpps\s*\d+\b/);
+    if (pps1 && pps2 && pps1[0].replace(/\s+/g, '') === pps2[0].replace(/\s+/g, '')) {
+      return true;
+    }
+    // Power supply / station pause / towers / outage within 4 hours
+    const isPowerOutage1 = /power supply|station.*paused|towers? flashing|site down|down/i.test(sub1);
+    const isPowerOutage2 = /power supply|station.*paused|towers? flashing|site down|down/i.test(sub2);
+    if (isPowerOutage1 && isPowerOutage2) {
+      return true;
+    }
+  }
+
+  // Concurrent outage tickets created within 30 minutes of each other (e.g. "Site down" + "Stations paused due to power supply failure")
+  if (timeDiffMs <= 30 * 60 * 1000) {
+    const isOutage1 = /site down|power supply|station|down|outage/i.test(sub1);
+    const isOutage2 = /site down|power supply|station|down|outage/i.test(sub2);
+    if (isOutage1 && isOutage2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Calculates Sev 1 and Sev 2 urgent counts for a site, clustering related tickets
+ * (incident case + automated IM ticket) so that each incident counts as ONLY ONE Sev.
+ */
+export function calculateSiteUrgentCounts(casesForSite: SFCase[] = []): { sev1Count: number; sev2Count: number } {
+  const urgentTickets = (casesForSite || []).filter(c => {
+    if (!isIncidentTicket(c)) return false;
+    const sev = detectSeverity(c);
+    return sev === 'sev1' || sev === 'sev2';
+  });
+
+  if (urgentTickets.length === 0) {
+    return { sev1Count: 0, sev2Count: 0 };
+  }
+
+  // Cluster related tickets into single distinct incidents
+  const incidentClusters: SFCase[][] = [];
+
+  for (const t of urgentTickets) {
+    const cluster = incidentClusters.find(c => c.some(existing => areSameIncident(existing, t)));
+    if (cluster) {
+      cluster.push(t);
+    } else {
+      incidentClusters.push([t]);
+    }
+  }
+
+  let sev1Count = 0;
+  let sev2Count = 0;
+
+  for (const cluster of incidentClusters) {
+    const hasSev1 = cluster.some(t => detectSeverity(t) === 'sev1');
+    const hasSev2 = cluster.some(t => detectSeverity(t) === 'sev2');
+
+    if (hasSev1) {
+      sev1Count++;
+    } else if (hasSev2) {
+      sev2Count++;
+    }
+  }
+
+  return { sev1Count, sev2Count };
+}
+
+/**
+ * Deduplicate incidents for a site by clustering parent cases and automated child IM tickets
+ * into single distinct operational incidents.
+ * Ensures that 1 urgent incident with automated child IM tickets counts as exactly 1 incident.
+ */
+export function deduplicateIncidents(incidents: any[] = []): any[] {
+  if (!Array.isArray(incidents) || incidents.length === 0) return [];
+  const clusters: any[][] = [];
+  for (const inc of incidents) {
+    if (!inc) continue;
+    const cluster = clusters.find(cl => cl.some(existing => areSameIncident(existing, inc)));
+    if (cluster) {
+      cluster.push(inc);
+    } else {
+      clusters.push([inc]);
+    }
+  }
+
+  return clusters.map(cluster => {
+    // Pick the primary representative incident
+    const sorted = [...cluster].sort((a, b) => {
+      const aHasParent = Boolean(a.ParentId);
+      const bHasParent = Boolean(b.ParentId);
+      if (!aHasParent && bHasParent) return -1;
+      if (aHasParent && !bHasParent) return 1;
+      return (a.createdTime || 0) - (b.createdTime || 0);
+    });
+    const rep = { ...sorted[0] };
+
+    // Highest severity wins
+    const hasSev1 = cluster.some(t => t.severity === 'sev1');
+    const hasSev2 = cluster.some(t => t.severity === 'sev2');
+    if (hasSev1) {
+      rep.severity = 'sev1';
+    } else if (hasSev2) {
+      rep.severity = 'sev2';
+    }
+
+    // Earliest created date/time
+    const validStarts = cluster.map(t => t.createdTime).filter(t => typeof t === 'number' && t > 0);
+    if (validStarts.length > 0) {
+      rep.createdTime = Math.min(...validStarts);
+      const earliest = cluster.find(t => t.createdTime === rep.createdTime);
+      if (earliest?.createdDate) rep.createdDate = earliest.createdDate;
+    }
+
+    // Latest end time / closure
+    const endTimesMs = cluster.map(t => {
+      const e = t.endTime || t.closedDate;
+      return e ? new Date(e).getTime() : 0;
+    }).filter(t => t > 0);
+    if (endTimesMs.length > 0) {
+      const maxEndMs = Math.max(...endTimesMs);
+      const latestEnd = cluster.find(t => {
+        const e = t.endTime || t.closedDate;
+        return e && new Date(e).getTime() === maxEndMs;
+      });
+      if (latestEnd) {
+        rep.endTime = latestEnd.endTime || latestEnd.closedDate;
+        rep.closedDate = latestEnd.closedDate || latestEnd.endTime;
+        if (rep.createdTime && maxEndMs > rep.createdTime) {
+          rep.durationHours = Math.round(((maxEndMs - rep.createdTime) / (3600 * 1000)) * 10) / 10;
+        }
+      }
+    }
+
+    if (cluster.some(t => t.isSiteDown)) {
+      rep.isSiteDown = true;
+    }
+
+    return rep;
+  });
+}
+
 
 export function inferProductLine(name: string): string {
   const n = (name || '').toLowerCase();
@@ -932,6 +1227,41 @@ export function areSameSite(nameA: string, nameB: string, compiledSites: Compile
     return true;
   }
 
+  // Distinct Essilor Luxottica sites must NEVER be matched together:
+  const isAtl = (s: string) => /atl|atlanta/i.test(s);
+  const isCol = (s: string) => /col|columbus|colombus/i.test(s);
+  const isSed = (s: string) => /sedico/i.test(s);
+  const isFhrOrGeneric = (s: string) => /fhr/i.test(s) || (/essilor|luxottica/i.test(s) && !isAtl(s) && !isCol(s) && !isSed(s));
+
+  if (/essilor|luxottica/i.test(nameA) && /essilor|luxottica/i.test(nameB)) {
+    if (isAtl(nameA) !== isAtl(nameB)) {
+      sameSiteCache.set(cacheKey, false);
+      return false;
+    }
+    if (isCol(nameA) !== isCol(nameB)) {
+      sameSiteCache.set(cacheKey, false);
+      return false;
+    }
+    if (isSed(nameA) !== isSed(nameB)) {
+      sameSiteCache.set(cacheKey, false);
+      return false;
+    }
+    if (isFhrOrGeneric(nameA) !== isFhrOrGeneric(nameB)) {
+      sameSiteCache.set(cacheKey, false);
+      return false;
+    }
+  }
+
+  // Sams Club ATL vs LAX must NEVER be matched together:
+  if (/sam.*atl|samprod|samsprod|^4993/i.test(nameA) && /sam.*lax|samlax|^8799|^9476/i.test(nameB)) {
+    sameSiteCache.set(cacheKey, false);
+    return false;
+  }
+  if (/sam.*lax|samlax|^8799|^9476/i.test(nameA) && /sam.*atl|samprod|samsprod|^4993/i.test(nameB)) {
+    sameSiteCache.set(cacheKey, false);
+    return false;
+  }
+
   // Domain aliases:
   const isSamsAtl = (s: string) => /sam.*atl|samprod|samsprod|^4993/i.test(s);
   if (isSamsAtl(nameA) && isSamsAtl(nameB)) {
@@ -969,11 +1299,11 @@ export function areSameSite(nameA: string, nameB: string, compiledSites: Compile
     return true;
   }
 
-  // Check pre-compiled KNOWN_SITE_ALIASES
+  // Check pre-compiled KNOWN_SITE_ALIASES (strict exact alias inclusion)
   for (let i = 0; i < COMPILED_KNOWN_SITE_ALIASES.length; i++) {
-    const { keyClean, allNames } = COMPILED_KNOWN_SITE_ALIASES[i];
-    const matchA = allNames.includes(cleanA) || (cleanA && keyClean.includes(cleanA));
-    const matchB = allNames.includes(cleanB) || (cleanB && keyClean.includes(cleanB));
+    const { allNames } = COMPILED_KNOWN_SITE_ALIASES[i];
+    const matchA = allNames.includes(cleanA);
+    const matchB = allNames.includes(cleanB);
     if (matchA && matchB) {
       sameSiteCache.set(cacheKey, true);
       return true;
@@ -1007,9 +1337,91 @@ export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledS
 function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   const raw = caseRecord as Record<string, unknown>;
   const sub = String(caseRecord.Subject || raw.subject || '').trim();
-  if (sub && (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub))) {
-    const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
-    if (siteFromSub) return siteFromSub;
+  const combinedContext = [
+    caseRecord.Snow_Sitename__c,
+    caseRecord.Customer_Location__c,
+    caseRecord.Site_Name_Customer_Input__c,
+    caseRecord.Impacted_Sites__c,
+    sub,
+    caseRecord.Account_Name__c || raw.account_name,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  // Essilor Luxottica multi-site resolution:
+  if (/essilor|luxottica/i.test(combinedContext) || /el[-_]?atl|el[-_]?col|sedico/i.test(combinedContext)) {
+    if (/\b(atl|atlanta|el-atl|elatl)\b/i.test(combinedContext)) {
+      const atl = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
+      if (atl) return atl.originalName;
+      return 'Essilor Luxottica Atlanta';
+    }
+    if (/\b(columbus|colombus|el-col|elcol)\b/i.test(combinedContext)) {
+      const col = compiledSites.find(x => /columbus/i.test(x.originalName));
+      if (col) return col.originalName;
+      return 'Essilor Luxottica -Columbus';
+    }
+    if (/\b(sedico)\b/i.test(combinedContext)) {
+      const sed = compiledSites.find(x => /sedico/i.test(x.originalName));
+      if (sed) return sed.originalName;
+      return 'Luxottica_Sedico';
+    }
+    if (/\b(fhr|california)\b/i.test(combinedContext)) {
+      const fhr = compiledSites.find(x => x.originalName === 'Essilor Luxottica');
+      if (fhr) return fhr.originalName;
+      return 'Essilor Luxottica';
+    }
+  }
+
+  // Sams Club multi-site resolution:
+  if (/sam(s)?(\s+club)?|4993|8799|9476/i.test(combinedContext)) {
+    if (/\b(atl|atlanta|4993|samprod|samsprod)\b/i.test(combinedContext)) {
+      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club ATL';
+    }
+    if (/\b(lax|california|8799|9476|samlax)\b/i.test(combinedContext)) {
+      const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club LAX';
+    }
+  }
+
+  // Walmart multi-site resolution:
+  if (/walmart/i.test(combinedContext)) {
+    if (/\b(mexico|mx|tepotzotlan|tepotzotlÃ¡n|walmartmx)\b/i.test(combinedContext)) {
+      const wm = compiledSites.find(x => /mexico/i.test(x.originalName));
+      if (wm) return wm.originalName;
+      return 'Walmart Mexico';
+    }
+    if (/\b(canada|calgary|edwards|walmartca)\b/i.test(combinedContext)) {
+      const wc = compiledSites.find(x => /canada/i.test(x.originalName));
+      if (wc) return wc.originalName;
+      return 'Walmart-Canada';
+    }
+  }
+
+  // H&M multi-site resolution:
+  if (/h\s*&\s*m|hnm|flexo[-_]?hnm/i.test(combinedContext)) {
+    if (/\b(ajax|canada)\b/i.test(combinedContext) && !/perris|gxo/i.test(combinedContext)) {
+      const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
+      if (hm) return hm.originalName;
+      return 'H&M Canada Ajax';
+    }
+    if (/\b(perris|xpo|gxo)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo/i.test(x.originalName));
+      if (gxo) return gxo.originalName;
+      return 'GXO-H&M Prod';
+    }
+    if (/\b(robbinsville|p1)\b/i.test(combinedContext)) {
+      const p1 = compiledSites.find(x => /p1/i.test(x.originalName));
+      if (p1) return p1.originalName;
+      return 'H&M P1';
+    }
+  }
+
+  if (sub) {
+    if (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub)) {
+      const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
+      if (siteFromSub) return siteFromSub;
+    }
   }
 
   // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
@@ -1034,6 +1446,22 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
   // Level 2: Account Name match (e.g. "Ryder-Maryland(USA)", "H&M(Ajax)-(Canada)", "Walmart-Mexico(Tepotzotlán)")
   const rawAccountName = (caseRecord.Account_Name__c || raw.account_name || caseRecord.Account?.Name) as string | undefined;
   if (rawAccountName) {
+    if (/el[-_]?atl|atlanta/i.test(rawAccountName)) {
+      const atl = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
+      if (atl) return atl.originalName;
+      return 'Essilor Luxottica Atlanta';
+    }
+    if (/ajax|h&m.*canada|hnm.*canada/i.test(rawAccountName)) {
+      const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
+      if (hm) return hm.originalName;
+      return 'H&M Canada Ajax';
+    }
+    if (/sam.*atl|4993/i.test(rawAccountName)) {
+      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club ATL';
+    }
+
     const accClean = normalizeCanonical(rawAccountName);
     if (accClean) {
       for (const site of compiledSites) {
@@ -1181,48 +1609,52 @@ export function getImpactPercentage(c: SFCase): number {
 
 /**
  * Universal severity / priority detector.
- * Strict rules:
+ * Rules:
  * - Sev 1 Urgent (sev1):
- *     - Operational Impact = 100% (or impact >= 100)
- *     - OR Is_Site_100_Down__c is true
- *     - OR Explicitly marked 'Sev 1 - Urgent', 'Sev 1 Urgent', 'P1 - Urgent', '1 - Critical', 'Critical'
+ *     - Essilor Luxottica Atlanta urgent tickets (user requirement: "its el atl essilor luxotica atlanta you should its sev 1 urgent in essilor luxotica [atlanta]")
+ *     - Operational Impact = 100% (or impact >= 100) or Is_Site_100_Down__c
+ *     - Explicit Severity 1 / Sev 1 / P1 / Critical
+ *     - Subject containing Sev 1 / P1 Urgent / Critical
  * - Sev 2 Urgent (sev2):
- *     - Operational Impact >= 50% and <= 99% (99% - 50% is Sev 2 Urgent)
- *     - OR Explicitly marked 'Sev 2 - Urgent', 'Sev 2 Urgent', 'Severity 2 - Urgent', 'P2 - Urgent'
- * - Sev 2 High (sev3 - High non-urgent):
- *     - Marked 'Sev 2 - High', 'Sev 2 High', 'Severity 2 - High', 'P2 - High', 'High', OR plain 'Sev 2' with impact < 50%
- *     - Sev 2 High MUST NEVER be classified as Sev 2 Urgent unless impact >= 50%.
- * - Excludes automated alerts, IM tickets, and DIR tickets.
+ *     - Operational Impact >= 50% and <= 99%
+ *     - Explicit Severity 2 / Sev 2 / P2 / Sev 2 Urgent
+ *     - Subject containing Sev 2 / P2 Urgent
+ * - Excludes DIR tickets (post-incident documentation).
  */
 export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   if (!c) return 'sev3';
+  if (isDirTicket(c)) return 'sev3';
 
-  // Exclude automated alert tickets and DIR documentation tickets from Sev 1 / Sev 2 counts
-  if (isDirTicket(c) || isAlertCase(c)) {
+  const raw = c as Record<string, unknown>;
+  const rawType = String(raw.Type || raw.type || '').trim().toLowerCase();
+  // Feature requests, queries, and analysis are never operational outage incidents
+  if (rawType === 'feature request' || rawType === 'query' || rawType === 'analysis' || rawType === 'change') {
     return 'sev3';
   }
 
-  const raw = c as Record<string, unknown>;
-  const impact = getImpactPercentage(c);
-
   // Rule 1: 100% Impact or Site 100% Down -> Sev 1 Urgent
-  // Condition: "if =100% then sev 1 urgent"
+  const impact = getImpactPercentage(c);
   if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || impact >= 100) {
     return 'sev1';
   }
 
+  // Explicit low severity guard: if Salesforce explicitly designates Severity 3 or 4, it is not Sev 1/2 Urgent
+  const highestSevRaw = String(raw.Highest_Severity__c || '').trim();
+  if (/severity\s*[34]|sev[-_ ]*[34]|low|minor/i.test(highestSevRaw) && impact < 50 && !raw.Is_Site_100_Down__c) {
+    return 'sev3';
+  }
+
   // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
-  // Condition: "if >=50% its sev 2 urgent if =100% then sev 1 urgent and 99%-50% is sev 2 urgent"
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  const highestSev = String(raw.Highest_Severity__c || '').trim().toUpperCase();
+  // Authoritative case severity fields
+  const highestSev = highestSevRaw.toUpperCase();
   const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
-  const candidates = [highestSev, prio].filter(Boolean);
 
-  // Rule 3: Explicit Sev 1 Urgent / Critical in fields
-  for (const s of candidates) {
+  // Rule 3: Explicit Severity 1 Urgent / Critical in authoritative case fields
+  for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 1' ||
       s === 'SEV 1' ||
@@ -1232,40 +1664,43 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
       s.includes('SEV 1 - URGENT') ||
       s.includes('SEV 1 URGENT') ||
       s.includes('1 - CRITICAL') ||
-      s.includes('CRITICAL')
+      s === 'CRITICAL'
     ) {
       return 'sev1';
     }
   }
 
-  // Rule 4: Explicit High (Sev 2 - High, Sev 2 High, P2 - High, High)
-  // MUST NOT be classified as Sev 2 Urgent! (Impact < 50%, so it is High non-urgent / sev3)
-  const isHigh = candidates.some(s =>
-    s.includes('HIGH') ||
-    s.includes('2 - HIGH') ||
-    s.includes('SEV 2 - HIGH') ||
-    s.includes('SEV 2 HIGH') ||
-    s.includes('SEVERITY 2 - HIGH') ||
-    s.includes('SEVERITY 2 HIGH') ||
-    s.includes('P2 - HIGH') ||
-    s.includes('P2 HIGH')
-  );
-
-  if (isHigh) {
-    return 'sev3';
+  // Rule 4: Explicit Sev 2 Urgent (Must be explicitly 'Urgent', NOT standard Sev 2 High)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s.includes('2 - URGENT') ||
+      s.includes('SEV 2 - URGENT') ||
+      s.includes('SEV 2 URGENT') ||
+      s.includes('SEVERITY 2 - URGENT') ||
+      s.includes('SEVERITY 2 URGENT')
+    ) {
+      return 'sev2';
+    }
   }
 
-  // Rule 5: Explicit Sev 2 Urgent (must have URGENT keyword)
-  const isUrgent = candidates.some(s =>
-    (s.includes('2') || s.includes('P2') || s.includes('SEVERITY 2') || s.includes('SEV 2')) &&
-    s.includes('URGENT')
-  );
-
-  if (isUrgent) {
+  // Rule 5: Subject line explicit urgency / severity tags (must be explicit tag, not regular English adjective)
+  const sub = String(c.Subject || raw.subject || '').trim();
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev1';
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2';
   }
 
-  // Plain 'Sev 2' or 'Severity 2' without URGENT or impact >= 50% defaults to High non-urgent (sev3)
+  // Rule 6: Fallback to Alert_Priority__c ONLY if explicitly critical or urgent
+  const alertPrio = String(raw.Alert_Priority__c || '').trim().toUpperCase();
+  if (alertPrio.includes('1 - CRITICAL') || alertPrio.includes('SEV 1 URGENT')) {
+    return 'sev1';
+  }
+  if (alertPrio.includes('2 - URGENT') || alertPrio.includes('SEV 2 URGENT')) {
+    return 'sev2';
+  }
+
   return 'sev3';
 }
 
@@ -1811,13 +2246,12 @@ export function computeRedZoneSitesClientSide(
   const now = Date.now();
   const compiledSites = compileSiteIndex(allSiteNames);
 
-  // Filter for real customer incidents (exclude alerts, IM bots, DIR approvals)
+  // Filter for real customer incidents (exclude alerts, DIR approvals)
   const validIncidents = cases.filter(c => {
     if (!c) return false;
     if (isAlertCase(c)) return false;
-    if (isImTicket(c)) return false;
     if (isDirTicket(c)) return false;
-    return true;
+    return isIncidentTicket(c);
   });
 
   const siteIncidentsMap = new Map<string, { siteName: string; incidents: any[] }>();
@@ -1871,10 +2305,11 @@ export function computeRedZoneSitesClientSide(
   const redZoneSites: RedZoneSiteInfo[] = [];
 
   for (const [_, { siteName, incidents }] of siteIncidentsMap.entries()) {
-    incidents.sort((a, b) => b.createdTime - a.createdTime);
+    const distinctIncidents = deduplicateIncidents(incidents);
+    distinctIncidents.sort((a, b) => b.createdTime - a.createdTime);
 
     // 7-day window
-    const incidents7d = incidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
+    const incidents7d = distinctIncidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
     const sev1_7d = incidents7d.filter(i => i.severity === 'sev1').length;
     const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
@@ -1887,7 +2322,8 @@ export function computeRedZoneSitesClientSide(
     };
 
     // 14-day window MTBF per individual site (336 operating hours / Sev-1 and Sev-2 failure count)
-    const incidents14d = incidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+    // 14-day window MTBF per individual site (336 operating hours / operational incident count)
+    const incidents14d = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS);
     const N = incidents14d.length;
     let mtbfHours: number | null = null;
     let criteria3Met = false;
@@ -1909,7 +2345,7 @@ export function computeRedZoneSitesClientSide(
     } else {
       for (let dayOffset = 1; dayOffset <= 21; dayOffset++) {
         const testPoint = now - (dayOffset * 24 * 60 * 60 * 1000);
-        const test7d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
+        const test7d = distinctIncidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
         const testSev1 = test7d.filter(i => i.severity === 'sev1').length;
         const testSev2 = test7d.filter(i => i.severity === 'sev2').length;
         if (testSev1 >= 3 || testSev2 >= 5) {
@@ -1917,7 +2353,7 @@ export function computeRedZoneSitesClientSide(
           break;
         }
 
-        const test14d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        const test14d = distinctIncidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS);
         if (test14d.length > 0) {
           const testMtbf = 336 / test14d.length;
           if (testMtbf < 36) {
@@ -1955,10 +2391,10 @@ export function computeRedZoneSitesClientSide(
       const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const dayEnd = dayStart + DAY_MS;
 
-      const dayIncidents = incidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
+      const dayIncidents = distinctIncidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
       const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
       const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
-      const resolvedOnDay = incidents.filter(i => {
+      const resolvedOnDay = distinctIncidents.filter(i => {
         const eStr = i.endTime || i.closedDate;
         if (!eStr) return false;
         const eTime = new Date(eStr).getTime();
@@ -1979,7 +2415,7 @@ export function computeRedZoneSitesClientSide(
       });
     }
 
-    const resolvedIncidents = incidents.filter(i => typeof i.durationHours === 'number' && i.durationHours > 0);
+    const resolvedIncidents = distinctIncidents.filter(i => typeof i.durationHours === 'number' && i.durationHours > 0);
     const meanTimeToResolveHours = resolvedIncidents.length > 0
       ? Math.round((resolvedIncidents.reduce((acc, i) => acc + (i.durationHours || 0), 0) / resolvedIncidents.length) * 10) / 10
       : null;
@@ -2010,7 +2446,7 @@ export function computeRedZoneSitesClientSide(
       },
       meanTimeToResolveHours,
       dailyMetrics,
-      qualifyingIncidents: incidents.map(i => ({
+      qualifyingIncidents: distinctIncidents.filter(i => i.severity === 'sev1' || i.severity === 'sev2').map(i => ({
         id: i.id,
         caseNumber: i.caseNumber,
         subject: i.subject,

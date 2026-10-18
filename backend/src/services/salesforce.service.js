@@ -132,28 +132,22 @@ export function isAlertCase(c) {
   // 2. Explicit Type or Category is Alert
   if (typeStr === 'alert' || catStr === 'alert') return true;
 
+  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
+  // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
+  if (isImTicket(c)) {
+    return false;
+  }
+
   if (!sub) return false;
 
-  // If Type or Category is explicitly Incident, Problem, or Support, require strong automated alert indicators in Subject
-  const isExplicitNormalCase =
-    typeStr.includes('incident') ||
-    typeStr.includes('support') ||
-    typeStr.includes('problem') ||
-    typeStr.includes('query') ||
-    catStr.includes('incident') ||
-    catStr.includes('support') ||
-    catStr.includes('problem') ||
-    catStr.includes('query');
-
-  // 3. Strong Automated Alert Subject Signatures:
-  // Specific alert prefixes, runbook/dashboard indicators (avoids false-matching generic words like "System Alert Manager" or "GO Alert:")
+  // 4. Strong Automated Alert Subject Signatures:
   if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
     return true;
   }
 
   // Automated monitoring rule signatures (case-insensitive substring/word matching)
   if (
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia)/i.test(
+    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
       sub
     )
   ) {
@@ -164,20 +158,12 @@ export function isAlertCase(c) {
     return true;
   }
 
-  // Host prefix with alert pattern ONLY if not an explicit customer support ticket: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "cc-temuco: Bots..."
-  if (!isExplicitNormalCase && /^[a-z0-9._-]+:\s*[a-z0-9._-]+/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
+  // Host prefix with alert pattern: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "flexo-hnm-canada: ..."
+  if (/^[a-z0-9._-]+prod:\s*/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
     return true;
   }
 
-  // Host tokens matching automated alert patterns
-  if (!isExplicitNormalCase && /\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod)\b/i.test(sub) && /(?:process|bot|disk|mem|cpu|postgres|util|lag|fail|retry|offline|error|warn|high|low|alert|monitor|runbook|dashboard)/i.test(sub)) {
-    return true;
-  }
-
-  // If it's an explicit normal customer support or incident case, DO NOT match generic words
-  if (isExplicitNormalCase) return false;
-
-  // 4. Fallback check on description ONLY if automated alert signatures exist
+  // 5. Fallback check on description ONLY if automated alert signatures exist
   const desc = String(c.Description || c.description || '');
   if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
     return true;
@@ -289,60 +275,383 @@ export function isDirTicket(c) {
 }
 
 /**
- * Checks if a ticket is an IM ticket (Incident Management, ServiceNow Incident, internal monitoring alert).
- * Requirement: "dont count im ticket as sev 1 or sev 2 ticket at the pannel"
+ * Checks if a ticket is an IM ticket (Incident Management, ServiceNow Incident, internal monitoring, internal maintenance, service requests, child tickets).
+ * User requirement: "im tickets also being contributing in count increase of urgent cases"
+ * Strictly identifies:
+ * 1. Automated monitoring / Opsgenie alert cases
+ * 2. Child / linked tickets: ANY ticket with ParentId (in Salesforce, root incidents have no ParentId; child cases are sub-tasks/child IMs)
+ * 3. ServiceNow Incident IDs: Snow_id__c / snow_id populated or matching IM... / INC... / CS... / TASK... / SR... / REQ... / RITM... / PRB... / CHG...
+ * 4. Explicit Type: im, inc, incident management, internal maintenance, internal incident, maintenance, service request, child im, child case, subtask, etc.
+ * 5. Category: Category__c, Snow_Category__c containing IM, INC, internal maintenance, incident management, service request, etc.
+ * 6. Subject patterns: [IM], (IM), IM:, IM-, IM_, IM#, IM123, [INC], (INC), INC:, INC-, INC_, INC#, INC123, ServiceNow, SNOW, child IM, sub-case, etc.
+ * 7. Description patterns: IM/INC ticket references, child IM/case mentions, ServiceNow references.
  */
 export function isImTicket(c) {
   if (!c) return false;
 
-  // 1. Child / linked IM ticket: only if it has explicit IM indicators
-  if ((c.ParentId || c.parent_id) && (isAlertCase(c) || /^(im|inc)[\s-:\d]/i.test(String(c.Subject || c.subject || '')))) {
-    return true;
+  const raw = c;
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // If the ticket has automated alert signatures, it is an ALERT, NEVER an IM ticket
+  if (
+    hasOpsgenieUrl(c) ||
+    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub) ||
+    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(sub)
+  ) {
+    return false;
   }
 
-  // 2. Any automated alert / opsgenie alert is an internal IM monitoring alert
-  if (isAlertCase(c)) return true;
+  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  if (parentId !== undefined && parentId !== null) {
+    const pStr = String(parentId).trim().toLowerCase();
+    if (pStr && pStr !== 'null' && pStr !== 'undefined' && pStr !== '0' && pStr !== 'false' && pStr !== '') {
+      return true;
+    }
+  }
 
-  // 2. ServiceNow Incident ID prefix (IM... or INC...)
-  const snowId = String(c.Snow_id__c || c.snow_id || '').trim().toUpperCase();
-  if (snowId.startsWith('IM') || snowId.startsWith('INC')) return true;
+  // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
+  // In GreyOrange Salesforce, Snow_id__c is only populated for ServiceNow-synced internal IM tickets
+  const snowId = String(
+    c.Snow_id__c || raw.Snow_Id__c || raw.Snow_ID__c || raw.snow_id || raw.snow_id__c || raw.SnowId || raw.snowId || raw.Snow_Incident_Number__c || ''
+  ).trim().toUpperCase();
+  if (
+    snowId &&
+    snowId !== 'NULL' &&
+    snowId !== 'UNDEFINED' &&
+    snowId !== 'NONE' &&
+    snowId !== 'N/A' &&
+    snowId !== '0'
+  ) {
+    if (
+      snowId.startsWith('IM') ||
+      snowId.startsWith('INC') ||
+      snowId.startsWith('CS') ||
+      snowId.startsWith('SR') ||
+      snowId.startsWith('REQ') ||
+      snowId.startsWith('RITM') ||
+      snowId.startsWith('PRB') ||
+      snowId.startsWith('CHG') ||
+      snowId.startsWith('TASK') ||
+      snowId.includes('IM') ||
+      snowId.includes('INC') ||
+      /\b(IM|INC)\b/i.test(snowId) ||
+      /\b(IM|INC)\d+/i.test(snowId)
+    ) {
+      return true;
+    }
+  }
 
-  // 3. Explicit Type field (Incident Management or internal monitoring)
-  const type = String(c.Type || c.type || '').trim().toLowerCase();
+  // 3. Explicit Type field (Incident Management, Internal Maintenance, Service Request, etc.)
+  // (Notice: 'incident' alone is the default Salesforce case type, NOT an IM ticket)
+  const type = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Case_Type__c || '').trim().toLowerCase();
   if (
     type === 'im' ||
-    type.includes('incident management') ||
-    type.includes('internal monitoring') ||
-    type.startsWith('im ') ||
+    type === 'inc' ||
     type.startsWith('im-') ||
-    type.startsWith('im:')
+    type.startsWith('im_') ||
+    type.startsWith('im ') ||
+    type.startsWith('inc-') ||
+    type.startsWith('inc_') ||
+    type.startsWith('inc ') ||
+    type === 'sr' ||
+    type === 'cr' ||
+    type === 'internal' ||
+    type.includes('incident management') ||
+    type.includes('internal maintenance') ||
+    type.includes('internal monitoring') ||
+    type.includes('internal incident') ||
+    type.includes('child im') ||
+    type.includes('child case') ||
+    type.includes('child incident') ||
+    type.includes('sub-task') ||
+    type.includes('subtask') ||
+    type.includes('work order') ||
+    type.includes('preventive')
   ) {
     return true;
   }
 
-  // 4. Category field (Incident Management or internal monitoring)
-  const cat = String(c.Category__c || c.category || c.Snow_Category__c || '').trim().toLowerCase();
+  // 4. Category field
+  const cat = String(
+    c.Category__c || raw.category || c.Snow_Category__c || raw.Snow_Category || raw.Category || raw.Sub_Category__c || ''
+  ).trim().toLowerCase();
   if (
     cat === 'im' ||
-    cat.includes('incident management') ||
-    cat.includes('internal monitoring') ||
-    cat.startsWith('im ') ||
+    cat === 'inc' ||
     cat.startsWith('im-') ||
-    cat.startsWith('im:')
+    cat.startsWith('im_') ||
+    cat.startsWith('im ') ||
+    cat.startsWith('inc-') ||
+    cat.startsWith('inc_') ||
+    cat.startsWith('inc ') ||
+    cat === 'sr' ||
+    cat === 'cr' ||
+    cat === 'internal' ||
+    cat.includes('incident management') ||
+    cat.includes('internal maintenance') ||
+    cat.includes('internal monitoring') ||
+    cat.includes('internal incident') ||
+    cat.includes('child im') ||
+    cat.includes('child case') ||
+    cat.includes('child incident') ||
+    cat.includes('sub-task') ||
+    cat.includes('subtask') ||
+    cat.includes('work order') ||
+    cat.includes('preventive')
   ) {
     return true;
   }
 
-  // 5. Subject pattern
-  const sub = String(c.Subject || c.subject || '').trim();
-  if (/^(\[?im\]?|im[-:\s\d]|incident\s*management)/i.test(sub)) {
+  // 5. Subject pattern (matches anywhere in subject)
+  if (
+    // IM pattern: [IM], (IM), IM:, IM-, IM_, IM#, IM 123, IM123, etc.
+    /(?:^|[\s\[\(_\-])IM(?:[:\s#\d\-_\]\)]|$)/i.test(sub) ||
+    /\bIM\d+\b/i.test(sub) ||
+    /\bIM[-_:\s#]+\d+/i.test(sub) ||
+    /\[\s*IM\s*\]/i.test(sub) ||
+    /\bIM\s+ticket\b/i.test(sub) ||
+    // INC pattern: [INC], (INC), INC:, INC-, INC_, INC#, INC 123, INC123, etc.
+    /(?:^|[\s\[\(_\-])INC(?:[:\s#\d\-_\]\)]|$)/i.test(sub) ||
+    /\bINC\d+\b/i.test(sub) ||
+    /\bINC[-_:\s#]+\d+/i.test(sub) ||
+    /\[\s*INC\s*\]/i.test(sub) ||
+    /\bINC\s+ticket\b/i.test(sub) ||
+    // Full words
+    /\b(incident\s*management|internal\s*maintenance|internal\s*monitoring|internal\s*incident)\b/i.test(sub) ||
+    /\b(service\s*request|change\s*request|work\s*order)\b/i.test(sub) ||
+    /\b(child\s*im|child\s*case|child\s*ticket|child\s*incident|sub[- ]*(case|task|ticket))\b/i.test(sub) ||
+    /\b(servicenow|snow)\s*(?:incident|ticket|im|inc|#|:)/i.test(sub) ||
+    /\b(planned|preventive|routine)\s*maintenance\b/i.test(sub) ||
+    /\b(PRB|CHG|RITM|SCTASK)\d+\b/i.test(sub)
+  ) {
     return true;
   }
-  if (/\b(im ticket|incident ticket)\b/i.test(sub)) {
+
+  // 6. Description patterns
+  const desc = String(c.Description || raw.description || '').trim();
+  if (
+    /(?:^|[\s\[\(_\-])(?:IM|INC)[-_:\s#]*\d{4,}/i.test(desc) ||
+    /\b(incident\s*management|child\s*im|child\s*case|servicenow\s*incident)\b/i.test(desc)
+  ) {
     return true;
   }
 
   return false;
+}
+
+/**
+ * Checks if a ticket is a valid incident ticket.
+ * Excludes alert tickets and DIR tickets.
+ */
+export function isIncidentTicket(c) {
+  if (!c) return false;
+  if (isAlertCase(c)) return false;
+  if (isDirTicket(c)) return false;
+  return true;
+}
+
+/**
+ * Determines whether two tickets represent the same operational incident
+ * (e.g., an urgent incident case and its automatically generated child IM ticket).
+ * User requirement: "what happenes whenver an urgent case comes or made then an automated im ticket is created i just want that 1sev with automated im ticket creation counts to only one sev 1 respectively goes for sev 2 urgent also no double count due to automated im ticket creation just count the incident urgent"
+ */
+export function areSameIncident(t1, t2) {
+  if (!t1 || !t2) return false;
+  if (t1.Id && t2.Id && t1.Id === t2.Id) return true;
+  if (t1.CaseNumber && t2.CaseNumber && t1.CaseNumber === t2.CaseNumber) return true;
+
+  // 1. Direct ParentId link (automated IM ticket created for parent case, or child ticket)
+  const p1 = t1.ParentId || t1.parent_id || t1.Parent_Case__c || t1.Parent_Case_Number__c;
+  const p2 = t2.ParentId || t2.parent_id || t2.Parent_Case__c || t2.Parent_Case_Number__c;
+
+  if (p1 && (p1 === t2.Id || p1 === t2.CaseNumber)) return true;
+  if (p2 && (p2 === t1.Id || p2 === t1.CaseNumber)) return true;
+  if (p1 && p2 && String(p1).trim().toLowerCase() === String(p2).trim().toLowerCase()) return true;
+
+  // 2. Shared ServiceNow Incident ID (Snow_id__c / Snow_Incident_Number__c)
+  const snow1 = String(t1.Snow_id__c || t1.Snow_Id__c || t1.snow_id || t1.Snow_Incident_Number__c || '').trim().toUpperCase();
+  const snow2 = String(t2.Snow_id__c || t2.Snow_Id__c || t2.snow_id || t2.Snow_Incident_Number__c || '').trim().toUpperCase();
+  if (snow1 && snow2 && snow1 !== 'NULL' && snow1 !== 'UNDEFINED' && snow1 !== 'NONE' && snow1 === snow2) {
+    return true;
+  }
+
+  // 3. One ticket references the other ticket's CaseNumber in Subject or Description
+  const sub1 = String(t1.Subject || t1.subject || '');
+  const sub2 = String(t2.Subject || t2.subject || '');
+  const desc1 = String(t1.Description || t1.description || '');
+  const desc2 = String(t2.Description || t2.description || '');
+
+  if (t1.CaseNumber && (sub2.includes(t1.CaseNumber) || desc2.includes(t1.CaseNumber))) return true;
+  if (t2.CaseNumber && (sub1.includes(t2.CaseNumber) || desc1.includes(t2.CaseNumber))) return true;
+
+  // 4. Automated IM ticket created alongside the incident on the same site
+  const isIm1 = isImTicket(t1);
+  const isIm2 = isImTicket(t2);
+  if (isIm1 !== isIm2) {
+    const cleanSub1 = sub1.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').trim().toLowerCase();
+    const cleanSub2 = sub2.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').trim().toLowerCase();
+    if (cleanSub1 && cleanSub2 && (cleanSub1.includes(cleanSub2) || cleanSub2.includes(cleanSub1))) {
+      return true;
+    }
+  }
+
+  // 5. Duplicate or concurrent incident cases for the same event on the same site:
+  // e.g. "Ranger crashes in PPS08" and "Ranger 16 Collision with PPS 08", or "Stations paused due to power supply failure" and "Site down"
+  const t1Time = t1.createdTime || (t1.CreatedDate ? new Date(t1.CreatedDate).getTime() : 0);
+  const t2Time = t2.createdTime || (t2.CreatedDate ? new Date(t2.CreatedDate).getTime() : 0);
+  const timeDiffMs = (t1Time > 0 && t2Time > 0) ? Math.abs(t1Time - t2Time) : Infinity;
+
+  const normSub1 = sub1.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').replace(/[^a-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+  const normSub2 = sub2.replace(/^(\[?(?:im|inc|urgent|alert|p[12]|sev[12])\]?[:\s\-_]*)+/i, '').replace(/[^a-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim().toLowerCase();
+
+  if (timeDiffMs <= 4 * 3600 * 1000) {
+    // Exact or substring match within 4 hours
+    if (normSub1 && normSub2 && (normSub1 === normSub2 || normSub1.includes(normSub2) || normSub2.includes(normSub1))) {
+      return true;
+    }
+    // Shared specific keywords (e.g. both reference pps 08 or pps08, or power supply failure)
+    const pps1 = normSub1.match(/\bpps\s*\d+\b/);
+    const pps2 = normSub2.match(/\bpps\s*\d+\b/);
+    if (pps1 && pps2 && pps1[0].replace(/\s+/g, '') === pps2[0].replace(/\s+/g, '')) {
+      return true;
+    }
+    // Power supply / station pause / towers / outage within 4 hours
+    const isPowerOutage1 = /power supply|station.*paused|towers? flashing|site down|down/i.test(sub1);
+    const isPowerOutage2 = /power supply|station.*paused|towers? flashing|site down|down/i.test(sub2);
+    if (isPowerOutage1 && isPowerOutage2) {
+      return true;
+    }
+  }
+
+  // Concurrent outage tickets created within 30 minutes of each other (e.g. "Site down" + "Stations paused due to power supply failure")
+  if (timeDiffMs <= 30 * 60 * 1000) {
+    const isOutage1 = /site down|power supply|station|down|outage/i.test(sub1);
+    const isOutage2 = /site down|power supply|station|down|outage/i.test(sub2);
+    if (isOutage1 && isOutage2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Calculates Sev 1 and Sev 2 urgent counts for a site, clustering related tickets
+ * (incident case + automated IM ticket) so that each incident counts as ONLY ONE Sev.
+ */
+export function calculateSiteUrgentCounts(casesForSite = []) {
+  const urgentTickets = (casesForSite || []).filter(c => {
+    if (!isIncidentTicket(c)) return false;
+    const sev = detectSeverity(c);
+    return sev === 'sev1' || sev === 'sev2';
+  });
+
+  if (urgentTickets.length === 0) {
+    return { sev1Count: 0, sev2Count: 0 };
+  }
+
+  // Cluster related tickets into single distinct incidents
+  const incidentClusters = [];
+
+  for (const t of urgentTickets) {
+    let cluster = incidentClusters.find(c => c.some(existing => areSameIncident(existing, t)));
+    if (cluster) {
+      cluster.push(t);
+    } else {
+      incidentClusters.push([t]);
+    }
+  }
+
+  let sev1Count = 0;
+  let sev2Count = 0;
+
+  for (const cluster of incidentClusters) {
+    const hasSev1 = cluster.some(t => detectSeverity(t) === 'sev1');
+    const hasSev2 = cluster.some(t => detectSeverity(t) === 'sev2');
+
+    if (hasSev1) {
+      sev1Count++;
+    } else if (hasSev2) {
+      sev2Count++;
+    }
+  }
+
+  return { sev1Count, sev2Count };
+}
+
+/**
+ * Deduplicate incidents for a site by clustering parent cases and automated child IM tickets
+ * into single distinct operational incidents.
+ * Ensures that 1 urgent incident with automated child IM tickets counts as exactly 1 incident.
+ */
+export function deduplicateIncidents(incidents = []) {
+  if (!Array.isArray(incidents) || incidents.length === 0) return [];
+  const clusters = [];
+  for (const inc of incidents) {
+    if (!inc) continue;
+    const cluster = clusters.find(cl => cl.some(existing => areSameIncident(existing, inc)));
+    if (cluster) {
+      cluster.push(inc);
+    } else {
+      clusters.push([inc]);
+    }
+  }
+
+  return clusters.map(cluster => {
+    // Pick the primary representative incident (prefer parent case without ParentId, or earliest createdTime)
+    const sorted = [...cluster].sort((a, b) => {
+      const aHasParent = Boolean(a.ParentId);
+      const bHasParent = Boolean(b.ParentId);
+      if (!aHasParent && bHasParent) return -1;
+      if (aHasParent && !bHasParent) return 1;
+      return (a.createdTime || 0) - (b.createdTime || 0);
+    });
+    const rep = { ...sorted[0] };
+
+    // Highest severity wins
+    const hasSev1 = cluster.some(t => t.severity === 'sev1');
+    const hasSev2 = cluster.some(t => t.severity === 'sev2');
+    if (hasSev1) {
+      rep.severity = 'sev1';
+    } else if (hasSev2) {
+      rep.severity = 'sev2';
+    }
+
+    // Earliest created date/time
+    const validStarts = cluster.map(t => t.createdTime).filter(t => typeof t === 'number' && t > 0);
+    if (validStarts.length > 0) {
+      rep.createdTime = Math.min(...validStarts);
+      const earliest = cluster.find(t => t.createdTime === rep.createdTime);
+      if (earliest?.createdDate) rep.createdDate = earliest.createdDate;
+    }
+
+    // Latest end time / closure
+    const endTimesMs = cluster.map(t => {
+      const e = t.endTime || t.closedDate;
+      return e ? new Date(e).getTime() : 0;
+    }).filter(t => t > 0);
+    if (endTimesMs.length > 0) {
+      const maxEndMs = Math.max(...endTimesMs);
+      const latestEnd = cluster.find(t => {
+        const e = t.endTime || t.closedDate;
+        return e && new Date(e).getTime() === maxEndMs;
+      });
+      if (latestEnd) {
+        rep.endTime = latestEnd.endTime || latestEnd.closedDate;
+        rep.closedDate = latestEnd.closedDate || latestEnd.endTime;
+        if (rep.createdTime && maxEndMs > rep.createdTime) {
+          rep.durationHours = Math.round(((maxEndMs - rep.createdTime) / (3600 * 1000)) * 10) / 10;
+        }
+      }
+    }
+
+    if (cluster.some(t => t.isSiteDown)) {
+      rep.isSiteDown = true;
+    }
+
+    return rep;
+  });
 }
 
 export function isClosedToday(c) {
@@ -389,6 +698,9 @@ export function isOpenAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
+  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
+  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
+
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
 
@@ -396,28 +708,6 @@ export function isOpenAlert(c) {
   for (const pattern of CLOSED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
-
-  // If status is explicitly active in Salesforce, it IS an active open alert!
-  const isActiveOpen =
-    status.includes('new') ||
-    status.includes('open') ||
-    status.includes('progress') ||
-    status.includes('investigat') ||
-    status.includes('active') ||
-    status.includes('assigned') ||
-    status.includes('escalat') ||
-    status.includes('queue') ||
-    status.includes('triag') ||
-    status.includes('review') ||
-    status.includes('pending');
-
-  if (isActiveOpen) {
-    return true;
-  }
-
-  // If status is not explicitly active and has an end time or on-hold status
-  if (hasTicketEndTime(c)) return false;
-
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
@@ -932,6 +1222,23 @@ export function areSameSite(nameA, nameB, compiledSites = []) {
   const spacelessB = cleanB.replace(/\s+/g, '');
   if (spacelessA && spacelessB && spacelessA === spacelessB) return true;
 
+  // Distinct Essilor Luxottica sites must NEVER be matched together:
+  const isAtl = (s) => /atl|atlanta/i.test(s);
+  const isCol = (s) => /col|columbus|colombus/i.test(s);
+  const isSed = (s) => /sedico/i.test(s);
+  const isFhrOrGeneric = (s) => /fhr/i.test(s) || (/essilor|luxottica/i.test(s) && !isAtl(s) && !isCol(s) && !isSed(s));
+
+  if (/essilor|luxottica/i.test(nameA) && /essilor|luxottica/i.test(nameB)) {
+    if (isAtl(nameA) !== isAtl(nameB)) return false;
+    if (isCol(nameA) !== isCol(nameB)) return false;
+    if (isSed(nameA) !== isSed(nameB)) return false;
+    if (isFhrOrGeneric(nameA) !== isFhrOrGeneric(nameB)) return false;
+  }
+
+  // Sams Club ATL vs LAX must NEVER be matched together:
+  if (/sam.*atl|samprod|samsprod|^4993/i.test(nameA) && /sam.*lax|samlax|^8799|^9476/i.test(nameB)) return false;
+  if (/sam.*lax|samlax|^8799|^9476/i.test(nameA) && /sam.*atl|samprod|samsprod|^4993/i.test(nameB)) return false;
+
   // Domain aliases:
   // Sams Club ATL: sams atl, sam atl, samatl, samprod, samsprod, 4993
   const isSamsAtl = (s) => /sam.*atl|samprod|samsprod|^4993/i.test(s);
@@ -957,12 +1264,12 @@ export function areSameSite(nameA, nameB, compiledSites = []) {
   const isElAtl = (s) => /el[-_]?atl|atlanta.*luxottica|luxottica.*atlanta/i.test(s);
   if (isElAtl(nameA) && isElAtl(nameB)) return true;
 
-  // Check KNOWN_SITE_ALIASES
+  // Check KNOWN_SITE_ALIASES (strict exact alias inclusion)
   for (const [siteKey, aliases] of Object.entries(KNOWN_SITE_ALIASES)) {
     const keyClean = normalizeCanonical(siteKey);
     const allNames = [keyClean, ...aliases.map(normalizeCanonical)];
-    const matchA = allNames.includes(cleanA) || (cleanA && keyClean.includes(cleanA));
-    const matchB = allNames.includes(cleanB) || (cleanB && keyClean.includes(cleanB));
+    const matchA = allNames.includes(cleanA);
+    const matchB = allNames.includes(cleanB);
     if (matchA && matchB) return true;
   }
 
@@ -976,11 +1283,93 @@ export function areSameSite(nameA, nameB, compiledSites = []) {
 export function findBestSiteForCase(caseRecord, compiledSites) {
   if (!caseRecord || !compiledSites || compiledSites.length === 0) return null;
 
-  // Level 0: For automated ALERTS, the Subject line is the PRIMARY authoritative source for site host identification!
+  // Level 0: Primary authoritative Subject line & location fields check
   const sub = String(caseRecord.Subject || caseRecord.subject || '').trim();
-  if (sub && (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub))) {
-    const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
-    if (siteFromSub) return siteFromSub;
+  const combinedContext = [
+    caseRecord.Snow_Sitename__c,
+    caseRecord.Customer_Location__c,
+    caseRecord.Site_Name_Customer_Input__c,
+    caseRecord.Impacted_Sites__c,
+    sub,
+    caseRecord.Account_Name__c || caseRecord.account_name,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  // Essilor Luxottica multi-site resolution:
+  if (/essilor|luxottica/i.test(combinedContext) || /el[-_]?atl|el[-_]?col|sedico/i.test(combinedContext)) {
+    if (/\b(atl|atlanta|el-atl|elatl)\b/i.test(combinedContext)) {
+      const atl = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
+      if (atl) return atl.originalName;
+      return 'Essilor Luxottica Atlanta';
+    }
+    if (/\b(columbus|colombus|el-col|elcol)\b/i.test(combinedContext)) {
+      const col = compiledSites.find(x => /columbus/i.test(x.originalName));
+      if (col) return col.originalName;
+      return 'Essilor Luxottica -Columbus';
+    }
+    if (/\b(sedico)\b/i.test(combinedContext)) {
+      const sed = compiledSites.find(x => /sedico/i.test(x.originalName));
+      if (sed) return sed.originalName;
+      return 'Luxottica_Sedico';
+    }
+    if (/\b(fhr|california)\b/i.test(combinedContext)) {
+      const fhr = compiledSites.find(x => x.originalName === 'Essilor Luxottica');
+      if (fhr) return fhr.originalName;
+      return 'Essilor Luxottica';
+    }
+  }
+
+  // Sams Club multi-site resolution:
+  if (/sam(s)?(\s+club)?|4993|8799|9476/i.test(combinedContext)) {
+    if (/\b(atl|atlanta|4993|samprod|samsprod)\b/i.test(combinedContext)) {
+      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club ATL';
+    }
+    if (/\b(lax|california|8799|9476|samlax)\b/i.test(combinedContext)) {
+      const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club LAX';
+    }
+  }
+
+  // Walmart multi-site resolution:
+  if (/walmart/i.test(combinedContext)) {
+    if (/\b(mexico|mx|tepotzotlan|tepotzotlÃ¡n|walmartmx)\b/i.test(combinedContext)) {
+      const wm = compiledSites.find(x => /mexico/i.test(x.originalName));
+      if (wm) return wm.originalName;
+      return 'Walmart Mexico';
+    }
+    if (/\b(canada|calgary|edwards|walmartca)\b/i.test(combinedContext)) {
+      const wc = compiledSites.find(x => /canada/i.test(x.originalName));
+      if (wc) return wc.originalName;
+      return 'Walmart-Canada';
+    }
+  }
+
+  // H&M multi-site resolution:
+  if (/h\s*&\s*m|hnm|flexo[-_]?hnm/i.test(combinedContext)) {
+    if (/\b(ajax|canada)\b/i.test(combinedContext) && !/perris|gxo/i.test(combinedContext)) {
+      const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
+      if (hm) return hm.originalName;
+      return 'H&M Canada Ajax';
+    }
+    if (/\b(perris|xpo|gxo)\b/i.test(combinedContext)) {
+      const gxo = compiledSites.find(x => /gxo/i.test(x.originalName));
+      if (gxo) return gxo.originalName;
+      return 'GXO-H&M Prod';
+    }
+    if (/\b(robbinsville|p1)\b/i.test(combinedContext)) {
+      const p1 = compiledSites.find(x => /p1/i.test(x.originalName));
+      if (p1) return p1.originalName;
+      return 'H&M P1';
+    }
+  }
+
+  if (sub) {
+    if (isAlertCase(caseRecord) || /\b(samprod|samsprod|samsatl|samatl|casey|caseys|owensminor|onm|sedico|elatl|elcolombus|4993)\b/i.test(sub)) {
+      const siteFromSub = extractSiteFromAlertSubject(sub, compiledSites);
+      if (siteFromSub) return siteFromSub;
+    }
   }
 
   // Level 1: Account ID match (most authoritative, exact Salesforce record linkage)
@@ -1003,6 +1392,22 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
   // Level 2: Account Name match (e.g. "Ryder-Maryland(USA)", "H&M(Ajax)-(Canada)", "Walmart-Mexico(Tepotzotlán)")
   const rawAccountName = caseRecord.Account_Name__c || caseRecord.account_name || caseRecord.Account?.Name;
   if (rawAccountName) {
+    if (/el[-_]?atl|atlanta/i.test(rawAccountName)) {
+      const atl = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
+      if (atl) return atl.originalName;
+      return 'Essilor Luxottica Atlanta';
+    }
+    if (/ajax|h&m.*canada|hnm.*canada/i.test(rawAccountName)) {
+      const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
+      if (hm) return hm.originalName;
+      return 'H&M Canada Ajax';
+    }
+    if (/sam.*atl|4993/i.test(rawAccountName)) {
+      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club ATL';
+    }
+
     const accClean = normalizeCanonical(rawAccountName);
     if (accClean) {
       for (const site of compiledSites) {
@@ -1155,47 +1560,52 @@ export function getImpactPercentage(c) {
 
 /**
  * Universal severity / priority detector.
- * Strict rules:
+ * Rules:
  * - Sev 1 Urgent (sev1):
- *     - Operational Impact = 100% (or impact >= 100)
- *     - OR Is_Site_100_Down__c is true
- *     - OR Explicitly marked 'Sev 1 - Urgent', 'Sev 1 Urgent', 'P1 - Urgent', '1 - Critical', 'Critical'
+ *     - Essilor Luxottica Atlanta urgent tickets (user requirement: "its el atl essilor luxotica atlanta you should its sev 1 urgent in essilor luxotica [atlanta]")
+ *     - Operational Impact = 100% (or impact >= 100) or Is_Site_100_Down__c
+ *     - Explicit Severity 1 / Sev 1 / P1 / Critical
+ *     - Subject containing Sev 1 / P1 Urgent / Critical
  * - Sev 2 Urgent (sev2):
- *     - Operational Impact >= 50% and <= 99% (99% - 50% is Sev 2 Urgent)
- *     - OR Explicitly marked 'Sev 2 - Urgent', 'Sev 2 Urgent', 'Severity 2 - Urgent', 'P2 - Urgent'
- * - Sev 2 High (sev3 - High non-urgent):
- *     - Marked 'Sev 2 - High', 'Sev 2 High', 'Severity 2 - High', 'P2 - High', 'High', OR plain 'Sev 2' with impact < 50%
- *     - Sev 2 High MUST NEVER be classified as Sev 2 Urgent unless impact >= 50%.
- * - Excludes automated alerts, IM tickets, and DIR tickets.
+ *     - Operational Impact >= 50% and <= 99%
+ *     - Explicit Severity 2 / Sev 2 / P2 / Sev 2 Urgent
+ *     - Subject containing Sev 2 / P2 Urgent
+ * - Excludes DIR tickets (post-incident documentation).
  */
 export function detectSeverity(c) {
   if (!c) return 'sev3';
+  if (isDirTicket(c)) return 'sev3';
 
-  // Exclude automated alert tickets and DIR documentation tickets from Sev 1 / Sev 2 counts
-  if (isDirTicket(c) || isAlertCase(c)) {
+  const raw = c;
+  const rawType = String(raw.Type || raw.type || '').trim().toLowerCase();
+  // Feature requests, queries, and analysis are never operational outage incidents
+  if (rawType === 'feature request' || rawType === 'query' || rawType === 'analysis' || rawType === 'change') {
     return 'sev3';
   }
 
-  const impact = getImpactPercentage(c);
-
   // Rule 1: 100% Impact or Site 100% Down -> Sev 1 Urgent
-  // Condition: "if =100% then sev 1 urgent"
-  if (Boolean(c.Is_Site_100_Down__c) || Boolean(c.is_site_down) || impact >= 100) {
+  const impact = getImpactPercentage(c);
+  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || impact >= 100) {
     return 'sev1';
   }
 
+  // Explicit low severity guard: if Salesforce explicitly designates Severity 3 or 4, it is not Sev 1/2 Urgent
+  const highestSevRaw = String(raw.Highest_Severity__c || '').trim();
+  if (/severity\s*[34]|sev[-_ ]*[34]|low|minor/i.test(highestSevRaw) && impact < 50 && !raw.Is_Site_100_Down__c) {
+    return 'sev3';
+  }
+
   // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
-  // Condition: "if >=50% its sev 2 urgent if =100% then sev 1 urgent and 99%-50% is sev 2 urgent"
   if (impact >= 50 && impact < 100) {
     return 'sev2';
   }
 
-  const highestSev = String(c.Highest_Severity__c || '').trim().toUpperCase();
-  const prio = String(c.Priority || c.Snow_Priority__c || c.Snow_Urgency__c || '').trim().toUpperCase();
-  const candidates = [highestSev, prio].filter(Boolean);
+  // Authoritative case severity fields
+  const highestSev = highestSevRaw.toUpperCase();
+  const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
 
-  // Rule 3: Explicit Sev 1 Urgent / Critical in fields
-  for (const s of candidates) {
+  // Rule 3: Explicit Severity 1 Urgent / Critical in authoritative case fields
+  for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 1' ||
       s === 'SEV 1' ||
@@ -1205,40 +1615,43 @@ export function detectSeverity(c) {
       s.includes('SEV 1 - URGENT') ||
       s.includes('SEV 1 URGENT') ||
       s.includes('1 - CRITICAL') ||
-      s.includes('CRITICAL')
+      s === 'CRITICAL'
     ) {
       return 'sev1';
     }
   }
 
-  // Rule 4: Explicit High (Sev 2 - High, Sev 2 High, P2 - High, High)
-  // MUST NOT be classified as Sev 2 Urgent! (Impact < 50%, so it is High non-urgent / sev3)
-  const isHigh = candidates.some(s =>
-    s.includes('HIGH') ||
-    s.includes('2 - HIGH') ||
-    s.includes('SEV 2 - HIGH') ||
-    s.includes('SEV 2 HIGH') ||
-    s.includes('SEVERITY 2 - HIGH') ||
-    s.includes('SEVERITY 2 HIGH') ||
-    s.includes('P2 - HIGH') ||
-    s.includes('P2 HIGH')
-  );
-
-  if (isHigh) {
-    return 'sev3';
+  // Rule 4: Explicit Sev 2 Urgent (Must be explicitly 'Urgent', NOT standard Sev 2 High)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s.includes('2 - URGENT') ||
+      s.includes('SEV 2 - URGENT') ||
+      s.includes('SEV 2 URGENT') ||
+      s.includes('SEVERITY 2 - URGENT') ||
+      s.includes('SEVERITY 2 URGENT')
+    ) {
+      return 'sev2';
+    }
   }
 
-  // Rule 5: Explicit Sev 2 Urgent (must have URGENT keyword)
-  const isUrgent = candidates.some(s =>
-    (s.includes('2') || s.includes('P2') || s.includes('SEVERITY 2') || s.includes('SEV 2')) &&
-    s.includes('URGENT')
-  );
-
-  if (isUrgent) {
+  // Rule 5: Subject line explicit urgency / severity tags (must be explicit tag, not regular English adjective)
+  const sub = String(c.Subject || raw.subject || '').trim();
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev1';
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2';
   }
 
-  // Plain 'Sev 2' or 'Severity 2' without URGENT or impact >= 50% defaults to High non-urgent (sev3)
+  // Rule 6: Fallback to Alert_Priority__c ONLY if explicitly critical or urgent
+  const alertPrio = String(raw.Alert_Priority__c || '').trim().toUpperCase();
+  if (alertPrio.includes('1 - CRITICAL') || alertPrio.includes('SEV 1 URGENT')) {
+    return 'sev1';
+  }
+  if (alertPrio.includes('2 - URGENT') || alertPrio.includes('SEV 2 URGENT')) {
+    return 'sev2';
+  }
+
   return 'sev3';
 }
 
@@ -1558,14 +1971,25 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
   }
 
   const fetchPromise = (async () => {
-    const primarySoql = [
+    const alertsPrimarySoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
+      "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%')",
+      "AND ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved') OR ClosedDate = TODAY)",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
+    ].join(' ');
+
+    const casesPrimarySoql = [
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
+      'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
+      'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
+      'FROM Case',
+      "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND (Type = null OR Type != 'Alert')) OR ClosedDate = TODAY)",
+      'ORDER BY LastModifiedDate DESC LIMIT 800',
     ].join(' ');
 
     const fallbackSoql = [
@@ -1575,15 +1999,15 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
-      'ORDER BY LastModifiedDate DESC LIMIT 500',
+      'ORDER BY LastModifiedDate DESC LIMIT 800',
     ].join(' ');
 
     const safeSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Owner.Name',
+      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
-      'ORDER BY LastModifiedDate DESC LIMIT 400',
+      'ORDER BY LastModifiedDate DESC LIMIT 600',
     ].join(' ');
 
     const ultraSafeSoql = [
@@ -1591,16 +2015,28 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'AccountId, Account_Name__c, Snow_Sitename__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
-      'ORDER BY LastModifiedDate DESC LIMIT 400',
+      'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
     let raw = [];
     try {
-      const res = await executeSOQL(primarySoql);
-      raw = res.records || [];
+      const [resAlerts, resCases] = await Promise.all([
+        executeSOQL(alertsPrimarySoql),
+        executeSOQL(casesPrimarySoql)
+      ]);
+      const alertsRecords = resAlerts.records || [];
+      const casesRecords = resCases.records || [];
+      const mapById = new Map();
+      for (const r of alertsRecords) {
+        if (r && r.Id) mapById.set(r.Id, r);
+      }
+      for (const r of casesRecords) {
+        if (r && r.Id) mapById.set(r.Id, r);
+      }
+      raw = Array.from(mapById.values());
       _lastSalesforceError = null;
     } catch (errPrimary) {
-      console.warn('[Salesforce] Primary SOQL notice, executing fallback query:', errPrimary.message);
+      console.warn('[Salesforce] Dual primary SOQL notice, executing fallback query:', errPrimary.message);
       try {
         const resFallback = await executeSOQL(fallbackSoql);
         raw = resFallback.records || [];
@@ -1629,7 +2065,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const mapRecord = (c) => {
       const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
-      const cat = c.Snow_Category__c || c.Type || 'Technical Support';
+      const rawType = c.Type || c.type || '';
+      const rawCat = c.Snow_Category__c || c.Category__c || c.Category || '';
+      const actualType = rawType || rawCat || 'Technical Support';
+      const cat = rawCat || rawType || 'Technical Support';
       const rawProd = (c.Product_Type__c || c.Parent_Product_Type__c || '').trim();
       const normProd = normalizeProductType(rawProd);
       const prod = normProd || inferProductLine(
@@ -1667,8 +2106,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         Jira_Priority__c: c.Jira_Priority__c || null,
         Impact_Percentage__c: c.Impact_Percentage__c || c.Impact_Percent__c || null,
         Impact_Percent__c: c.Impact_Percent__c || null,
-        Type: cat,
-        type: cat,
+        Type: actualType,
+        type: actualType,
+        raw_type: rawType,
+        rawType: rawType,
         Category: cat,
         category: cat,
         Category__c: cat,
@@ -1706,6 +2147,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         Downtime__c: c.Downtime__c !== undefined ? c.Downtime__c : null,
         downtime: c.Downtime__c !== undefined ? c.Downtime__c : null,
         Snow_Sitename__c: c.Snow_Sitename__c || null,
+        Snow_id__c: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+        snow_id: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+        Snow_Category__c: c.Snow_Category__c || null,
+        Snow_Urgency__c: c.Snow_Urgency__c || null,
         Site_Name_Customer_Input__c: c.Site_Name_Customer_Input__c || null,
         Impacted_Sites__c: c.Impacted_Sites__c || null,
         DIR_Approval__c: c.DIR_Approval__c || null,
@@ -1839,8 +2284,10 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       Snow_Priority__c: c.Snow_Priority__c || null,
       Jira_Priority__c: c.Jira_Priority__c || null,
       Impact_Percentage__c: c.Impact_Percentage__c || null,
-      Type: c.Category__c || c.Snow_Category__c || c.Type || 'Technical Support',
-      type: c.Category__c || c.Snow_Category__c || c.Type || 'Technical Support',
+      Type: c.Type || c.type || c.Category__c || c.Snow_Category__c || 'Technical Support',
+      type: c.Type || c.type || c.Category__c || c.Snow_Category__c || 'Technical Support',
+      raw_type: c.Type || c.type || '',
+      rawType: c.Type || c.type || '',
       Category__c: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
       category: c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support',
       Product_Type__c: normalizeProductType(c.Product_Type__c) || c.product_line || 'RMS',
@@ -1883,6 +2330,10 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       Downtime__c: c.Downtime__c !== undefined ? c.Downtime__c : null,
       downtime: c.Downtime__c !== undefined ? c.Downtime__c : null,
       Snow_Sitename__c: c.Snow_Sitename__c || null,
+      Snow_id__c: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+      snow_id: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+      Snow_Category__c: c.Snow_Category__c || null,
+      Snow_Urgency__c: c.Snow_Urgency__c || null,
       Site_Name_Customer_Input__c: c.Site_Name_Customer_Input__c || null,
       Impacted_Sites__c: c.Impacted_Sites__c || null,
     };
@@ -1999,6 +2450,8 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
     !getTicketEndTime(c)
   );
 
+  const casesBySite = {};
+
   for (const c of strictlyOpenCases) {
     const bestSite = findBestSiteForCase(c, compiledSites);
     if (bestSite) {
@@ -2015,18 +2468,18 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
       if (c.Product_Type__c) recordSiteProduct(bestSite, c.Product_Type__c);
       if (c.Parent_Product_Type__c) recordSiteProduct(bestSite, c.Parent_Product_Type__c);
 
-      // Live Sev 1 and Sev 2: Strictly count live open cases, and DO NOT count IM or DIR tickets at the panel!
-      if (!isImTicket(c) && !isDirTicket(c)) {
-        const sev = detectSeverity(c);
-        if (sev === 'sev1') {
-          siteStats[key].sev1Count = (siteStats[key].sev1Count || 0) + 1;
-        } else if (sev === 'sev2') {
-          siteStats[key].sev2Count = (siteStats[key].sev2Count || 0) + 1;
-        } else {
-          siteStats[key].sev3Count = (siteStats[key].sev3Count || 0) + 1;
-        }
-      }
+      if (!casesBySite[key]) casesBySite[key] = [];
+      casesBySite[key].push(c);
     }
+  }
+
+  // Calculate Sev 1 and Sev 2 urgent counts per site, deduplicating incident case + automated IM ticket
+  // User requirement: "1sev with automated im ticket creation counts to only one sev 1 respectively goes for sev 2 urgent also no double count due to automated im ticket creation just count the incident urgent"
+  for (const key of Object.keys(siteStats)) {
+    const siteCases = casesBySite[key] || [];
+    const { sev1Count, sev2Count } = calculateSiteUrgentCounts(siteCases);
+    siteStats[key].sev1Count = sev1Count;
+    siteStats[key].sev2Count = sev2Count;
   }
 
   for (const a of liveAlerts) {
@@ -2039,7 +2492,8 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
       siteStats[key].alertCount = (siteStats[key].alertCount || 0) + 1;
       if (a.Product_Type__c) recordSiteProduct(bestSite, a.Product_Type__c);
       if (a.Parent_Product_Type__c) recordSiteProduct(bestSite, a.Parent_Product_Type__c);
-      // Note: Automated monitoring alerts are internal IM alerts and must NEVER count as Sev 1 or Sev 2 customer tickets at the panel
+
+      // User requirement: IM tickets and monitoring alerts are shown in alert views, but do NOT add to Sev 1 / Sev 2 urgent count in the panels
     }
   }
 
@@ -2819,10 +3273,16 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     allSiteNames = DEFAULT_ALL_SITE_NAMES;
   }
 
-  // 1b. Cloud Sheet integration disabled per user request
+  // 1b. Cloud Sheet integration
   let sheetDesignatedSites = [];
   let getSheetUptimeForSite = () => null;
   let hasActiveSheetUptime = () => false;
+  try {
+    const sheets = await import('./sheets.service.js');
+    sheetDesignatedSites = sheets.getSheetDesignatedRedZoneSites?.() || [];
+    getSheetUptimeForSite = sheets.getSheetUptimeForSite || (() => null);
+    hasActiveSheetUptime = sheets.hasActiveSheetUptime || (() => false);
+  } catch {}
 
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
 
@@ -2840,22 +3300,22 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   // Single-site drilldown fetches dedicated 30 days for that single site with pagination (up to 3000 records)
   const isGlobalOverview = !siteName;
   const overviewPrimarySoql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Priority,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
     'FROM Case',
-    'WHERE CreatedDate >= LAST_N_DAYS:30',
-    'ORDER BY CreatedDate DESC LIMIT 2000',
+    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
+    'ORDER BY CreatedDate DESC LIMIT 6000',
   ].join(' ');
 
   const sitePrimarySoql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
+    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Priority,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
     'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
     'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c',
     'FROM Case',
-    'WHERE CreatedDate >= LAST_N_DAYS:30',
+    "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
     siteFilterClause,
     'ORDER BY CreatedDate DESC',
   ].filter(Boolean).join(' ');
@@ -2867,8 +3327,8 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
         'AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE CreatedDate >= LAST_N_DAYS:30',
-        'ORDER BY CreatedDate DESC LIMIT 2000',
+        "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
+        'ORDER BY CreatedDate DESC LIMIT 6000',
       ].join(' ')
     : [
         'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c,',
@@ -2876,7 +3336,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         'ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
         'AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE CreatedDate >= LAST_N_DAYS:30',
+        "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
         siteFilterClause,
         'ORDER BY CreatedDate DESC',
       ].filter(Boolean).join(' ');
@@ -2885,20 +3345,20 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     ? [
         'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE CreatedDate >= LAST_N_DAYS:30',
-        'ORDER BY CreatedDate DESC LIMIT 2000',
+        "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
+        'ORDER BY CreatedDate DESC LIMIT 6000',
       ].join(' ')
     : [
         'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, Downtime__c, Description, AccountId, Account_Name__c, Snow_Sitename__c',
         'FROM Case',
-        'WHERE CreatedDate >= LAST_N_DAYS:30',
+        "WHERE CreatedDate >= LAST_N_DAYS:30 AND (Type = null OR Type != 'Alert')",
         siteFilterClause,
         'ORDER BY CreatedDate DESC',
       ].filter(Boolean).join(' ');
 
   const primary30dSoql = isGlobalOverview ? overviewPrimarySoql : sitePrimarySoql;
-  const queryMaxRecords = isGlobalOverview ? 2000 : 3000;
-  const shouldPaginate = !isGlobalOverview;
+  const queryMaxRecords = 6000;
+  const shouldPaginate = true;
 
   try {
     const res = await executeSOQL(primary30dSoql, { maxRecords: queryMaxRecords, paginate: shouldPaginate });
@@ -2921,13 +3381,12 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     }
   }
 
-  // 3. Filter for valid customer/site incidents (strictly exclude alert tickets, IM tickets, and DIR tickets)
+  // 3. Filter for valid customer/site incidents (strictly exclude alert tickets and DIR tickets)
   const validIncidents = rawCases.filter(c => {
     if (!c) return false;
     if (isAlertCase(c)) return false;
-    if (isImTicket(c)) return false;
     if (isDirTicket(c)) return false;
-    return true;
+    return isIncidentTicket(c);
   });
 
   // Map each incident to a site
@@ -2988,6 +3447,8 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       description: c.Description || null,
       isSiteDown: Boolean(c.Is_Site_100_Down__c),
       impactPercentage: getImpactPercentage(c),
+      ParentId: c.ParentId || null,
+      Snow_id__c: c.Snow_id__c || null,
     });
   }
 
@@ -2997,33 +3458,30 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   const redZoneSites = [];
 
   for (const [key, { siteName: currentSiteName, incidents }] of siteIncidentsMap.entries()) {
-    // Sort incidents newest first
-    incidents.sort((a, b) => b.createdTime - a.createdTime);
+    // Deduplicate automated IM tickets created for incidents so 1 incident counts as ONLY 1
+    const distinctIncidents = deduplicateIncidents(incidents);
+    distinctIncidents.sort((a, b) => b.createdTime - a.createdTime);
 
     // Incidents in last 7 days
-    const incidents7d = incidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
+    const incidents7d = distinctIncidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
     const sev1_7d = incidents7d.filter(i => i.severity === 'sev1').length;
     const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
 
-    // Criteria-2: Uptime (from Google Sheet / Cloud Sheet last row)
-    const sheetUptimeInfo = getSheetUptimeForSite(currentSiteName);
-    const hasSheetUptime = Boolean(sheetUptimeInfo && typeof sheetUptimeInfo.uptime === 'number');
-    const sheetUptimePct = hasSheetUptime ? sheetUptimeInfo.uptime : null;
-    const isUptimeBelow99 = hasSheetUptime && sheetUptimePct < 99.0;
-
+    // Criteria-2: Uptime (omitted for now per user instruction)
     const criteria2 = {
-      met: isUptimeBelow99,
-      uptimePercentage: sheetUptimePct,
-      omitted: !hasSheetUptime,
+      met: false,
+      uptimePercentage: null,
+      omitted: true,
       threshold: 99.0,
-      source: hasSheetUptime ? sheetUptimeInfo.source || 'sheet_last_row' : null,
-      rowIdx: sheetUptimeInfo?.rowIdx || null,
+      source: null,
+      rowIdx: null,
     };
 
     // Criteria-3: MTBF < 36 hours (Last two weeks = 14 days)
-    // Operating hours in 14 days = 336 hours. Qualifying failures: Sev-1 and Sev-2 incidents
-    const incidents14d = incidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+    // Operating hours in 14 days = 336 hours. Qualifying failures: All distinct customer operational incidents on the site
+    // Calculated per individual site separately (not fleet averaged)
+    const incidents14d = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS);
     const N = incidents14d.length;
     let mtbfHours = null;
     let criteria3Met = false;
@@ -3042,29 +3500,11 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     );
     const isSheetDesignated = Boolean(sheetRecord);
 
-    const meetsTicketEntryCriteria = criteria1Met || criteria3Met;
+    // Entry Criteria (Any one): Criteria-1 OR Criteria-3
+    const isCurrentBreach = criteria1Met || criteria3Met || isSheetDesignated;
 
-    // Rule: "if any sites uptime is below 99% in the last row and also met the entry criteria then it will be inside red zone otherwise not"
-    let isCurrentBreach = false;
-    if (hasActiveSheetUptime()) {
-      if (hasSheetUptime) {
-        // Both conditions must be met: Uptime < 99% in last row AND ticket entry criteria met!
-        isCurrentBreach = isUptimeBelow99 && meetsTicketEntryCriteria;
-      } else {
-        // Site not recorded in uptime sheet
-        isCurrentBreach = meetsTicketEntryCriteria;
-      }
-    } else {
-      // Default ticket criteria if sheet uptime is not yet loaded
-      isCurrentBreach = meetsTicketEntryCriteria;
-    }
-
-    if (isSheetDesignated) {
-      isCurrentBreach = true;
-    }
-
-    // Exit Criteria: "If Criteria 1 & Criteria 2 are not met for continually 3 weeks/21 Days, Site will exit from RedZone."
-    // Determine the most recent breach date:
+    // Exit Criteria: "If Criteria 1 & Criteria 2 are not met continually for 3 weeks/21 Days, Site will exit from RedZone."
+    // Determine the most recent breach date across 21 continuous days:
     let lastBreachTime = null;
     if (isCurrentBreach) {
       lastBreachTime = now;
@@ -3072,7 +3512,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       // Check historical rolling windows over the last 21 days:
       for (let dayOffset = 1; dayOffset <= 21; dayOffset++) {
         const testPoint = now - (dayOffset * 24 * 60 * 60 * 1000);
-        const test7d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
+        const test7d = distinctIncidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
         const testSev1 = test7d.filter(i => i.severity === 'sev1').length;
         const testSev2 = test7d.filter(i => i.severity === 'sev2').length;
         if (testSev1 >= 3 || testSev2 >= 5) {
@@ -3080,7 +3520,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
           break;
         }
 
-        const test14d = incidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        const test14d = distinctIncidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= FOURTEEN_DAYS_MS);
         if (test14d.length > 0) {
           const testMtbf = 336 / test14d.length;
           if (testMtbf < 36) {
@@ -3096,13 +3536,6 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       (normalizeCanonical(siteName) === normalizeCanonical(key) ||
         key.includes(siteName.toLowerCase()) ||
         siteName.toLowerCase().includes(key));
-
-    // Rule: "if any sites uptime is below 99% in the last row and also met the entry criteria then it will be inside red zone otherwise not"
-    if (hasActiveSheetUptime() && hasSheetUptime) {
-      if ((!isUptimeBelow99 || !meetsTicketEntryCriteria) && !isExplicitlyRequestedSite && !isSheetDesignated) {
-        continue;
-      }
-    }
 
     if (!lastBreachTime) {
       // Never breached within the last 21 days -> Clean site, not in Red Zone!
@@ -3122,13 +3555,6 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const reasons = [];
     if (isSheetDesignated) {
       reasons.push(`[Cloud Sheet] ${sheetRecord.reason || 'Designated as Red Zone via Cloud Sheet'}`);
-    }
-    if (hasSheetUptime) {
-      if (isUptimeBelow99) {
-        reasons.push(`Site Uptime is ${sheetUptimePct}% (< 99.0% threshold in sheet last row)`);
-      } else {
-        reasons.push(`Site Uptime is healthy at ${sheetUptimePct}% (≥ 99.0% threshold in sheet last row)`);
-      }
     }
     if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
     if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
@@ -3152,10 +3578,10 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
       const dayEnd = dayStart + DAY_MS;
 
-      const dayIncidents = incidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
+      const dayIncidents = distinctIncidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
       const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
       const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
-      const resolvedOnDay = incidents.filter(i => {
+      const resolvedOnDay = distinctIncidents.filter(i => {
         const eStr = i.endTime || i.closedDate;
         if (!eStr) return false;
         const eTime = new Date(eStr).getTime();
@@ -3229,9 +3655,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       product_lines: rzProductLines,
       status: isCurrentBreach
         ? 'ACTIVE_BREACH'
-        : (hasActiveSheetUptime() && hasSheetUptime && !isUptimeBelow99)
-          ? 'HEALTHY'
-          : (daysRemainingToExit > 0 && lastBreachTime && !isSheetDesignated ? 'EXIT_PENDING' : 'HEALTHY'),
+        : (daysRemainingToExit > 0 && lastBreachTime && !isSheetDesignated ? 'EXIT_PENDING' : 'HEALTHY'),
       isCurrentBreach,
       isSheetDesignated,
       sheetReason: sheetRecord?.reason || null,
@@ -3256,22 +3680,26 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       },
       meanTimeToResolveHours,
       dailyMetrics,
-      qualifyingIncidents: incidents.map(i => ({
-        id: i.id,
-        caseNumber: i.caseNumber,
-        subject: i.subject,
-        severity: i.severity,
-        rawSeverity: i.rawSeverity,
-        productType: i.productType || 'RMS',
-        status: i.status,
-        createdDate: i.createdDate,
-        createdTime: i.createdTime,
-        closedDate: i.closedDate,
-        endTime: i.endTime,
-        durationHours: i.durationHours,
-        description: i.description,
-        isSiteDown: i.isSiteDown,
-      })),
+      qualifyingIncidents: (() => {
+        const sev12 = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        const others = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && i.severity !== 'sev1' && i.severity !== 'sev2');
+        return [...sev12, ...others].slice(0, 15).map(i => ({
+          id: i.id,
+          caseNumber: i.caseNumber,
+          subject: i.subject,
+          severity: i.severity,
+          rawSeverity: i.rawSeverity,
+          productType: i.productType || 'RMS',
+          status: i.status,
+          createdDate: i.createdDate,
+          createdTime: i.createdTime,
+          closedDate: i.closedDate,
+          endTime: i.endTime,
+          durationHours: i.durationHours,
+          description: i.description,
+          isSiteDown: i.isSiteDown,
+        }));
+      })(),
     });
   }
 

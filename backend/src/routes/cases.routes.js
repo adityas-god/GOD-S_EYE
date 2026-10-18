@@ -70,11 +70,48 @@ router.post('/red-zone/sheet-sync', async (req, res) => {
 router.get('/red-zone', async (req, res) => {
   try {
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
+    if (forceRefresh) {
+      clearRedZoneSiteCache();
+    }
     const siteName = req.query.site || req.query.siteName || '';
     const result = await fetchRedZoneSitesOverview({ forceRefresh, siteName });
     res.json({
       success: true,
       ...result,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/red-zone/summary', async (req, res) => {
+  try {
+    clearRedZoneSiteCache();
+    const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
+    const siteName = req.query.site || req.query.siteName || '';
+    const result = await fetchRedZoneSitesOverview({ forceRefresh, siteName });
+    res.json({
+      success: true,
+      totalRedZoneSites: result.totalRedZoneSites,
+      activeBreachesCount: result.activeBreachesCount,
+      exitPendingCount: result.exitPendingCount,
+      sites: result.redZoneSites.map(s => ({
+        siteName: s.siteName,
+        status: s.status,
+        isCurrentBreach: s.isCurrentBreach,
+        sev1_7d: s.criteria1.sev1Count7d,
+        sev2_7d: s.criteria1.sev2Count7d,
+        mtbf: s.criteria3.mtbfHours,
+        reasons: s.reasons,
+        qualifyingIncidents: (s.qualifyingIncidents || []).map(i => ({
+          caseNumber: i.caseNumber,
+          subject: i.subject,
+          severity: i.severity,
+          rawSeverity: i.rawSeverity,
+          createdDate: i.createdDate,
+        })),
+      })),
+      timestamp: result.timestamp,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -100,27 +137,6 @@ router.get('/alerts/analytics', async (req, res) => {
   }
 });
 
-router.get('/sev-summary', async (req, res) => {
-  try {
-    const overview = await fetchLiveCasesOverview();
-    const urgentSites = Object.values(overview.siteStats || {})
-      .filter(s => s.sev1Count > 0 || s.sev2Count > 0)
-      .map(s => ({
-        siteName: s.siteName,
-        sev1Count: s.sev1Count,
-        sev2Count: s.sev2Count,
-        count: s.count,
-        alertCount: s.alertCount,
-      }));
-    res.json({
-      success: true,
-      urgentSitesCount: urgentSites.length,
-      urgentSites,
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
 
 
 /**
@@ -129,16 +145,14 @@ router.get('/sev-summary', async (req, res) => {
  */
 router.get('/test-soql', async (req, res) => {
   try {
-    const { instanceUrl } = getSfConfig();
-    const query = 'SELECT Id, CaseNumber, Status, Subject, LastModifiedDate FROM Case ORDER BY LastModifiedDate DESC LIMIT 1';
-    const result = await executeSOQL(query, { paginate: false });
+    const query = req.query.q || "SELECT Id, CaseNumber, Status, Subject, AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Description FROM Case WHERE CaseNumber IN ('00295792', '00295731', '00295730', '00295244')";
+    const paginate = req.query.paginate === 'true';
+    const result = await executeSOQL(query, { paginate, maxRecords: 6000 });
     res.json({
       success: true,
-      connected: true,
-      instanceUrl,
-      recordsCount: result.records?.length || 0,
-      latestCase: result.records?.[0] || null,
-      timestamp: new Date().toISOString(),
+      totalSize: result.totalSize,
+      recordsCount: result.records?.length,
+      records: result.records || [],
     });
   } catch (error) {
     res.status(500).json({
@@ -221,5 +235,45 @@ router.get('/site/:siteName', async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+/**
+ * GET /api/cases/debug-inspect
+ * Plain text inspection of live cases for Essilor, H&M, and Sams
+ */
+router.get('/debug-inspect', async (req, res) => {
+  try {
+    const { fetchAllLiveCasesAndAlerts, compileSiteIndex, findBestSiteForCase, DEFAULT_ALL_SITE_NAMES } = await import('../services/salesforce.service.js');
+    const { SiteRepository } = await import('../models/Site.js');
+    const allSites = await SiteRepository.findAll().catch(() => []);
+    const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
+    const { cases, alerts, openAlerts, closedAlerts } = await fetchAllLiveCasesAndAlerts(true);
+    
+    res.json({
+      success: true,
+      totalLiveCases: cases.length,
+      totalLiveOpenAlerts: (openAlerts || alerts).length,
+      totalClosedAlerts: (closedAlerts || []).length,
+      openAlerts: (openAlerts || alerts).map(a => {
+        const bestSite = findBestSiteForCase(a, compiledSites);
+        return {
+          caseNumber: a.CaseNumber,
+          site: bestSite,
+          subject: a.Subject,
+          status: a.Status,
+          severity: a.Highest_Severity__c,
+          alertPriority: a.Alert_Priority__c,
+          createdDate: a.CreatedDate
+        };
+      })
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message, stack: err.stack });
+  }
+});
+
+
+
+
+
 
 export default router;
