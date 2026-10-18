@@ -143,6 +143,10 @@ function SiteDetail() {
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed' | 'analytics'>('cases');
   const [analyticsRange, setAnalyticsRange] = useState<TimeRangeKey>('7d');
+  const [analyticsCustomRange, setAnalyticsCustomRange] = useState<{ startDate: string; endDate: string }>({
+    startDate: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10),
+    endDate: new Date().toISOString().slice(0, 10),
+  });
   const [historicalAlerts, setHistoricalAlerts] = useState<SFCase[]>([]);
 
   // Fetch deep alert analytics & precise alert records for this site
@@ -151,8 +155,8 @@ function SiteDetail() {
     isFetching: analyticsFetching,
     refetch: refetchAnalytics,
   } = useQuery({
-    queryKey: ['alert-analytics', site?.name || 'all', analyticsRange],
-    queryFn: () => sfFetchAlertAnalytics(site?.name || '', analyticsRange),
+    queryKey: ['alert-analytics', site?.name || 'all', analyticsRange, analyticsRange === 'custom' ? analyticsCustomRange : null],
+    queryFn: () => sfFetchAlertAnalytics(site?.name || '', analyticsRange, false, analyticsRange === 'custom' ? analyticsCustomRange : null),
     enabled: Boolean(site?.name),
     staleTime: 60_000,
     refetchInterval: 120_000,
@@ -1063,6 +1067,9 @@ function SiteDetail() {
                 isSiteDown={Boolean(site?.is_down)}
                 selectedRange={analyticsRange}
                 onRangeChange={setAnalyticsRange}
+                customStartDate={analyticsCustomRange.startDate}
+                customEndDate={analyticsCustomRange.endDate}
+                onCustomRangeChange={(startDate, endDate) => setAnalyticsCustomRange({ startDate, endDate })}
                 onAlertsLoaded={setHistoricalAlerts}
                 analytics={analyticsData}
                 isFetching={analyticsFetching}

@@ -28,11 +28,13 @@ router.get('/timeframes', (req, res) => {
 router.get('/cases', async (req, res) => {
   try {
     const timeframe = req.query.timeframe || '7d';
+    const startDate = req.query.startDate || req.query.start || null;
+    const endDate = req.query.endDate || req.query.end || null;
     const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
     if (forceRefresh) {
       clearAnalyticsCache();
     }
-    const data = await getCasesAnalytics({ timeframe, forceRefresh });
+    const data = await getCasesAnalytics({ timeframe, startDate, endDate, forceRefresh });
     res.json({
       success: true,
       ...data,
@@ -46,17 +48,20 @@ router.get('/cases', async (req, res) => {
 /**
  * GET /api/analytics/alerts
  * Query parameters:
- *   timeframe: '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | '6m' (default '7d')
+ *   timeframe: '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | '6m' | 'custom' (default '7d')
+ *   startDate, endDate (when timeframe === 'custom')
  *   refresh: 'true' to bypass cache
  */
 router.get('/alerts', async (req, res) => {
   try {
     const timeframe = req.query.timeframe || '7d';
+    const startDate = req.query.startDate || req.query.start || null;
+    const endDate = req.query.endDate || req.query.end || null;
     const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
     if (forceRefresh) {
       clearAnalyticsCache();
     }
-    const data = await getAlertsAnalytics({ timeframe, forceRefresh });
+    const data = await getAlertsAnalytics({ timeframe, startDate, endDate, forceRefresh });
     res.json({
       success: true,
       ...data,

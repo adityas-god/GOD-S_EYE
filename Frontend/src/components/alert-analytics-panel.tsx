@@ -13,6 +13,7 @@ import {
   Zap,
   RefreshCw,
   ShieldAlert,
+  Calendar,
 } from 'lucide-react';
 import {
   type SFCase,
@@ -26,7 +27,7 @@ import {
   isClosedAlert,
 } from '@/integrations/salesforce/client';
 
-export type TimeRangeKey = '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m';
+export type TimeRangeKey = '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | 'custom';
 
 export interface AlertAnalyticsPanelProps {
   siteName?: string;
@@ -39,6 +40,9 @@ export interface AlertAnalyticsPanelProps {
   onAlertsLoaded?: (alerts: SFCase[]) => void;
   analytics?: AlertAnalyticsResult | null;
   isFetching?: boolean;
+  customStartDate?: string;
+  customEndDate?: string;
+  onCustomRangeChange?: (startDate: string, endDate: string) => void;
 }
 
 const ALERT_TIME_RANGES: Array<{ key: TimeRangeKey; label: string; hours: number }> = [
@@ -49,6 +53,7 @@ const ALERT_TIME_RANGES: Array<{ key: TimeRangeKey; label: string; hours: number
   { key: '1m', label: '1 Month', hours: 720 },
   { key: '2m', label: '2 Months', hours: 1440 },
   { key: '3m', label: '3 Months', hours: 2160 },
+  { key: 'custom', label: 'Custom', hours: 0 },
 ];
 const TIME_RANGES = ALERT_TIME_RANGES;
 
@@ -104,6 +109,9 @@ export function AlertAnalyticsPanel({
   onAlertsLoaded,
   analytics: controlledAnalytics,
   isFetching: controlledFetching,
+  customStartDate: customStartDateProp,
+  customEndDate: customEndDateProp,
+  onCustomRangeChange,
 }: AlertAnalyticsPanelProps) {
   const [internalRange, setInternalRange] = useState<TimeRangeKey>('7d');
   const selectedRange = controlledRange ?? internalRange;
@@ -115,10 +123,36 @@ export function AlertAnalyticsPanel({
   const [showChart, setShowChart] = useState(true);
   const [hoveredBucket, setHoveredBucket] = useState<AlertAnalyticsBucket | null>(null);
 
+  const getDefaultStartDate = () => {
+    const d = new Date(Date.now() - 7 * 86400000);
+    return d.toISOString().slice(0, 10);
+  };
+  const getDefaultEndDate = () => {
+    return new Date().toISOString().slice(0, 10);
+  };
+
+  const [localStartDate, setLocalStartDate] = useState(customStartDateProp || getDefaultStartDate());
+  const [localEndDate, setLocalEndDate] = useState(customEndDateProp || getDefaultEndDate());
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{ startDate: string; endDate: string }>({
+    startDate: customStartDateProp || getDefaultStartDate(),
+    endDate: customEndDateProp || getDefaultEndDate(),
+  });
+
+  const handleApplyCustom = () => {
+    if (localStartDate && localEndDate) {
+      if (localStartDate > localEndDate) {
+        alert('Start date must be before or equal to End date');
+        return;
+      }
+      setAppliedCustomRange({ startDate: localStartDate, endDate: localEndDate });
+      onCustomRangeChange?.(localStartDate, localEndDate);
+    }
+  };
+
   // Fetch deep historical alert analytics from backend SOQL if not provided
   const { data: serverAnalytics, isFetching: queryFetching, refetch } = useQuery({
-    queryKey: ['alert-analytics', siteName || 'all', selectedRange],
-    queryFn: () => sfFetchAlertAnalytics(siteName, selectedRange),
+    queryKey: ['alert-analytics', siteName || 'all', selectedRange, selectedRange === 'custom' ? appliedCustomRange : null],
+    queryFn: () => sfFetchAlertAnalytics(siteName, selectedRange, false, selectedRange === 'custom' ? appliedCustomRange : null),
     enabled: !controlledAnalytics,
     staleTime: 60_000,
     refetchInterval: 120_000,
@@ -139,12 +173,17 @@ export function AlertAnalyticsPanel({
   const localAnalytics: AlertAnalyticsResult = useMemo(() => {
     const rangeObj = ALERT_TIME_RANGES.find(r => r.key === selectedRange) || ALERT_TIME_RANGES[2];
     const now = Date.now();
-    const windowStart = now - rangeObj.hours * 60 * 60 * 1000;
+    const windowStart = selectedRange === 'custom' && appliedCustomRange.startDate
+      ? new Date(`${appliedCustomRange.startDate}T00:00:00Z`).getTime()
+      : (now - (rangeObj.hours || 168) * 60 * 60 * 1000);
+    const windowEnd = selectedRange === 'custom' && appliedCustomRange.endDate
+      ? new Date(`${appliedCustomRange.endDate}T23:59:59.999Z`).getTime()
+      : now;
 
     const allLocal = [...openAlerts, ...closedAlerts];
     const windowAlerts = allLocal.filter(a => {
       const created = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
-      return created >= windowStart || !a.CreatedDate;
+      return ((created >= windowStart && created <= windowEnd) || !a.CreatedDate);
     });
 
     const FR_SLA_MINUTES = 15;
@@ -636,43 +675,114 @@ export function AlertAnalyticsPanel({
               gap: 12,
             }}
           >
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 4,
-                background: 'var(--secondary)',
-                padding: '3px',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--border)',
-              }}
-            >
-              {ALERT_TIME_RANGES.map(range => {
-                const isActive = selectedRange === range.key;
-                return (
-                  <button
-                    key={range.key}
-                    type="button"
-                    onClick={() => handleRangeChange(range.key)}
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  background: 'var(--secondary)',
+                  padding: '3px',
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {ALERT_TIME_RANGES.map(range => {
+                  const isActive = selectedRange === range.key;
+                  return (
+                    <button
+                      key={range.key}
+                      type="button"
+                      onClick={() => handleRangeChange(range.key)}
+                      style={{
+                        background: isActive ? 'var(--card)' : 'transparent',
+                        color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
+                        border: isActive ? '1px solid var(--border)' : '1px solid transparent',
+                        boxShadow: isActive ? '0 1px 2px rgba(0,0,0,0.18)' : 'none',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '4px 10px',
+                        fontSize: 10.5,
+                        fontWeight: isActive ? 600 : 500,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        transition: 'all 0.12s ease',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {range.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Date Range Picker when Custom range is active */}
+              {selectedRange === 'custom' && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: 'var(--card)',
+                    padding: '3px 8px',
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 10.5,
+                  }}
+                >
+                  <Calendar style={{ width: 12, height: 12, color: 'var(--muted-foreground)' }} />
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5, fontWeight: 600 }}>FROM:</span>
+                  <input
+                    type="date"
+                    value={localStartDate}
+                    onChange={(e) => setLocalStartDate(e.target.value)}
                     style={{
-                      background: isActive ? 'var(--card)' : 'transparent',
-                      color: isActive ? 'var(--foreground)' : 'var(--muted-foreground)',
-                      border: isActive ? '1px solid var(--border)' : '1px solid transparent',
-                      boxShadow: isActive ? '0 1px 2px rgba(0,0,0,0.18)' : 'none',
-                      borderRadius: 'var(--radius-sm)',
-                      padding: '4px 10px',
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 6px',
+                      fontFamily: 'var(--font-mono)',
                       fontSize: 10.5,
-                      fontWeight: isActive ? 600 : 500,
+                      outline: 'none',
+                    }}
+                  />
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5, fontWeight: 600 }}>TO:</span>
+                  <input
+                    type="date"
+                    value={localEndDate}
+                    onChange={(e) => setLocalEndDate(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 6px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyCustom}
+                    style={{
+                      background: 'var(--primary)',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: 3,
+                      padding: '3px 9px',
+                      fontSize: 10.5,
+                      fontWeight: 600,
                       fontFamily: 'var(--font-mono)',
                       cursor: 'pointer',
-                      transition: 'all 0.12s ease',
-                      lineHeight: 1.2,
+                      transition: 'opacity 0.15s ease',
                     }}
                   >
-                    {range.label}
+                    APPLY
                   </button>
-                );
-              })}
+                </div>
+              )}
             </div>
 
             {/* Range Legend & Series Indicators */}

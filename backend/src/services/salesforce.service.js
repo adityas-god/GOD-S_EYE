@@ -231,6 +231,8 @@ export function isLiveOpenCase(c) {
 
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
+  if (isImTicket(c)) return false;
+  if (isPmTicket(c)) return false;
 
   return true;
 }
@@ -325,6 +327,10 @@ export function isDirTicket(c) {
   const sub = String(raw.Subject || raw.subject || '').trim();
   if (
     /\b(DIR|RCA|PIR)\b/i.test(sub) ||
+    /(?:^|[\s\[\(_\-])DIR(?:[:\s#\d\-_\]\)]|$)/i.test(sub) ||
+    /\bDIR\d+\b/i.test(sub) ||
+    /\bDIR[-_:\s#]+\d+/i.test(sub) ||
+    /\[\s*DIR\s*\]/i.test(sub) ||
     /safety\s+incident\s+reporting/i.test(sub) ||
     /detailed\s+incident\s+report/i.test(sub) ||
     /root\s+cause\s+analysis/i.test(sub) ||
@@ -520,14 +526,115 @@ export function isImTicket(c) {
 }
 
 /**
+ * Checks if a ticket is a PM (Preventive Maintenance / Planned Maintenance / Routine PM / Problem PRB) ticket.
+ * User requirement: "or PM tickets ommit all these only sev 1 urgent sev 2 urgent incident with proper downtime calculation"
+ */
+export function isPmTicket(c) {
+  if (!c) return false;
+  const raw = c;
+
+  // 1. Explicit Type field
+  const rawType = String(raw.Type || raw.type || raw.rawType || raw.raw_type || raw.Case_Type__c || '').trim().toLowerCase();
+  if (
+    rawType === 'pm' ||
+    rawType === 'preventive' ||
+    rawType === 'planned' ||
+    rawType === 'maintenance' ||
+    rawType === 'preventive maintenance' ||
+    rawType === 'planned maintenance' ||
+    rawType === 'routine maintenance' ||
+    rawType === 'scheduled maintenance' ||
+    rawType === 'servicing' ||
+    rawType === 'inspection' ||
+    rawType === 'problem' ||
+    rawType === 'prb' ||
+    rawType.includes('preventive') ||
+    rawType.includes('maintenance')
+  ) {
+    return true;
+  }
+
+  // 2. Category / Sub-category field
+  const cat = String(
+    raw.Category__c || raw.category || raw.Sub_Category__c || raw.Snow_Category__c || raw.Snow_Category || ''
+  ).trim().toLowerCase();
+  if (
+    cat === 'pm' ||
+    cat === 'preventive' ||
+    cat === 'maintenance' ||
+    cat === 'preventive maintenance' ||
+    cat === 'planned maintenance' ||
+    cat === 'routine maintenance' ||
+    cat.includes('preventive') ||
+    cat.includes('planned maintenance')
+  ) {
+    return true;
+  }
+
+  // 3. Subject checks
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // Explicit bracket or prefix PM: e.g. "[PM]", "PM:", "PM -", "PM_", "PM #", "PM 123"
+  if (
+    /^\[?\s*PM\s*\]?[:\s\-_#]/i.test(sub) ||
+    /\[\s*PM\s*\]/i.test(sub) ||
+    /\bPM[-_#\s]*\d+\b/i.test(sub) ||
+    /\bPRB\d+\b/i.test(sub) ||
+    /\bCHG\d+\b/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // PM with operational activity words: PM activity, PM checklist, PM servicing, PM work, PM done, PM visit, PM audit
+  if (
+    /\bPM\s*(?:activity|inspection|checklist|servicing|task|ticket|work|done|pending|visit|audit|schedule|scheduled|sheet|plan|service)\b/i.test(sub) ||
+    /\b(?:weekly|monthly|quarterly|annual|routine|preventive|planned|scheduled)\s*(?:pm|maintenance|inspection)\b/i.test(sub) ||
+    /\bpreventive\s*maintenance\b/i.test(sub) ||
+    /\bplanned\s*maintenance\b/i.test(sub) ||
+    /\broutine\s*maintenance\b/i.test(sub) ||
+    /\bscheduled\s*maintenance\b/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // Standalone word "PM" in subject - make sure it's not a timestamp like "5:00 PM" or "10 PM"
+  if (/\bPM\b/i.test(sub)) {
+    const isTimeSuffix = /(?:\d{1,2}:\d{2}\s*|\b\d{1,2}\s*)PM\b/i.test(sub);
+    if (!isTimeSuffix) {
+      if (/(?:^|[\s\[\(_\-])PM(?:[:\s#\d\-_\]\)]|$)/i.test(sub)) {
+        return true;
+      }
+    }
+  }
+
+  // 4. Description checks for PM templates
+  const desc = String(c.Description || raw.description || '').toLowerCase();
+  if (
+    desc &&
+    (desc.includes('preventive maintenance') ||
+      desc.includes('planned maintenance') ||
+      desc.includes('routine maintenance') ||
+      desc.includes('pm checklist') ||
+      desc.includes('pm activity') ||
+      desc.includes('pm servicing') ||
+      desc.includes('scheduled pm'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks if a ticket is a valid incident ticket.
- * Excludes alert tickets and DIR tickets.
+ * Excludes alert tickets, DIR tickets, IM tickets, and PM tickets.
  */
 export function isIncidentTicket(c) {
   if (!c) return false;
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
   if (isImTicket(c)) return false;
+  if (isPmTicket(c)) return false;
   return true;
 }
 
@@ -1656,6 +1763,8 @@ export function detectSeverity(c) {
   if (!c) return 'sev3';
   if (isAlertCase(c)) return 'sev3';
   if (isDirTicket(c)) return 'sev3';
+  if (isImTicket(c)) return 'sev3';
+  if (isPmTicket(c)) return 'sev3';
 
   const raw = c;
   const rawType = String(raw.Type || raw.type || '').trim().toLowerCase();
@@ -2928,8 +3037,11 @@ const _alertAnalyticsSiteCache = new Map();
  * Eliminates empty / flat lines before 48 hours by combining aggregate date-by-date SOQL volume
  * with real MTTR, SLA compliance, auto-resolve rates, and extracted signatures.
  */
-export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', forceRefresh = false }) {
-  const cacheKey = `${siteName || 'all'}_${range}`;
+export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', startDate = null, endDate = null, forceRefresh = false }) {
+  const isCustom = range === 'custom' && startDate && endDate;
+  const cacheKey = isCustom
+    ? `${siteName || 'all'}_custom_${startDate}_${endDate}`
+    : `${siteName || 'all'}_${range}`;
   const now = Date.now();
   const cached = _alertAnalyticsSiteCache.get(cacheKey);
 
@@ -2937,43 +3049,86 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
     return cached.data;
   }
 
-  const rangeConfig = {
-    '24h': { hours: 24, queryDays: 1, bucketCount: 24, bucketType: 'hour', label: 'Past 24 Hours' },
-    '48h': { hours: 48, queryDays: 2, bucketCount: 24, bucketType: '2hour', label: 'Past 48 Hours' },
-    '7d': { hours: 7 * 24, queryDays: 7, bucketCount: 14, bucketType: 'day', label: 'Past 7 Days' },
-    '15d': { hours: 15 * 24, queryDays: 15, bucketCount: 15, bucketType: 'day', label: 'Past 15 Days' },
-    '1m': { hours: 30 * 24, queryDays: 30, bucketCount: 30, bucketType: 'day', label: 'Past 1 Month' },
-    '30d': { hours: 30 * 24, queryDays: 30, bucketCount: 30, bucketType: 'day', label: 'Past 1 Month' },
-    '2m': { hours: 60 * 24, queryDays: 60, bucketCount: 30, bucketType: '2day', label: 'Past 2 Months' },
-    '60d': { hours: 60 * 24, queryDays: 60, bucketCount: 30, bucketType: '2day', label: 'Past 2 Months' },
-    '3m': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
-    '90d': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
-  };
+  let cfg;
+  let windowStart;
+  let windowEnd;
 
-  const cfg = rangeConfig[range] || rangeConfig['7d'];
-  const windowStart = now - (cfg.hours * 60 * 60 * 1000);
+  if (isCustom) {
+    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
+    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
+    const totalMs = Math.max(86400000, customEndMs - customStartMs);
+    const totalDays = Math.max(1, Math.ceil(totalMs / 86400000));
+    const totalHours = totalDays * 24;
+
+    let bucketType = 'day';
+    let bucketCount = totalDays;
+    if (totalDays <= 2) {
+      bucketType = 'hour';
+      bucketCount = Math.min(48, totalHours);
+    } else if (totalDays > 30 && totalDays <= 60) {
+      bucketType = '2day';
+      bucketCount = Math.ceil(totalDays / 2);
+    } else if (totalDays > 60) {
+      bucketType = '3day';
+      bucketCount = Math.ceil(totalDays / 3);
+    }
+
+    cfg = {
+      hours: totalHours,
+      queryDays: totalDays,
+      bucketCount,
+      bucketType,
+      label: `${startDate} to ${endDate}`,
+      isCustom: true,
+      windowStart: customStartMs,
+      windowEnd: customEndMs,
+    };
+    windowStart = customStartMs;
+    windowEnd = customEndMs;
+  } else {
+    const rangeConfig = {
+      '24h': { hours: 24, queryDays: 1, bucketCount: 24, bucketType: 'hour', label: 'Past 24 Hours' },
+      '48h': { hours: 48, queryDays: 2, bucketCount: 24, bucketType: '2hour', label: 'Past 48 Hours' },
+      '7d': { hours: 7 * 24, queryDays: 7, bucketCount: 14, bucketType: 'day', label: 'Past 7 Days' },
+      '15d': { hours: 15 * 24, queryDays: 15, bucketCount: 15, bucketType: 'day', label: 'Past 15 Days' },
+      '1m': { hours: 30 * 24, queryDays: 30, bucketCount: 30, bucketType: 'day', label: 'Past 1 Month' },
+      '30d': { hours: 30 * 24, queryDays: 30, bucketCount: 30, bucketType: 'day', label: 'Past 1 Month' },
+      '2m': { hours: 60 * 24, queryDays: 60, bucketCount: 30, bucketType: '2day', label: 'Past 2 Months' },
+      '60d': { hours: 60 * 24, queryDays: 60, bucketCount: 30, bucketType: '2day', label: 'Past 2 Months' },
+      '3m': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
+      '90d': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
+    };
+
+    cfg = rangeConfig[range] || rangeConfig['7d'];
+    windowStart = now - (cfg.hours * 60 * 60 * 1000);
+    windowEnd = now;
+  }
+
   const whereClause = buildSiteSOQLWhereClause(siteName);
+  const dateCond = cfg.isCustom
+    ? `CreatedDate >= ${new Date(cfg.windowStart).toISOString()} AND CreatedDate <= ${new Date(cfg.windowEnd).toISOString()}`
+    : `(CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY)`;
 
   // 1. Parallel SOQL Query Suite:
   // Q1: Time-series volume distribution across the entire window
   let timeSeriesSoql = '';
   if (cfg.bucketType === 'hour') {
-    timeSeriesSoql = `SELECT HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:1 OR CreatedDate = TODAY) GROUP BY HOUR_IN_DAY(CreatedDate), Status ORDER BY HOUR_IN_DAY(CreatedDate) ASC`;
+    timeSeriesSoql = `SELECT HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND ${dateCond} GROUP BY HOUR_IN_DAY(CreatedDate), Status ORDER BY HOUR_IN_DAY(CreatedDate) ASC`;
   } else if (cfg.bucketType === '2hour') {
-    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:2 OR CreatedDate = TODAY) GROUP BY DAY_ONLY(CreatedDate), HOUR_IN_DAY(CreatedDate), Status`;
+    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, HOUR_IN_DAY(CreatedDate) hr, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND ${dateCond} GROUP BY DAY_ONLY(CreatedDate), HOUR_IN_DAY(CreatedDate), Status`;
   } else {
-    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY) GROUP BY DAY_ONLY(CreatedDate), Status ORDER BY DAY_ONLY(CreatedDate) ASC`;
+    timeSeriesSoql = `SELECT DAY_ONLY(CreatedDate) dt, Status, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND ${dateCond} GROUP BY DAY_ONLY(CreatedDate), Status ORDER BY DAY_ONLY(CreatedDate) ASC`;
   }
 
   // Q2: Top alert signatures across the selected window
-  const topSignaturesSoql = `SELECT Subject, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY) GROUP BY Subject ORDER BY COUNT(Id) DESC LIMIT 50`;
+  const topSignaturesSoql = `SELECT Subject, COUNT(Id) cnt FROM Case WHERE ${whereClause} AND ${dateCond} GROUP BY Subject ORDER BY COUNT(Id) DESC LIMIT 50`;
 
   // Q3: Full sample of detailed cases for real MTTR, SLA breach, auto-resolve metrics
   const detailedCasesSoql = [
     'SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
     'Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, Owner.Name',
     'FROM Case',
-    `WHERE ${whereClause} AND (CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY)`,
+    `WHERE ${whereClause} AND ${dateCond}`,
     'ORDER BY CreatedDate DESC LIMIT 1000',
   ].join(' ');
 
@@ -3243,6 +3398,8 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', fo
     siteName: siteName || 'All Sites',
     range,
     rangeLabel: cfg.label,
+    startDate: cfg.isCustom ? startDate : null,
+    endDate: cfg.isCustom ? endDate : null,
     totalAlerts: finalTotalAlerts,
     openAlerts: finalOpenAlerts,
     closedAlerts: finalClosedAlerts,

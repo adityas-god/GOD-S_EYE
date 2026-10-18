@@ -126,8 +126,10 @@ router.get('/alerts/analytics', async (req, res) => {
   try {
     const siteName = req.query.site || req.query.siteName || '';
     const range = req.query.range || '7d';
+    const startDate = req.query.startDate || req.query.start || null;
+    const endDate = req.query.endDate || req.query.end || null;
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
-    const analytics = await getAlertAnalyticsForSite({ siteName, range, forceRefresh });
+    const analytics = await getAlertAnalyticsForSite({ siteName, range, startDate, endDate, forceRefresh });
     res.json({
       success: true,
       ...analytics,

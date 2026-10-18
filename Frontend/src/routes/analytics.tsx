@@ -77,6 +77,22 @@ export function AnalyticsPage() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<'cases' | 'alerts'>('cases');
   const [selectedTimeframe, setSelectedTimeframe] = useState<AnalyticsTimeframe>('7d');
+
+  // Custom Timeframe Range State
+  const getDefaultStartDate = () => {
+    const d = new Date(Date.now() - 7 * 86400000);
+    return d.toISOString().slice(0, 10);
+  };
+  const getDefaultEndDate = () => {
+    return new Date().toISOString().slice(0, 10);
+  };
+  const [customStartDate, setCustomStartDate] = useState(getDefaultStartDate());
+  const [customEndDate, setCustomEndDate] = useState(getDefaultEndDate());
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{ startDate: string; endDate: string }>({
+    startDate: getDefaultStartDate(),
+    endDate: getDefaultEndDate(),
+  });
+
   const [ticketSearch, setTicketSearch] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -95,8 +111,8 @@ export function AnalyticsPage() {
     isFetching: casesFetching,
     error: casesError,
   } = useQuery<CasesAnalyticsResult>({
-    queryKey: ['analytics-cases', selectedTimeframe],
-    queryFn: () => fetchCasesAnalytics(selectedTimeframe),
+    queryKey: ['analytics-cases', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
+    queryFn: () => fetchCasesAnalytics(selectedTimeframe, false, selectedTimeframe === 'custom' ? appliedCustomRange : null),
     staleTime: 60_000,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
@@ -109,8 +125,8 @@ export function AnalyticsPage() {
     isFetching: alertsFetching,
     error: alertsError,
   } = useQuery<AlertsAnalyticsResult>({
-    queryKey: ['analytics-alerts', selectedTimeframe],
-    queryFn: () => fetchAlertsAnalytics(selectedTimeframe),
+    queryKey: ['analytics-alerts', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
+    queryFn: () => fetchAlertsAnalytics(selectedTimeframe, false, selectedTimeframe === 'custom' ? appliedCustomRange : null),
     staleTime: 60_000,
     gcTime: 10 * 60_000,
     refetchOnWindowFocus: false,
@@ -122,13 +138,13 @@ export function AnalyticsPage() {
     try {
       if (activeTab === 'cases') {
         await queryClient.fetchQuery({
-          queryKey: ['analytics-cases', selectedTimeframe],
-          queryFn: () => fetchCasesAnalytics(selectedTimeframe, true),
+          queryKey: ['analytics-cases', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
+          queryFn: () => fetchCasesAnalytics(selectedTimeframe, true, selectedTimeframe === 'custom' ? appliedCustomRange : null),
         });
       } else {
         await queryClient.fetchQuery({
-          queryKey: ['analytics-alerts', selectedTimeframe],
-          queryFn: () => fetchAlertsAnalytics(selectedTimeframe, true),
+          queryKey: ['analytics-alerts', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
+          queryFn: () => fetchAlertsAnalytics(selectedTimeframe, true, selectedTimeframe === 'custom' ? appliedCustomRange : null),
         });
       }
     } finally {
@@ -362,56 +378,135 @@ export function AnalyticsPage() {
           </div>
 
           {/* Timeframe Selector Pill Buttons (SitePulse standard) */}
-          <div
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              background: 'var(--card)',
-              padding: 3,
-              borderRadius: 6,
-              border: '1px solid var(--border)',
-              gap: 2,
-            }}
-          >
-            <span
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div
               style={{
-                fontSize: 10,
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--muted-foreground)',
-                padding: '0 8px',
-                textTransform: 'uppercase',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: 4,
+                background: 'var(--card)',
+                padding: 3,
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                gap: 2,
               }}
             >
-              <Calendar style={{ width: 11, height: 11 }} />
-              SCOPE:
-            </span>
-            {ANALYTICS_TIMEFRAMES.map((tf) => {
-              const isSelected = selectedTimeframe === tf.key;
-              return (
-                <button
-                  key={tf.key}
-                  type="button"
-                  onClick={() => setSelectedTimeframe(tf.key)}
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--muted-foreground)',
+                  padding: '0 8px',
+                  textTransform: 'uppercase',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <Calendar style={{ width: 11, height: 11 }} />
+                SCOPE:
+              </span>
+              {ANALYTICS_TIMEFRAMES.map((tf) => {
+                const isSelected = selectedTimeframe === tf.key;
+                return (
+                  <button
+                    key={tf.key}
+                    type="button"
+                    onClick={() => setSelectedTimeframe(tf.key)}
+                    style={{
+                      background: isSelected ? 'var(--primary)' : 'transparent',
+                      color: isSelected ? '#ffffff' : 'var(--muted-foreground)',
+                      border: 'none',
+                      borderRadius: 4,
+                      padding: '5px 11px',
+                      fontSize: 11,
+                      fontWeight: isSelected ? 600 : 500,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                      transition: 'all 0.12s ease',
+                    }}
+                  >
+                    {tf.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Date Range Picker when Custom timeframe is selected */}
+            {selectedTimeframe === 'custom' && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  background: 'var(--card)',
+                  padding: '4px 10px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: 11,
+                  boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                }}
+              >
+                <span style={{ color: 'var(--muted-foreground)', fontSize: 10, fontWeight: 600 }}>START:</span>
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
                   style={{
-                    background: isSelected ? 'var(--primary)' : 'transparent',
-                    color: isSelected ? '#ffffff' : 'var(--muted-foreground)',
+                    background: 'var(--secondary)',
+                    color: 'var(--foreground)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '3px 8px',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    outline: 'none',
+                  }}
+                />
+                <span style={{ color: 'var(--muted-foreground)', fontSize: 10, fontWeight: 600 }}>END:</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  style={{
+                    background: 'var(--secondary)',
+                    color: 'var(--foreground)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '3px 8px',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customStartDate && customEndDate) {
+                      if (customStartDate > customEndDate) {
+                        alert('Start date must be before or equal to End date');
+                        return;
+                      }
+                      setAppliedCustomRange({ startDate: customStartDate, endDate: customEndDate });
+                    }
+                  }}
+                  style={{
+                    background: 'var(--primary)',
+                    color: '#ffffff',
                     border: 'none',
                     borderRadius: 4,
-                    padding: '5px 11px',
+                    padding: '4px 12px',
                     fontSize: 11,
-                    fontWeight: isSelected ? 600 : 500,
+                    fontWeight: 600,
                     fontFamily: 'var(--font-mono)',
                     cursor: 'pointer',
-                    transition: 'all 0.12s ease',
+                    transition: 'opacity 0.15s ease',
                   }}
                 >
-                  {tf.label}
+                  APPLY
                 </button>
-              );
-            })}
+              </div>
+            )}
           </div>
         </div>
 
@@ -443,14 +538,16 @@ export function AnalyticsPage() {
             <span>
               <strong>Precision Engine:</strong>{' '}
               {activeTab === 'cases' ? (
-                <>Automated child IM tickets, DIR reports, and non-site records strictly omitted. Facility downtime counted solely on Sev 1 and Sev 2 Urgent incidents clamped to window.</>
+                <>Automated child IM tickets, DIR reports, PM maintenance, and non-urgent cases strictly omitted. Downtime calculated solely from Sev 1 &amp; Sev 2 Urgent incidents with operational restoration tracking.</>
               ) : (
                 <>Machine alert telemetry isolated from human customer inquiries and internal synchronizations.</>
               )}
             </span>
           </div>
           <span style={{ fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--muted-foreground)' }}>
-            WINDOW: {selectedTimeframe.toUpperCase()} (Past {ANALYTICS_TIMEFRAMES.find(t => t.key === selectedTimeframe)?.days} days)
+            WINDOW: {selectedTimeframe === 'custom'
+              ? `CUSTOM (${appliedCustomRange.startDate} to ${appliedCustomRange.endDate})`
+              : `${selectedTimeframe.toUpperCase()} (Past ${ANALYTICS_TIMEFRAMES.find(t => t.key === selectedTimeframe)?.days} days)`}
           </span>
         </div>
 
@@ -543,14 +640,14 @@ export function AnalyticsPage() {
                   >
                     {formatHours(casesData.kpis.totalFleetDowntimeHours)}
                   </strong>
-                  <span style={{ fontFamily: 'var(--font-mono)' }}>Cumulative Facility Outage</span>
+                  <span style={{ fontFamily: 'var(--font-mono)' }}>Fleet Cumulative Outage</span>
                 </div>
                 <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
                   <span
                     className="source-dot"
                     style={{ background: casesData.kpis.totalFleetDowntimeHours > 0 ? '#ef4444' : 'var(--success)' }}
                   />
-                  Sev 1 &amp; Sev 2 Urgent Only (Clamped)
+                  Peak Single Site: {formatHours(casesData.kpis.maxSiteDowntimeHours || 0)} • Sev 1 &amp; Sev 2 Urgent Only
                 </div>
               </div>
 

@@ -5,7 +5,6 @@ import {
   isAlertCase,
   isDirTicket,
   isImTicket,
-  isPmTicket,
   isIncidentTicket,
   getTicketEndTime,
   hasTicketEndTime,
@@ -16,6 +15,37 @@ import {
   fetchRedZoneSitesOverview,
 } from './salesforce.service.js';
 import { SiteRepository } from '../models/Site.js';
+
+/**
+ * Checks if a ticket is a PM (Preventive / Planned Maintenance / PRB) ticket.
+ * Self-contained in analytics to guarantee immunity from any external export desyncs.
+ */
+export function isPmTicket(c) {
+  if (!c) return false;
+  const rawType = String(c.Type || c.type || c.rawType || c.raw_type || c.Case_Type__c || '').trim().toLowerCase();
+  if (
+    rawType === 'pm' || rawType === 'preventive' || rawType === 'planned' ||
+    rawType === 'maintenance' || rawType === 'problem' || rawType === 'prb' ||
+    rawType.includes('preventive') || rawType.includes('maintenance')
+  ) {
+    return true;
+  }
+  const cat = String(c.Category__c || c.category || c.Sub_Category__c || c.Snow_Category__c || c.Snow_Category || '').trim().toLowerCase();
+  if (cat.includes('preventive') || cat.includes('maintenance') || cat === 'pm') {
+    return true;
+  }
+  const sub = String(c.Subject || c.subject || '').trim();
+  if (/^\[?\s*PM\s*\]?[:\s\-_#]/i.test(sub) || /\[\s*PM\s*\]/i.test(sub) || /\bPM[-_#\s]*\d+\b/i.test(sub) || /\bPRB\d+\b/i.test(sub) || /\bCHG\d+\b/i.test(sub)) {
+    return true;
+  }
+  if (/\b(?:preventive|planned|routine|scheduled)\s*(?:pm|maintenance|inspection)\b/i.test(sub) || /\bpreventive\s*maintenance\b/i.test(sub) || /\bplanned\s*maintenance\b/i.test(sub)) {
+    return true;
+  }
+  if (/\bpm\b/i.test(sub) && !/\d{1,2}(?::\d{2})?\s*pm\b/i.test(sub)) {
+    return true;
+  }
+  return false;
+}
 
 export const TIMEFRAMES = {
   '24h': { key: '24h', label: '24 hrs', days: 1, hours: 24 },

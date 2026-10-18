@@ -2176,12 +2176,17 @@ export function extractAlertSignature(alert: SFCase | Record<string, unknown>): 
 export const sfFetchAlertAnalytics = async (
   siteName: string = '',
   range: string = '7d',
-  forceRefresh: boolean = false
+  forceRefresh: boolean = false,
+  customRange?: { startDate?: string; endDate?: string } | null
 ): Promise<AlertAnalyticsResult | null> => {
   try {
     const params = new URLSearchParams();
     if (siteName && siteName !== 'all') params.set('site', siteName);
     if (range) params.set('range', range);
+    if (range === 'custom' && customRange) {
+      if (customRange.startDate) params.set('startDate', customRange.startDate);
+      if (customRange.endDate) params.set('endDate', customRange.endDate);
+    }
     if (forceRefresh) params.set('force', 'true');
     const res = await fetch(`/api/cases/alerts/analytics?${params.toString()}`, {
       signal: AbortSignal.timeout(15000),

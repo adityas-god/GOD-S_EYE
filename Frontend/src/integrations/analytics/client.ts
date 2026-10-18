@@ -1,4 +1,4 @@
-export type AnalyticsTimeframe = '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | '6m';
+export type AnalyticsTimeframe = '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | '6m' | 'custom';
 
 export interface TimeframeOption {
   key: AnalyticsTimeframe;
@@ -15,6 +15,7 @@ export const ANALYTICS_TIMEFRAMES: TimeframeOption[] = [
   { key: '2m', label: '2 months', days: 60 },
   { key: '3m', label: '3 months', days: 90 },
   { key: '6m', label: '6 months', days: 180 },
+  { key: 'custom', label: 'Custom', days: 0 },
 ];
 
 export interface SeverityStat {
@@ -31,6 +32,7 @@ export interface CasesAnalyticsResult {
     totalIncidents: number;
     averageResolutionHours: number;
     totalFleetDowntimeHours: number;
+    maxSiteDowntimeHours?: number;
     activeBreachedSitesCount: number;
     stableSitesCount: number;
     monitoredSitesCount: number;
@@ -234,9 +236,17 @@ export interface AlertsAnalyticsResult {
   timestamp: string;
 }
 
-export async function fetchCasesAnalytics(timeframe: AnalyticsTimeframe = '7d', forceRefresh = false): Promise<CasesAnalyticsResult> {
+export async function fetchCasesAnalytics(
+  timeframe: AnalyticsTimeframe = '7d',
+  forceRefresh = false,
+  customRange?: { startDate?: string; endDate?: string } | null
+): Promise<CasesAnalyticsResult> {
   const params = new URLSearchParams();
   params.set('timeframe', timeframe);
+  if (timeframe === 'custom' && customRange) {
+    if (customRange.startDate) params.set('startDate', customRange.startDate);
+    if (customRange.endDate) params.set('endDate', customRange.endDate);
+  }
   if (forceRefresh) params.set('refresh', 'true');
 
   const res = await fetch(`/api/analytics/cases?${params.toString()}`, {
@@ -252,9 +262,17 @@ export async function fetchCasesAnalytics(timeframe: AnalyticsTimeframe = '7d', 
   return data as CasesAnalyticsResult;
 }
 
-export async function fetchAlertsAnalytics(timeframe: AnalyticsTimeframe = '7d', forceRefresh = false): Promise<AlertsAnalyticsResult> {
+export async function fetchAlertsAnalytics(
+  timeframe: AnalyticsTimeframe = '7d',
+  forceRefresh = false,
+  customRange?: { startDate?: string; endDate?: string } | null
+): Promise<AlertsAnalyticsResult> {
   const params = new URLSearchParams();
   params.set('timeframe', timeframe);
+  if (timeframe === 'custom' && customRange) {
+    if (customRange.startDate) params.set('startDate', customRange.startDate);
+    if (customRange.endDate) params.set('endDate', customRange.endDate);
+  }
   if (forceRefresh) params.set('refresh', 'true');
 
   const res = await fetch(`/api/analytics/alerts?${params.toString()}`, {
