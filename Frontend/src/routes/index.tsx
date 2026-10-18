@@ -44,6 +44,7 @@ import {
   detectSeverity,
   isImTicket,
   isDirTicket,
+  isIncidentTicket,
   isLiveOpenCase,
   isOpenAlert,
   isClosedAlert,
@@ -204,8 +205,8 @@ function Index() {
               mergedStats.count = (mergedStats.count || 0) + (v.count || 0);
               mergedStats.alertCount = (mergedStats.alertCount || 0) + (v.alertCount || 0);
               mergedStats.isDown = Boolean(mergedStats.isDown || v.isDown);
-              mergedStats.sev1Count = (mergedStats.sev1Count || 0) + (v.sev1Count || 0);
-              mergedStats.sev2Count = (mergedStats.sev2Count || 0) + (v.sev2Count || 0);
+              mergedStats.sev1Count = Math.max(mergedStats.sev1Count || 0, v.sev1Count || 0);
+              mergedStats.sev2Count = Math.max(mergedStats.sev2Count || 0, v.sev2Count || 0);
               mergedStats.sev3Count = (mergedStats.sev3Count || 0) + (v.sev3Count || 0);
               for (const cn of v.caseNumbers || []) {
                 if (!mergedStats.caseNumbers.includes(cn)) {
@@ -354,16 +355,12 @@ function Index() {
   const totalOpenAlerts = openAlerts.length;
 
   const totalActiveSev1 = useMemo(() => {
-    const fromCases = openCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length;
-    const fromSites = enrichedSites.reduce((sum, s) => sum + (s.sev1_count ?? 0), 0);
-    return Math.max(fromCases, fromSites);
-  }, [openCases, enrichedSites]);
+    return enrichedSites.reduce((sum, s) => sum + (s.sev1_count ?? 0), 0);
+  }, [enrichedSites]);
 
   const totalActiveSev2 = useMemo(() => {
-    const fromCases = openCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
-    const fromSites = enrichedSites.reduce((sum, s) => sum + (s.sev2_count ?? 0), 0);
-    return Math.max(fromCases, fromSites);
-  }, [openCases, enrichedSites]);
+    return enrichedSites.reduce((sum, s) => sum + (s.sev2_count ?? 0), 0);
+  }, [enrichedSites]);
   const activeSites = useMemo(() => {
     return sortedAndFilteredSites.filter(
       s => (s.open_cases_count ?? 0) > 0 || (s.open_alerts_count ?? 0) > 0 || Boolean(s.is_down)
@@ -448,18 +445,20 @@ function Index() {
   const uniqueSeverities = useMemo(() => {
     const set = new Set<string>();
     for (const c of currentBucketItems) {
-      const p = (c.Highest_Severity__c || c.Priority || '').trim();
+      const p = (activeBucket === 'alerts'
+        ? (c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || '')
+        : (c.Highest_Severity__c || c.Priority || '')).trim();
       if (p) set.add(p);
     }
     return Array.from(set).sort();
-  }, [currentBucketItems]);
+  }, [currentBucketItems, activeBucket]);
 
   const sev1CountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length;
+    return currentBucketItems.filter(c => detectSeverity(c) === 'sev1').length;
   }, [currentBucketItems]);
 
   const sev2CountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
+    return currentBucketItems.filter(c => detectSeverity(c) === 'sev2').length;
   }, [currentBucketItems]);
 
   const severityCountsMap = useMemo(() => {
@@ -528,9 +527,9 @@ function Index() {
     const filtered = currentBucketItems.filter(c => {
       // 1. Severity filter
       if (severityFilter === 'SEV 1 URGENT') {
-        if (isImTicket(c) || isDirTicket(c) || detectSeverity(c) !== 'sev1') return false;
+        if (detectSeverity(c) !== 'sev1') return false;
       } else if (severityFilter === 'SEV 2 URGENT') {
-        if (isImTicket(c) || isDirTicket(c) || detectSeverity(c) !== 'sev2') return false;
+        if (detectSeverity(c) !== 'sev2') return false;
       } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
@@ -608,17 +607,23 @@ function Index() {
         ? 'status-investigating'
         : 'status-other';
 
-      const sevType = detectSeverity(c);
-      const isSev1Urgent = sevType === 'sev1';
-      const isSev2Urgent = sevType === 'sev2';
+      const isAlert = activeBucket === 'alerts' || isAlertCase(c);
+      const sevType = isAlert ? 'sev3' : detectSeverity(c);
+      const isSev1Urgent = !isAlert && sevType === 'sev1';
+      const isSev2Urgent = !isAlert && sevType === 'sev2';
 
+      const alertPrio = String(c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3').trim();
       const priorityClass = isSev1Urgent
         ? 'p-p1'
         : isSev2Urgent
         ? 'p-p2'
+        : isAlert
+        ? (/p1|sev.*1|critical/i.test(alertPrio) ? 'p-p1' : /p2|sev.*2|high/i.test(alertPrio) ? 'p-p2' : 'p-p3')
         : 'p-p3';
 
-      const priorityDisplay = isSev1Urgent
+      const priorityDisplay = isAlert
+        ? (c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3')
+        : isSev1Urgent
         ? 'SEV 1 URGENT'
         : isSev2Urgent
         ? 'SEV 2 URGENT'
@@ -649,6 +654,7 @@ function Index() {
       return {
         c,
         isDown,
+        isAlert,
         raw,
         alertEndTime,
         isClosedTodayAlert,
@@ -670,7 +676,7 @@ function Index() {
         casesDateFormatted,
       };
     });
-  }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId]);
+  }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId, activeBucket]);
 
   const handleRemoveProduct = async (site: EnrichedSite, prodToRemove: string) => {
     const currentLines = (site.product_lines && site.product_lines.length > 0)
@@ -1416,12 +1422,16 @@ function Index() {
                         ✕ Clear Filter (Show All)
                       </option>
                     )}
-                    <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                      ● SEV 1 URGENT ({sev1CountInBucket})
-                    </option>
-                    <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                      ● SEV 2 URGENT ({sev2CountInBucket})
-                    </option>
+                    {activeBucket === 'cases' && (
+                      <>
+                        <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
+                          ● SEV 1 URGENT ({sev1CountInBucket})
+                        </option>
+                        <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
+                          ● SEV 2 URGENT ({sev2CountInBucket})
+                        </option>
+                      </>
+                    )}
                     {uniqueSeverities
                       .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
                       .map(sev => {
@@ -1619,6 +1629,7 @@ function Index() {
                     {ticketViewModels.map(item => {
                       const {
                         c,
+                        isAlert,
                         alertEndTime,
                         isClosedTodayAlert,
                         statusClass,
@@ -1666,12 +1677,12 @@ function Index() {
                                 {c.CaseNumber}
                                 <ExternalLink style={{ width: 10, height: 10 }} />
                               </a>
-                              {isSev1Urgent && (
+                              {!isAlert && isSev1Urgent && (
                                 <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
                                   SEV 1 URGENT
                                 </span>
                               )}
-                              {isSev2Urgent && (
+                              {!isAlert && isSev2Urgent && (
                                 <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
                                   SEV 2 URGENT
                                 </span>

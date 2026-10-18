@@ -1623,6 +1623,7 @@ export function getImpactPercentage(c: SFCase): number {
  */
 export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   if (!c) return 'sev3';
+  if (isAlertCase(c)) return 'sev3';
   if (isDirTicket(c)) return 'sev3';
 
   const raw = c as Record<string, unknown>;
@@ -1689,15 +1690,6 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     return 'sev1';
   }
   if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
-    return 'sev2';
-  }
-
-  // Rule 6: Fallback to Alert_Priority__c ONLY if explicitly critical or urgent
-  const alertPrio = String(raw.Alert_Priority__c || '').trim().toUpperCase();
-  if (alertPrio.includes('1 - CRITICAL') || alertPrio.includes('SEV 1 URGENT')) {
-    return 'sev1';
-  }
-  if (alertPrio.includes('2 - URGENT') || alertPrio.includes('SEV 2 URGENT')) {
     return 'sev2';
   }
 

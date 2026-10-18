@@ -38,6 +38,7 @@ import {
   detectSeverity,
   isImTicket,
   isDirTicket,
+  isIncidentTicket,
   hasTicketEndTime,
   isLiveOpenCase,
   isClosedToday,
@@ -45,6 +46,7 @@ import {
   isOpenAlert,
   isClosedAlert,
   calculateAlertDuration,
+  calculateSiteUrgentCounts,
   type SFCase,
   getAssigneeDisplayName,
 } from '@/integrations/salesforce/client';
@@ -245,21 +247,7 @@ function SiteDetail() {
   };
 
   const isTicketClosed = (c: SFCase) => {
-    const s = String(c.Status || '').toLowerCase();
-    if (isClosedStatus(s)) return true;
-
-    // For alerts: if status is actively open, do not consider it closed even if an end time field was touched
-    const isActiveAlert = isAlertCase(c) && (
-      s.includes('new') ||
-      s.includes('open') ||
-      s.includes('progress') ||
-      s.includes('investigat') ||
-      s.includes('active') ||
-      s.includes('assigned')
-    );
-    if (isActiveAlert) return false;
-
-    return hasTicketEndTime(c) || Boolean(getTicketEndTime(c)) || isClosedToday(c);
+    return isClosedAlert(c);
   };
 
   // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts)
@@ -271,12 +259,12 @@ function SiteDetail() {
   const openAlerts = useMemo(() => {
     const map = new Map<string, SFCase>();
     for (const a of rawAlerts) {
-      if (isAlertCase(a) && !isTicketClosed(a) && a.Id) {
+      if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
         map.set(a.Id, a);
       }
     }
     for (const c of rawCases) {
-      if (isAlertCase(c) && !isTicketClosed(c) && c.Id) {
+      if (isAlertCase(c) && isOpenAlert(c) && c.Id) {
         map.set(c.Id, c);
       }
     }
@@ -286,21 +274,18 @@ function SiteDetail() {
   // 3. Closed Alerts: strictly closed alerts (alerts closed today or completed)
   const closedAlerts = useMemo(() => {
     const map = new Map<string, SFCase>();
-    // From rawAlerts: alerts from shift bucket that are closed
     for (const a of rawAlerts) {
-      if (isAlertCase(a) && isTicketClosed(a) && a.Id) {
+      if (isAlertCase(a) && isClosedAlert(a) && a.Id) {
         map.set(a.Id, a);
       }
     }
-    // From rawClosed: only alert tickets
     for (const c of rawClosed) {
-      if (isAlertCase(c) && c.Id) {
+      if (isAlertCase(c) && isClosedAlert(c) && c.Id) {
         map.set(c.Id, c);
       }
     }
-    // From rawCases: if any alert slipped into rawCases that is closed
     for (const c of rawCases) {
-      if (isAlertCase(c) && isTicketClosed(c) && c.Id) {
+      if (isAlertCase(c) && isClosedAlert(c) && c.Id) {
         map.set(c.Id, c);
       }
     }
@@ -392,11 +377,13 @@ function SiteDetail() {
   const uniqueSeverities = useMemo(() => {
     const set = new Set<string>();
     for (const c of activeItems) {
-      const p = (c.Highest_Severity__c || c.Priority || '').trim();
+      const p = (activeBucket === 'alerts' || activeBucket === 'closed' || activeBucket === 'analytics'
+        ? (c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || '')
+        : (c.Highest_Severity__c || c.Priority || '')).trim();
       if (p) set.add(p);
     }
     return Array.from(set).sort();
-  }, [activeItems]);
+  }, [activeItems, activeBucket]);
 
   const uniqueProducts = useMemo(() => {
     const set = new Set<string>();
@@ -451,9 +438,9 @@ function SiteDetail() {
 
       let matchSeverity = true;
       if (severityFilter === 'SEV 1 URGENT') {
-        matchSeverity = !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1';
+        matchSeverity = detectSeverity(c) === 'sev1';
       } else if (severityFilter === 'SEV 2 URGENT') {
-        matchSeverity = !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2';
+        matchSeverity = detectSeverity(c) === 'sev2';
       } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
@@ -492,9 +479,22 @@ function SiteDetail() {
     );
   }
 
+  const activeSiteItems = useMemo(() => {
+    const map = new Map<string, SFCase>();
+    for (const c of allCases) {
+      if (c && c.Id) map.set(c.Id, c);
+    }
+    for (const a of openAlerts) {
+      if (a && a.Id) map.set(a.Id, a);
+    }
+    return Array.from(map.values());
+  }, [allCases, openAlerts]);
+
   const isCriticalSiteDown = allCases.some(c => Boolean(c.Is_Site_100_Down__c));
-  const sev1Count = allCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length;
-  const sev2Count = allCases.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length;
+  // User requirement: automated IM tickets created for urgent cases count to ONLY one Sev 1 / Sev 2 (no double count)
+  const { sev1Count, sev2Count } = useMemo(() => {
+    return calculateSiteUrgentCounts(allCases);
+  }, [allCases]);
 
   return (
     <DashboardShell
@@ -1117,17 +1117,21 @@ function SiteDetail() {
                         ✕ Clear Filter (Show All)
                       </option>
                     )}
-                    <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
-                      ● SEV 1 URGENT ({activeItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev1').length})
-                    </option>
-                    <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                      ● SEV 2 URGENT ({activeItems.filter(c => !isImTicket(c) && !isDirTicket(c) && detectSeverity(c) === 'sev2').length})
-                    </option>
+                    {activeBucket === 'cases' && (
+                      <>
+                        <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
+                          ● SEV 1 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev1').length})
+                        </option>
+                        <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
+                          ● SEV 2 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev2').length})
+                        </option>
+                      </>
+                    )}
                     {uniqueSeverities
                       .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
                       .map(sev => (
                         <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
-                          {sev} ({activeItems.filter(c => (c.Highest_Severity__c === sev || c.Priority === sev)).length})
+                          {sev} ({activeItems.filter(c => (c.Alert_Priority__c === sev || c.Highest_Severity__c === sev || c.Priority === sev)).length})
                         </option>
                       ))}
                   </select>
@@ -1346,17 +1350,23 @@ function SiteDetail() {
                     ? 'status-investigating'
                     : 'status-other';
 
-                  const sevType = detectSeverity(c);
-                  const isSev1Urgent = sevType === 'sev1';
-                  const isSev2Urgent = sevType === 'sev2';
+                  const isAlert = activeBucket === 'alerts' || activeBucket === 'closed' || activeBucket === 'analytics' || isAlertCase(c);
+                  const sevType = isAlert ? 'sev3' : detectSeverity(c);
+                  const isSev1Urgent = !isAlert && sevType === 'sev1';
+                  const isSev2Urgent = !isAlert && sevType === 'sev2';
 
+                  const alertPrio = String(c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3').trim();
                   const priorityClass = isSev1Urgent
                     ? 'p-p1'
                     : isSev2Urgent
                     ? 'p-p2'
+                    : isAlert
+                    ? (/p1|sev.*1|critical/i.test(alertPrio) ? 'p-p1' : /p2|sev.*2|high/i.test(alertPrio) ? 'p-p2' : 'p-p3')
                     : 'p-p3';
 
-                    const priorityDisplay = isSev1Urgent
+                  const priorityDisplay = isAlert
+                    ? (c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3')
+                    : isSev1Urgent
                     ? 'SEV 1 URGENT'
                     : isSev2Urgent
                     ? 'SEV 2 URGENT'
@@ -1398,16 +1408,6 @@ function SiteDetail() {
                                 {c.CaseNumber || c.Id || 'Alert'}
                                 <ExternalLink style={{ width: 10, height: 10 }} />
                               </a>
-                              {isSev1Urgent && (
-                                <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
-                                  SEV 1 URGENT
-                                </span>
-                              )}
-                              {isSev2Urgent && (
-                                <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
-                                  SEV 2 URGENT
-                                </span>
-                              )}
                             </div>
                             <div className="case-subject-title">{c.Subject || 'No Subject Provided'}</div>
                             {c.Description && (
@@ -1490,16 +1490,6 @@ function SiteDetail() {
                                 {c.CaseNumber}
                                 <ExternalLink style={{ width: 10, height: 10 }} />
                               </a>
-                              {isSev1Urgent && (
-                                <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
-                                  SEV 1 URGENT
-                                </span>
-                              )}
-                              {isSev2Urgent && (
-                                <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
-                                  SEV 2 URGENT
-                                </span>
-                              )}
                             </div>
                             <div className="case-subject-title">{c.Subject || 'No Subject Provided'}</div>
                             {c.Description && (
@@ -1563,16 +1553,6 @@ function SiteDetail() {
                                 {c.CaseNumber}
                                 <ExternalLink style={{ width: 10, height: 10 }} />
                               </a>
-                              {isSev1Urgent && (
-                                <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
-                                  SEV 1 URGENT
-                                </span>
-                              )}
-                              {isSev2Urgent && (
-                                <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
-                                  SEV 2 URGENT
-                                </span>
-                              )}
                             </div>
                             <div className="case-subject-title">{c.Subject || 'No Subject Provided'}</div>
                             {c.Description && (
@@ -1658,12 +1638,12 @@ function SiteDetail() {
                                 {c.CaseNumber}
                                 <ExternalLink style={{ width: 10, height: 10 }} />
                               </a>
-                              {isSev1Urgent && (
+                              {!isAlert && isSev1Urgent && (
                                 <span className="case-down-badge" style={{ background: '#dc2626', color: '#fff', fontWeight: 800 }}>
                                   SEV 1 URGENT
                                 </span>
                               )}
-                              {isSev2Urgent && (
+                              {!isAlert && isSev2Urgent && (
                                 <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
                                   SEV 2 URGENT
                                 </span>
