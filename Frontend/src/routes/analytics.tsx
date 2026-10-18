@@ -87,10 +87,19 @@ export function AnalyticsPage() {
     return new Date().toISOString().slice(0, 10);
   };
   const [customStartDate, setCustomStartDate] = useState(getDefaultStartDate());
+  const [customStartTime, setCustomStartTime] = useState('00:00');
   const [customEndDate, setCustomEndDate] = useState(getDefaultEndDate());
-  const [appliedCustomRange, setAppliedCustomRange] = useState<{ startDate: string; endDate: string }>({
+  const [customEndTime, setCustomEndTime] = useState('23:59');
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{
+    startDate: string;
+    endDate: string;
+    startTime?: string;
+    endTime?: string;
+  }>({
     startDate: getDefaultStartDate(),
+    startTime: '00:00',
     endDate: getDefaultEndDate(),
+    endTime: '23:59',
   });
 
   const [ticketSearch, setTicketSearch] = useState('');
@@ -457,7 +466,22 @@ export function AnalyticsPage() {
                     color: 'var(--foreground)',
                     border: '1px solid var(--border)',
                     borderRadius: 4,
-                    padding: '3px 8px',
+                    padding: '3px 6px',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    outline: 'none',
+                  }}
+                />
+                <input
+                  type="time"
+                  value={customStartTime}
+                  onChange={(e) => setCustomStartTime(e.target.value)}
+                  style={{
+                    background: 'var(--secondary)',
+                    color: 'var(--foreground)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '3px 6px',
                     fontFamily: 'var(--font-mono)',
                     fontSize: 11,
                     outline: 'none',
@@ -473,7 +497,22 @@ export function AnalyticsPage() {
                     color: 'var(--foreground)',
                     border: '1px solid var(--border)',
                     borderRadius: 4,
-                    padding: '3px 8px',
+                    padding: '3px 6px',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 11,
+                    outline: 'none',
+                  }}
+                />
+                <input
+                  type="time"
+                  value={customEndTime}
+                  onChange={(e) => setCustomEndTime(e.target.value)}
+                  style={{
+                    background: 'var(--secondary)',
+                    color: 'var(--foreground)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 4,
+                    padding: '3px 6px',
                     fontFamily: 'var(--font-mono)',
                     fontSize: 11,
                     outline: 'none',
@@ -483,11 +522,18 @@ export function AnalyticsPage() {
                   type="button"
                   onClick={() => {
                     if (customStartDate && customEndDate) {
-                      if (customStartDate > customEndDate) {
-                        alert('Start date must be before or equal to End date');
+                      const fullStart = `${customStartDate}T${customStartTime || '00:00'}`;
+                      const fullEnd = `${customEndDate}T${customEndTime || '23:59'}`;
+                      if (fullStart > fullEnd) {
+                        alert('Start date & time must be before or equal to End date & time');
                         return;
                       }
-                      setAppliedCustomRange({ startDate: customStartDate, endDate: customEndDate });
+                      setAppliedCustomRange({
+                        startDate: fullStart,
+                        endDate: fullEnd,
+                        startTime: customStartTime,
+                        endTime: customEndTime,
+                      });
                     }
                   }}
                   style={{

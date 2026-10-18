@@ -28,8 +28,16 @@ router.get('/timeframes', (req, res) => {
 router.get('/cases', async (req, res) => {
   try {
     const timeframe = req.query.timeframe || '7d';
-    const startDate = req.query.startDate || req.query.start || null;
-    const endDate = req.query.endDate || req.query.end || null;
+    let startDate = req.query.startDate || req.query.start || null;
+    let endDate = req.query.endDate || req.query.end || null;
+    const startTime = req.query.startTime || null;
+    const endTime = req.query.endTime || null;
+    if (startDate && startTime && !startDate.includes('T')) {
+      startDate = `${startDate}T${startTime}:00`;
+    }
+    if (endDate && endTime && !endDate.includes('T')) {
+      endDate = `${endDate}T${endTime}:59`;
+    }
     const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
     if (forceRefresh) {
       clearAnalyticsCache();
@@ -55,8 +63,16 @@ router.get('/cases', async (req, res) => {
 router.get('/alerts', async (req, res) => {
   try {
     const timeframe = req.query.timeframe || '7d';
-    const startDate = req.query.startDate || req.query.start || null;
-    const endDate = req.query.endDate || req.query.end || null;
+    let startDate = req.query.startDate || req.query.start || null;
+    let endDate = req.query.endDate || req.query.end || null;
+    const startTime = req.query.startTime || null;
+    const endTime = req.query.endTime || null;
+    if (startDate && startTime && !startDate.includes('T')) {
+      startDate = `${startDate}T${startTime}:00`;
+    }
+    if (endDate && endTime && !endDate.includes('T')) {
+      endDate = `${endDate}T${endTime}:59`;
+    }
     const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
     if (forceRefresh) {
       clearAnalyticsCache();

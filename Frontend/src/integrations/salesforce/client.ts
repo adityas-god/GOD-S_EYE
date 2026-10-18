@@ -1863,6 +1863,11 @@ export const sfFetchCasesForSite = async (params: {
   siteName?: string;
   accountId?: string | null;
   forceRefresh?: boolean;
+  range?: string;
+  startDate?: string;
+  endDate?: string;
+  startTime?: string;
+  endTime?: string;
 }) => {
   const siteName = params?.data?.siteName || params?.siteName || '';
   if (!siteName) {
@@ -1875,7 +1880,15 @@ export const sfFetchCasesForSite = async (params: {
   }
 
   try {
-    const queryParam = params?.forceRefresh ? '?refresh=true' : '';
+    const qParams = new URLSearchParams();
+    if (params?.forceRefresh) qParams.set('refresh', 'true');
+    if (params?.range) qParams.set('range', params.range);
+    if (params?.startDate) qParams.set('startDate', params.startDate);
+    if (params?.endDate) qParams.set('endDate', params.endDate);
+    if (params?.startTime) qParams.set('startTime', params.startTime);
+    if (params?.endTime) qParams.set('endTime', params.endTime);
+    const qs = qParams.toString();
+    const queryParam = qs ? `?${qs}` : '';
     const res = await fetch(`/api/cases/site/${encodeURIComponent(siteName)}${queryParam}`, {
       signal: AbortSignal.timeout(25000),
     });
@@ -2177,7 +2190,7 @@ export const sfFetchAlertAnalytics = async (
   siteName: string = '',
   range: string = '7d',
   forceRefresh: boolean = false,
-  customRange?: { startDate?: string; endDate?: string } | null
+  customRange?: { startDate?: string; endDate?: string; startTime?: string; endTime?: string } | null
 ): Promise<AlertAnalyticsResult | null> => {
   try {
     const params = new URLSearchParams();
@@ -2186,6 +2199,8 @@ export const sfFetchAlertAnalytics = async (
     if (range === 'custom' && customRange) {
       if (customRange.startDate) params.set('startDate', customRange.startDate);
       if (customRange.endDate) params.set('endDate', customRange.endDate);
+      if (customRange.startTime) params.set('startTime', customRange.startTime);
+      if (customRange.endTime) params.set('endTime', customRange.endTime);
     }
     if (forceRefresh) params.set('force', 'true');
     const res = await fetch(`/api/cases/alerts/analytics?${params.toString()}`, {

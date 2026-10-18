@@ -23,6 +23,7 @@ import {
   Terminal,
   BarChart3,
   Flame,
+  Calendar,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,6 +54,20 @@ import {
 import { SiteRunbookPanel, type RunbookTabKey } from '@/components/site-runbook-panel';
 import { fetchSiteRunbook, defaultRunbook, type SiteRunbook } from '@/lib/runbook';
 import { AlertAnalyticsPanel, type TimeRangeKey } from '@/components/alert-analytics-panel';
+
+export type SiteTimeRangeKey = 'all' | '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | 'custom';
+
+export const SITE_TIME_RANGES: Array<{ key: SiteTimeRangeKey; label: string; hours?: number }> = [
+  { key: 'all', label: 'All', hours: 2160 },
+  { key: '24h', label: '24 Hours', hours: 24 },
+  { key: '48h', label: '48 Hours', hours: 48 },
+  { key: '7d', label: '7 Days', hours: 168 },
+  { key: '15d', label: '15 Days', hours: 360 },
+  { key: '1m', label: '1 Month', hours: 720 },
+  { key: '2m', label: '2 Months', hours: 1440 },
+  { key: '3m', label: '3 Months', hours: 2160 },
+  { key: 'custom', label: 'Custom', hours: 0 },
+];
 
 function formatPreciseTime(isoString?: string | null): string {
   if (!isoString) return '—';
@@ -142,12 +157,29 @@ function SiteDetail() {
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed' | 'analytics'>('cases');
-  const [analyticsRange, setAnalyticsRange] = useState<TimeRangeKey>('7d');
-  const [analyticsCustomRange, setAnalyticsCustomRange] = useState<{ startDate: string; endDate: string }>({
-    startDate: new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
+  const [siteTimeRange, setSiteTimeRange] = useState<SiteTimeRangeKey>('all');
+  const getDefaultStartDate = () => new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const getDefaultEndDate = () => new Date().toISOString().slice(0, 10);
+
+  const [customStartDate, setCustomStartDate] = useState(getDefaultStartDate());
+  const [customStartTime, setCustomStartTime] = useState('00:00');
+  const [customEndDate, setCustomEndDate] = useState(getDefaultEndDate());
+  const [customEndTime, setCustomEndTime] = useState('23:59');
+
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{
+    startDate: string;
+    startTime: string;
+    endDate: string;
+    endTime: string;
+  }>({
+    startDate: getDefaultStartDate(),
+    startTime: '00:00',
+    endDate: getDefaultEndDate(),
+    endTime: '23:59',
   });
   const [historicalAlerts, setHistoricalAlerts] = useState<SFCase[]>([]);
+
+  const analyticsEffectiveRange: TimeRangeKey = siteTimeRange;
 
   // Fetch deep alert analytics & precise alert records for this site
   const {
@@ -155,11 +187,17 @@ function SiteDetail() {
     isFetching: analyticsFetching,
     refetch: refetchAnalytics,
   } = useQuery({
-    queryKey: ['alert-analytics', site?.name || 'all', analyticsRange, analyticsRange === 'custom' ? analyticsCustomRange : null],
-    queryFn: () => sfFetchAlertAnalytics(site?.name || '', analyticsRange, false, analyticsRange === 'custom' ? analyticsCustomRange : null),
+    queryKey: ['alert-analytics', site?.name || 'all', analyticsEffectiveRange, analyticsEffectiveRange === 'custom' ? appliedCustomRange : null],
+    queryFn: () => sfFetchAlertAnalytics(
+      site?.name || '',
+      analyticsEffectiveRange,
+      false,
+      analyticsEffectiveRange === 'custom' ? appliedCustomRange : null
+    ),
     enabled: Boolean(site?.name),
     staleTime: 60_000,
     refetchInterval: 120_000,
+    placeholderData: (prev) => prev,
   });
 
   // Fetch full operational runbook (monitoring links, zoom, VMs, slack, handovers, configs)
@@ -186,7 +224,7 @@ function SiteDetail() {
     refetch: refetchSf,
     error: sfError,
   } = useQuery({
-    queryKey: ['site-cases', site?.id, site?.name, site?.salesforce_account_id],
+    queryKey: ['site-cases', site?.id, site?.name, site?.salesforce_account_id, siteTimeRange, siteTimeRange === 'custom' ? appliedCustomRange : null],
     queryFn: async () => {
       if (!site) return { records: [], alerts: [], totalSize: 0, done: true };
       return sfFetchCasesForSite({
@@ -194,6 +232,11 @@ function SiteDetail() {
           siteName: site.name,
           accountId: site.salesforce_account_id,
         },
+        range: siteTimeRange,
+        startDate: appliedCustomRange.startDate,
+        endDate: appliedCustomRange.endDate,
+        startTime: appliedCustomRange.startTime,
+        endTime: appliedCustomRange.endTime,
       });
     },
     staleTime: 60_000,
@@ -254,10 +297,70 @@ function SiteDetail() {
     return isClosedAlert(c);
   };
 
+  // Timeframe calculation for filtering cases and alerts
+  const timeWindow = useMemo(() => {
+    const now = Date.now();
+    if (siteTimeRange === '24h') {
+      return { start: now - 24 * 3600 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '48h') {
+      return { start: now - 48 * 3600 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '7d') {
+      return { start: now - 7 * 86400 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '15d') {
+      return { start: now - 15 * 86400 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '1m') {
+      return { start: now - 30 * 86400 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '2m') {
+      return { start: now - 60 * 86400 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === '3m') {
+      return { start: now - 90 * 86400 * 1000, end: now, isAll: false };
+    }
+    if (siteTimeRange === 'custom') {
+      const startStr = `${appliedCustomRange.startDate}T${appliedCustomRange.startTime || '00:00'}:00`;
+      const endStr = `${appliedCustomRange.endDate}T${appliedCustomRange.endTime || '23:59'}:59.999`;
+      const sMs = new Date(startStr).getTime();
+      const eMs = new Date(endStr).getTime();
+      return {
+        start: isNaN(sMs) ? 0 : sMs,
+        end: isNaN(eMs) ? now : eMs,
+        isAll: false,
+      };
+    }
+    // 'all'
+    return { start: 0, end: Infinity, isAll: true };
+  }, [siteTimeRange, appliedCustomRange]);
+
+  const matchesTimeWindow = useMemo(() => {
+    return (item: SFCase) => {
+      if (timeWindow.isAll) return true;
+      const createdMs = item.CreatedDate ? new Date(item.CreatedDate).getTime() : 0;
+      const closedMs = item.ClosedDate ? new Date(item.ClosedDate).getTime() : 0;
+      const endStr = getTicketEndTime(item);
+      const endMs = endStr ? new Date(endStr).getTime() : 0;
+      const modifiedMs = item.LastModifiedDate ? new Date(item.LastModifiedDate).getTime() : 0;
+
+      const ticketEventTime = endMs || closedMs || createdMs || modifiedMs;
+      if (!ticketEventTime && !createdMs) return true;
+
+      // In sliding windows (24h, 48h, 7d, etc.) or custom:
+      return (
+        (createdMs >= timeWindow.start && createdMs <= timeWindow.end) ||
+        (ticketEventTime >= timeWindow.start && ticketEventTime <= timeWindow.end)
+      );
+    };
+  }, [timeWindow]);
+
   // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts)
   const allCases = useMemo(() => {
-    return rawCases.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
-  }, [rawCases]);
+    const list = rawCases.filter(c => !isAlertCase(c) && isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    return list.filter(matchesTimeWindow);
+  }, [rawCases, matchesTimeWindow]);
 
   // 2. Live Open Alerts: strictly open alert tickets (no end time, not closed)
   const openAlerts = useMemo(() => {
@@ -272,10 +375,17 @@ function SiteDetail() {
         map.set(c.Id, c);
       }
     }
-    return Array.from(map.values());
-  }, [rawAlerts, rawCases]);
+    if (analyticsData?.alerts && Array.isArray(analyticsData.alerts)) {
+      for (const a of analyticsData.alerts) {
+        if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
+          map.set(a.Id, a);
+        }
+      }
+    }
+    return Array.from(map.values()).filter(matchesTimeWindow);
+  }, [rawAlerts, rawCases, analyticsData?.alerts, matchesTimeWindow]);
 
-  // 3. Closed Alerts: strictly closed alerts (alerts closed today or completed)
+  // 3. Closed Alerts: strictly closed alerts (by default ONLY past 24 hours; expands when timeframe selected)
   const closedAlerts = useMemo(() => {
     const map = new Map<string, SFCase>();
     for (const a of rawAlerts) {
@@ -293,8 +403,33 @@ function SiteDetail() {
         map.set(c.Id, c);
       }
     }
-    return Array.from(map.values());
-  }, [rawAlerts, rawClosed, rawCases]);
+    // Merge analyticsData alerts when a specific historical timeframe is selected
+    if (siteTimeRange !== 'all' && analyticsData?.alerts && Array.isArray(analyticsData.alerts)) {
+      for (const a of analyticsData.alerts) {
+        if (isAlertCase(a) && isClosedAlert(a) && a.Id) {
+          map.set(a.Id, a);
+        }
+      }
+    }
+
+    const allList = Array.from(map.values());
+
+    // By default (when siteTimeRange is 'all' or default), closed alerts should ONLY show past 24 hours!
+    if (siteTimeRange === 'all') {
+      const past24hMs = Date.now() - 24 * 3600 * 1000;
+      return allList.filter(item => {
+        const closedMs = item.ClosedDate ? new Date(item.ClosedDate).getTime() : 0;
+        const endStr = getTicketEndTime(item);
+        const endMs = endStr ? new Date(endStr).getTime() : 0;
+        const modifiedMs = item.LastModifiedDate ? new Date(item.LastModifiedDate).getTime() : 0;
+        const createdMs = item.CreatedDate ? new Date(item.CreatedDate).getTime() : 0;
+        const eventMs = endMs || closedMs || modifiedMs || createdMs;
+        return eventMs >= past24hMs || isClosedToday(item);
+      });
+    }
+
+    return allList.filter(matchesTimeWindow);
+  }, [rawAlerts, rawClosed, rawCases, analyticsData?.alerts, siteTimeRange, matchesTimeWindow]);
 
   // 4. All site alerts (open + closed + deep historical alerts for precise analysis)
   const allSiteAlerts = useMemo(() => {
@@ -318,20 +453,29 @@ function SiteDetail() {
     for (const h of historicalAlerts) {
       if (h.Id) map.set(h.Id, h);
     }
-    return Array.from(map.values()).sort((a, b) => {
-      const ta = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
-      const tb = b.CreatedDate ? new Date(b.CreatedDate).getTime() : 0;
-      return tb - ta;
-    });
-  }, [openAlerts, closedAlerts, rawAlerts, rawClosed, historicalAlerts]);
+    if (analyticsData?.alerts && Array.isArray(analyticsData.alerts)) {
+      for (const a of analyticsData.alerts) {
+        if (isAlertCase(a) && a.Id) {
+          map.set(a.Id, a);
+        }
+      }
+    }
+    return Array.from(map.values())
+      .filter(matchesTimeWindow)
+      .sort((a, b) => {
+        const ta = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
+        const tb = b.CreatedDate ? new Date(b.CreatedDate).getTime() : 0;
+        return tb - ta;
+      });
+  }, [openAlerts, closedAlerts, rawAlerts, rawClosed, historicalAlerts, analyticsData?.alerts, matchesTimeWindow]);
 
   // When activeBucket is 'analytics', prioritize the exact alerts from analyticsData!
   const analyticsAlerts = useMemo(() => {
     if (analyticsData?.alerts && Array.isArray(analyticsData.alerts) && analyticsData.alerts.length > 0) {
-      return analyticsData.alerts.filter(isAlertCase);
+      return analyticsData.alerts.filter(isAlertCase).filter(matchesTimeWindow);
     }
     return allSiteAlerts;
-  }, [analyticsData?.alerts, allSiteAlerts]);
+  }, [analyticsData?.alerts, allSiteAlerts, matchesTimeWindow]);
 
   const activeItems: SFCase[] =
     activeBucket === 'cases'
@@ -920,7 +1064,7 @@ function SiteDetail() {
                   transition: 'all 0.15s ease',
                   opacity: activeBucket === 'closed' ? 1 : 0.65,
                 }}
-                title="View closed alerts from today"
+                title={siteTimeRange === 'all' ? "View closed alerts from past 24 hours" : `View closed alerts (${siteTimeRange})`}
               >
                 <span
                   style={{
@@ -1051,9 +1195,204 @@ function SiteDetail() {
                 : activeBucket === 'alerts'
                 ? 'Live Open Alerts (Excludes Closed Alerts)'
                 : activeBucket === 'closed'
-                ? 'Closed Alerts (Alerts resolved or closed today)'
+                ? (siteTimeRange === 'all'
+                    ? 'Closed Alerts (Past 24 hours by default; select timeframe above to expand)'
+                    : `Closed Alerts (${SITE_TIME_RANGES.find(r => r.key === siteTimeRange)?.label || siteTimeRange})`)
                 : 'Alert Analytics & Telemetry (Created → Ended MTTR & Distribution)'}
             </span>
+          </div>
+
+          {/* Timeframe Scope Selector for Open Cases, Open Alerts, Closed Alerts, and Alert Analysis */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 16px',
+              background: 'color-mix(in oklch, var(--secondary) 65%, transparent)',
+              borderBottom: '1px solid var(--border)',
+              gap: 12,
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: 'var(--font-mono)',
+                  color: 'var(--muted-foreground)',
+                  fontWeight: 700,
+                  letterSpacing: '0.04em',
+                  textTransform: 'uppercase',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                <Clock style={{ width: 11, height: 11, color: 'var(--soft-orange)' }} />
+                TIMEFRAME:
+              </span>
+
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                  background: 'var(--card)',
+                  padding: '2px 4px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {SITE_TIME_RANGES.map(range => {
+                  const isActive = siteTimeRange === range.key;
+                  return (
+                    <button
+                      key={range.key}
+                      type="button"
+                      onClick={() => {
+                        setSiteTimeRange(range.key);
+                      }}
+                      style={{
+                        background: isActive ? 'var(--primary)' : 'transparent',
+                        color: isActive ? '#ffffff' : 'var(--muted-foreground)',
+                        border: 'none',
+                        borderRadius: 4,
+                        padding: '3px 8px',
+                        fontSize: 10.5,
+                        fontWeight: isActive ? 700 : 500,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        transition: 'all 0.12s ease',
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {range.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Custom Date & Time Picker */}
+              {siteTimeRange === 'custom' && (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: 'var(--card)',
+                    padding: '3px 8px',
+                    borderRadius: 6,
+                    border: '1px solid var(--border)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: 10.5,
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+                  }}
+                >
+                  <Calendar style={{ width: 12, height: 12, color: 'var(--muted-foreground)' }} />
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5, fontWeight: 700 }}>FROM:</span>
+                  <input
+                    type="date"
+                    value={customStartDate}
+                    onChange={(e) => setCustomStartDate(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <input
+                    type="time"
+                    value={customStartTime}
+                    onChange={(e) => setCustomStartTime(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5, fontWeight: 700 }}>TO:</span>
+                  <input
+                    type="date"
+                    value={customEndDate}
+                    onChange={(e) => setCustomEndDate(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <input
+                    type="time"
+                    value={customEndTime}
+                    onChange={(e) => setCustomEndTime(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const fullStart = `${customStartDate}T${customStartTime || '00:00'}`;
+                      const fullEnd = `${customEndDate}T${customEndTime || '23:59'}`;
+                      if (fullStart > fullEnd) {
+                        alert('Start date & time must be before or equal to End date & time');
+                        return;
+                      }
+                      setAppliedCustomRange({
+                        startDate: customStartDate,
+                        startTime: customStartTime,
+                        endDate: customEndDate,
+                        endTime: customEndTime,
+                      });
+                    }}
+                    style={{
+                      background: 'var(--primary)',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: 3,
+                      padding: '3px 8px',
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    APPLY
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div style={{ color: 'var(--muted-foreground)', fontSize: 10.5, fontFamily: 'var(--font-mono)' }}>
+              {siteTimeRange === 'all'
+                ? 'All live open cases & alerts (Closed alerts: past 24 hours)'
+                : siteTimeRange === 'custom'
+                ? `Window: ${appliedCustomRange.startDate} ${appliedCustomRange.startTime} → ${appliedCustomRange.endDate} ${appliedCustomRange.endTime}`
+                : `Window: past ${SITE_TIME_RANGES.find(r => r.key === siteTimeRange)?.label || siteTimeRange}`}
+            </div>
           </div>
 
           {/* Alert Analytics & SLA Performance Panel with Line Graph and MTTR */}
@@ -1065,11 +1404,24 @@ function SiteDetail() {
                 openAlerts={openAlerts}
                 closedAlerts={closedAlerts}
                 isSiteDown={Boolean(site?.is_down)}
-                selectedRange={analyticsRange}
-                onRangeChange={setAnalyticsRange}
-                customStartDate={analyticsCustomRange.startDate}
-                customEndDate={analyticsCustomRange.endDate}
-                onCustomRangeChange={(startDate, endDate) => setAnalyticsCustomRange({ startDate, endDate })}
+                selectedRange={siteTimeRange}
+                onRangeChange={(r) => setSiteTimeRange(r as SiteTimeRangeKey)}
+                customStartDate={appliedCustomRange.startDate}
+                customStartTime={appliedCustomRange.startTime}
+                customEndDate={appliedCustomRange.endDate}
+                customEndTime={appliedCustomRange.endTime}
+                onCustomRangeChange={(startDate, endDate, startTime, endTime) => {
+                  setCustomStartDate(startDate);
+                  if (startTime) setCustomStartTime(startTime);
+                  setCustomEndDate(endDate);
+                  if (endTime) setCustomEndTime(endTime);
+                  setAppliedCustomRange({
+                    startDate,
+                    startTime: startTime || '00:00',
+                    endDate,
+                    endTime: endTime || '23:59',
+                  });
+                }}
                 onAlertsLoaded={setHistoricalAlerts}
                 analytics={analyticsData}
                 isFetching={analyticsFetching}
@@ -1781,7 +2133,7 @@ function SiteDetail() {
             {activeBucket === 'analytics' ? (
               <>
                 <span>
-                  {analyticsData?.totalAlerts ?? allSiteAlerts.length} total alerts analyzed in {analyticsData?.rangeLabel || analyticsRange} window
+                  {analyticsData?.totalAlerts ?? allSiteAlerts.length} total alerts analyzed in {analyticsData?.rangeLabel || SITE_TIME_RANGES.find(r => r.key === siteTimeRange)?.label || siteTimeRange} window
                 </span>
                 <span>Telemetry Source: Salesforce Org (Live)</span>
               </>

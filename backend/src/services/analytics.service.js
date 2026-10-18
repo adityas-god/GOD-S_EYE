@@ -48,6 +48,7 @@ export function isPmTicket(c) {
 }
 
 export const TIMEFRAMES = {
+  'today': { key: 'today', label: 'Today', days: 1, hours: 24 },
   '24h': { key: '24h', label: '24 hrs', days: 1, hours: 24 },
   '48h': { key: '48h', label: '48 hrs', days: 2, hours: 48 },
   '7d':  { key: '7d',  label: '7 days', days: 7, hours: 168 },
@@ -56,6 +57,7 @@ export const TIMEFRAMES = {
   '2m':  { key: '2m',  label: '2 months', days: 60, hours: 1440 },
   '3m':  { key: '3m',  label: '3 months', days: 90, hours: 2160 },
   '6m':  { key: '6m',  label: '6 months', days: 180, hours: 4320 },
+  'all': { key: 'all', label: 'All', days: 90, hours: 2160 },
   'custom': { key: 'custom', label: 'Custom', days: 0, hours: 0 },
 };
 
@@ -100,7 +102,9 @@ export function classifyDetailedSeverity(c) {
       s === 'SEVERITY 1' ||
       s === 'SEV 1' ||
       s === 'SEV-1' ||
+      s === 'SEV1' ||
       s === 'P1' ||
+      s === '1' ||
       s.includes('1 - URGENT') ||
       s.includes('SEV 1 - URGENT') ||
       s.includes('SEV 1 URGENT') ||
@@ -124,7 +128,9 @@ export function classifyDetailedSeverity(c) {
       s.includes('SEV 2 - URGENT') ||
       s.includes('SEV 2 URGENT') ||
       s.includes('SEVERITY 2 - URGENT') ||
-      s.includes('SEVERITY 2 URGENT')
+      s.includes('SEVERITY 2 URGENT') ||
+      s.includes('P2 - URGENT') ||
+      s.includes('P2 URGENT')
     ) {
       return 'sev2_urgent';
     }
@@ -134,40 +140,74 @@ export function classifyDetailedSeverity(c) {
   }
 
   // Explicit Sev 2 High (standard Sev 2, not marked Urgent)
+  if (impact >= 20 && impact < 50) {
+    return 'sev2_high';
+  }
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 2' ||
       s === 'SEV 2' ||
       s === 'SEV-2' ||
+      s === 'SEV2' ||
       s === 'P2' ||
+      s === '2' ||
       s.includes('2 - HIGH') ||
+      s.includes('2 - STANDARD') ||
       s.includes('HIGH') ||
       s === 'HIGH'
     ) {
       return 'sev2_high';
     }
   }
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2|P2|SEVERITY[-_ ]*2|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2(?![-_ ]*URGENT)|P2(?![-_ ]*URGENT)|SEVERITY[-_ ]*2(?![-_ ]*URGENT)|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2_high';
   }
 
-  // Explicit Sev 4 (Low / Minor)
+  // Explicit Sev 4 (Low / Minor / Informational)
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 4' ||
       s === 'SEV 4' ||
       s === 'SEV-4' ||
+      s === 'SEV4' ||
       s === 'P4' ||
+      s === '4' ||
       s.includes('4 - LOW') ||
+      s.includes('4 - MINOR') ||
       s.includes('LOW') ||
       s === 'LOW' ||
-      s.includes('MINOR')
+      s.includes('MINOR') ||
+      s.includes('INFORMATIONAL') ||
+      s === 'INFO'
     ) {
       return 'sev4';
     }
   }
   if (/(?:^|[\[\(\s])(?:SEV[-_ ]*4|P4|SEVERITY[-_ ]*4)(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev4';
+  }
+
+  // Explicit Sev 3 (Medium / Standard / Moderate)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s === 'SEVERITY 3' ||
+      s === 'SEV 3' ||
+      s === 'SEV-3' ||
+      s === 'SEV3' ||
+      s === 'P3' ||
+      s === '3' ||
+      s.includes('3 - MEDIUM') ||
+      s.includes('3 - MODERATE') ||
+      s.includes('MEDIUM') ||
+      s.includes('MODERATE') ||
+      s === 'STANDARD' ||
+      s.includes('STANDARD')
+    ) {
+      return 'sev3';
+    }
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*3|P3|SEVERITY[-_ ]*3|\[SEV[-_ ]*3\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev3';
   }
 
   return 'sev3';
@@ -227,9 +267,11 @@ export async function getCasesAnalytics({ timeframe = '7d', startDate = null, en
   let tfConfig;
   let cacheKey;
   if (timeframe === 'custom' && startDate && endDate) {
-    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
-    const diffMs = Math.max(86400000, customEndMs - customStartMs);
+    const startStr = startDate.includes('T') ? (startDate.includes(':') && startDate.split(':').length === 2 ? `${startDate}:00Z` : (startDate.endsWith('Z') ? startDate : `${startDate}Z`)) : `${startDate}T00:00:00Z`;
+    const endStr = endDate.includes('T') ? (endDate.includes(':') && endDate.split(':').length === 2 ? `${endDate}:59.999Z` : (endDate.endsWith('Z') ? endDate : `${endDate}Z`)) : `${endDate}T23:59:59.999Z`;
+    const customStartMs = new Date(startStr).getTime();
+    const customEndMs = new Date(endStr).getTime();
+    const diffMs = Math.max(60000, customEndMs - customStartMs);
     const hours = Math.max(1, Math.round(diffMs / 3600000));
     const days = Math.max(1, Math.round(diffMs / 86400000));
     tfConfig = {
@@ -240,8 +282,8 @@ export async function getCasesAnalytics({ timeframe = '7d', startDate = null, en
       days,
       hours,
       isCustom: true,
-      windowStart: customStartMs,
-      windowEnd: customEndMs,
+      windowStart: isNaN(customStartMs) ? Date.now() - 7 * 86400000 : customStartMs,
+      windowEnd: isNaN(customEndMs) ? Date.now() : customEndMs,
     };
     cacheKey = `cases_custom_${startDate}_${endDate}`;
   } else {
@@ -289,7 +331,7 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
   const days = tfConfig.days;
   const dateClause = tfConfig.isCustom
     ? `CreatedDate >= ${new Date(tfConfig.windowStart).toISOString()} AND CreatedDate <= ${new Date(tfConfig.windowEnd).toISOString()}`
-    : `CreatedDate >= LAST_N_DAYS:${days}`;
+    : (tfConfig.key === 'today' ? 'CreatedDate = TODAY' : `CreatedDate >= LAST_N_DAYS:${days}`);
 
   // Scale limit to match timeframe window so 15d, 1m, 2m, 3m, 6m never truncate records
   const queryLimit = Math.min(12000, Math.max(2500, days * 120));
@@ -438,13 +480,7 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       bestSev = 'sev1';
     }
 
-    // STRICT USER REQUIREMENT:
-    // "ommit all these only sev 1 urgent sev 2 urgent incident with proper downtime calculation"
-    // Only Sev 1 Urgent (100% impact / site down / critical) and Sev 2 Urgent (50-99% impact / urgent) qualify!
-    // Strictly omit Sev 2 High (standard), Sev 3 (Medium), Sev 4 (Low).
-    if (bestSev !== 'sev1' && bestSev !== 'sev2_urgent') {
-      continue;
-    }
+    // All operational incidents across all severities (Sev 1, Sev 2 Urgent, Sev 2 High, Sev 3, Sev 4) qualify
 
     // Authoritative site matching: Must match a real monitored customer site
     let matchedSite = primary.siteName || findBestSiteForCase(primary, compiledSites);
@@ -524,8 +560,8 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       const parsedHours = (explicitDowntimeNum < 5 && String(explicitDowntimeNum).includes('.'))
         ? explicitDowntimeNum
         : Math.round((explicitDowntimeNum / 60) * 100) / 100;
-      // Cap single incident downtime to realistic floor operational limit (max 2.0h for Sev 1, max 1.0h for Sev 2 Urgent)
-      const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : 1.0);
+      // Cap single incident downtime to realistic floor operational limit
+      const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : (bestSev === 'sev2_urgent' ? 1.0 : (bestSev === 'sev2_high' ? 0.8 : (bestSev === 'sev3' ? 0.5 : 0.25))));
       durationHours = Math.max(0.1, Math.min(parsedHours, cap));
       effectiveEndTime = crTime + durationHours * 3600 * 1000;
     } else if (explicitOpEndStr) {
@@ -533,8 +569,8 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       const opEndMs = new Date(explicitOpEndStr).getTime();
       if (!isNaN(opEndMs) && opEndMs > crTime) {
         const rawHours = (opEndMs - crTime) / (3600 * 1000);
-        // Floor incident mitigation sanity cap: max 2.0h for Sev 1, max 1.0h for Sev 2 Urgent
-        const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : 1.0);
+        // Floor incident mitigation sanity cap
+        const cap = isSiteDown ? 2.5 : (bestSev === 'sev1' ? 2.0 : (bestSev === 'sev2_urgent' ? 1.0 : (bestSev === 'sev2_high' ? 0.8 : (bestSev === 'sev3' ? 0.5 : 0.25))));
         durationHours = Math.max(0.1, Math.round(Math.min(rawHours, cap) * 10) / 10);
         effectiveEndTime = crTime + durationHours * 3600 * 1000;
       }
@@ -547,13 +583,16 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
         const closedMs = primary.ClosedDate ? new Date(primary.ClosedDate).getTime() : 0;
         if (closedMs > crTime && (closedMs - crTime) <= 2 * 3600 * 1000) {
           // Closed quickly within 2h of creation -> real close
-          durationHours = Math.max(0.2, Math.round(((closedMs - crTime) / 3600000) * 10) / 10);
+          durationHours = Math.max(0.1, Math.round(((closedMs - crTime) / 3600000) * 10) / 10);
         } else {
           // Closed days/weeks later (administrative paperwork closure)
           // Default to realistic floor incident duration:
           // Sev 1 (100% site down): 1.5h
           // Sev 2 Urgent: 0.5h (30 mins)
-          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : 0.5);
+          // Sev 2 High: 0.3h (18 mins)
+          // Sev 3: 0.2h (12 mins)
+          // Sev 4: 0.1h (6 mins)
+          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : (bestSev === 'sev2_urgent' ? 0.5 : (bestSev === 'sev2_high' ? 0.3 : (bestSev === 'sev3' ? 0.2 : 0.1))));
         }
         effectiveEndTime = crTime + durationHours * 3600 * 1000;
       } else {
@@ -561,11 +600,11 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
         const openDurationHours = (now - crTime) / (3600 * 1000);
         if (openDurationHours <= 2) {
           // Created recently within 2h -> currently down
-          durationHours = Math.max(0.2, Math.round(openDurationHours * 10) / 10);
+          durationHours = Math.max(0.1, Math.round(openDurationHours * 10) / 10);
           effectiveEndTime = now;
         } else {
           // Open for days without closure -> cap unverified active downtime
-          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : 0.5);
+          durationHours = isSiteDown ? 2.0 : (bestSev === 'sev1' ? 1.5 : (bestSev === 'sev2_urgent' ? 0.5 : (bestSev === 'sev2_high' ? 0.3 : (bestSev === 'sev3' ? 0.2 : 0.1))));
           effectiveEndTime = crTime + durationHours * 3600 * 1000;
         }
       }
@@ -774,12 +813,45 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
       productLine: s.productLine,
     }));
 
-  // 10. Top Most Breached / Critical Tickets
-  // Strictly urgent cases only (Sev 1, Sev 2 Urgent, or site down). No Sev 2 High or Sev 3!
-  const topCriticalTickets = incidents
-    .filter(t => t.detailedSeverity === 'sev1' || t.detailedSeverity === 'sev2_urgent' || t.isSiteDown)
-    .sort((a, b) => (b.durationHours || 0) - (a.durationHours || 0) || (b.createdTime || 0) - (a.createdTime || 0))
-    .slice(0, 25);
+  // 10. Top Most Breached & Critical Tickets (Including Sev 1, Sev 2 Urgent, Sev 2 High, Sev 3, and Sev 4)
+  const sevPriorityMap = { sev1: 5, sev2_urgent: 4, sev2_high: 3, sev3: 2, sev4: 1 };
+  const sortedIncidents = [...incidents].sort((a, b) => {
+    if (a.isSiteDown !== b.isSiteDown) return a.isSiteDown ? -1 : 1;
+    const wDiff = (sevPriorityMap[b.detailedSeverity] || 0) - (sevPriorityMap[a.detailedSeverity] || 0);
+    if (wDiff !== 0) return wDiff;
+    const dDiff = (b.durationHours || 0) - (a.durationHours || 0);
+    if (dDiff !== 0) return dDiff;
+    return (b.createdTime || 0) - (a.createdTime || 0);
+  });
+
+  // Ensure all severity tiers (Sev 1, Sev 2 Urgent, Sev 2 High, Sev 3, Sev 4) are available for UI filtering
+  let topCriticalTickets;
+  if (sortedIncidents.length <= 250) {
+    topCriticalTickets = sortedIncidents;
+  } else {
+    // For large historical spans, retain up to 50 tickets per severity tier
+    const byTier = { sev1: [], sev2_urgent: [], sev2_high: [], sev3: [], sev4: [] };
+    for (const inc of sortedIncidents) {
+      const tier = inc.detailedSeverity;
+      if (byTier[tier] && byTier[tier].length < 50) {
+        byTier[tier].push(inc);
+      }
+    }
+    topCriticalTickets = [
+      ...byTier.sev1,
+      ...byTier.sev2_urgent,
+      ...byTier.sev2_high,
+      ...byTier.sev3,
+      ...byTier.sev4,
+    ].sort((a, b) => {
+      if (a.isSiteDown !== b.isSiteDown) return a.isSiteDown ? -1 : 1;
+      const wDiff = (sevPriorityMap[b.detailedSeverity] || 0) - (sevPriorityMap[a.detailedSeverity] || 0);
+      if (wDiff !== 0) return wDiff;
+      const dDiff = (b.durationHours || 0) - (a.durationHours || 0);
+      if (dDiff !== 0) return dDiff;
+      return (b.createdTime || 0) - (a.createdTime || 0);
+    });
+  }
 
   // 11. Subsystem Incident Breakdown
   const subsystemCounts = {
@@ -868,9 +940,11 @@ export async function getAlertsAnalytics({ timeframe = '7d', startDate = null, e
   let tfConfig;
   let cacheKey;
   if (timeframe === 'custom' && startDate && endDate) {
-    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
-    const diffMs = Math.max(86400000, customEndMs - customStartMs);
+    const startStr = startDate.includes('T') ? (startDate.includes(':') && startDate.split(':').length === 2 ? `${startDate}:00Z` : (startDate.endsWith('Z') ? startDate : `${startDate}Z`)) : `${startDate}T00:00:00Z`;
+    const endStr = endDate.includes('T') ? (endDate.includes(':') && endDate.split(':').length === 2 ? `${endDate}:59.999Z` : (endDate.endsWith('Z') ? endDate : `${endDate}Z`)) : `${endDate}T23:59:59.999Z`;
+    const customStartMs = new Date(startStr).getTime();
+    const customEndMs = new Date(endStr).getTime();
+    const diffMs = Math.max(60000, customEndMs - customStartMs);
     const hours = Math.max(1, Math.round(diffMs / 3600000));
     const days = Math.max(1, Math.round(diffMs / 86400000));
     tfConfig = {
@@ -881,8 +955,8 @@ export async function getAlertsAnalytics({ timeframe = '7d', startDate = null, e
       days,
       hours,
       isCustom: true,
-      windowStart: customStartMs,
-      windowEnd: customEndMs,
+      windowStart: isNaN(customStartMs) ? Date.now() - 7 * 86400000 : customStartMs,
+      windowEnd: isNaN(customEndMs) ? Date.now() : customEndMs,
     };
     cacheKey = `alerts_custom_${startDate}_${endDate}`;
   } else {
@@ -930,7 +1004,7 @@ async function _executeAlertsAnalytics(tfConfig, cacheKey) {
 
   const dateClause = tfConfig.isCustom
     ? `CreatedDate >= ${new Date(tfConfig.windowStart).toISOString()} AND CreatedDate <= ${new Date(tfConfig.windowEnd).toISOString()}`
-    : `CreatedDate >= LAST_N_DAYS:${days}`;
+    : (tfConfig.key === 'today' ? 'CreatedDate = TODAY' : `CreatedDate >= LAST_N_DAYS:${days}`);
 
   const alertsLimit = Math.min(12000, Math.max(2500, days * 100));
   const alertsTimeoutMs = Math.min(30000, Math.max(16000, days * 200));

@@ -126,8 +126,16 @@ router.get('/alerts/analytics', async (req, res) => {
   try {
     const siteName = req.query.site || req.query.siteName || '';
     const range = req.query.range || '7d';
-    const startDate = req.query.startDate || req.query.start || null;
-    const endDate = req.query.endDate || req.query.end || null;
+    let startDate = req.query.startDate || req.query.start || null;
+    let endDate = req.query.endDate || req.query.end || null;
+    const startTime = req.query.startTime || null;
+    const endTime = req.query.endTime || null;
+    if (startDate && startTime && !startDate.includes('T')) {
+      startDate = `${startDate}T${startTime}:00`;
+    }
+    if (endDate && endTime && !endDate.includes('T')) {
+      endDate = `${endDate}T${endTime}:59`;
+    }
     const forceRefresh = req.query.force === 'true' || req.query.refresh === 'true';
     const analytics = await getAlertAnalyticsForSite({ siteName, range, startDate, endDate, forceRefresh });
     res.json({
@@ -224,14 +232,29 @@ router.get('/site/:siteName', async (req, res) => {
   try {
     const { siteName } = req.params;
     const forceRefresh = req.query.refresh === 'true' || req.query.force === 'true';
-    const result = await fetchOpenCasesForSite({ siteName, forceRefresh });
+    const range = req.query.range || req.query.timeframe || null;
+    let startDate = req.query.startDate || req.query.start || null;
+    let endDate = req.query.endDate || req.query.end || null;
+    const startTime = req.query.startTime || null;
+    const endTime = req.query.endTime || null;
+    if (startDate && startTime && !startDate.includes('T')) {
+      startDate = `${startDate}T${startTime}:00`;
+    }
+    if (endDate && endTime && !endDate.includes('T')) {
+      endDate = `${endDate}T${endTime}:59`;
+    }
+    const result = await fetchOpenCasesForSite({ siteName, forceRefresh, range, startDate, endDate });
     res.json({
       success: true,
       siteName,
+      range,
       totalOpenCases: result.totalOpenCases,
       cases: result.cases,
       alerts: result.alerts,
       closed: result.closed || [],
+      product_lines: result.product_lines || [],
+      product_line: result.product_line || null,
+      site: result.site || null,
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

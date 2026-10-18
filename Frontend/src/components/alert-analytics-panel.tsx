@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   Clock,
@@ -27,7 +27,7 @@ import {
   isClosedAlert,
 } from '@/integrations/salesforce/client';
 
-export type TimeRangeKey = '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | 'custom';
+export type TimeRangeKey = 'all' | '24h' | '48h' | '7d' | '15d' | '1m' | '2m' | '3m' | 'custom';
 
 export interface AlertAnalyticsPanelProps {
   siteName?: string;
@@ -41,11 +41,14 @@ export interface AlertAnalyticsPanelProps {
   analytics?: AlertAnalyticsResult | null;
   isFetching?: boolean;
   customStartDate?: string;
+  customStartTime?: string;
   customEndDate?: string;
-  onCustomRangeChange?: (startDate: string, endDate: string) => void;
+  customEndTime?: string;
+  onCustomRangeChange?: (startDate: string, endDate: string, startTime?: string, endTime?: string) => void;
 }
 
 const ALERT_TIME_RANGES: Array<{ key: TimeRangeKey; label: string; hours: number }> = [
+  { key: 'all', label: 'All', hours: 2160 },
   { key: '24h', label: '24 Hours', hours: 24 },
   { key: '48h', label: '48 Hours', hours: 48 },
   { key: '7d', label: '7 Days', hours: 168 },
@@ -57,11 +60,12 @@ const ALERT_TIME_RANGES: Array<{ key: TimeRangeKey; label: string; hours: number
 ];
 const TIME_RANGES = ALERT_TIME_RANGES;
 
-function formatDuration(minutes: number): string {
-  if (minutes <= 0) return '0m';
-  if (minutes < 60) return `${minutes}m`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+function formatDuration(minutes?: number | null): string {
+  if (minutes === null || minutes === undefined || isNaN(minutes) || minutes <= 0) return '0m';
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const totalM = Math.round(minutes);
+  const h = Math.floor(totalM / 60);
+  const m = totalM % 60;
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
 }
 
@@ -69,14 +73,15 @@ function formatDuration(minutes: number): string {
  * Creates a smooth cubic Bezier path string through an array of {x, y} coordinates.
  */
 function createSmoothPath(points: Array<{ x: number; y: number }>): string {
-  if (points.length === 0) return '';
-  if (points.length === 1) return `M ${points[0].x} ${points[0].y}`;
-  let d = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`;
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(points.length - 1, i + 2)];
+  const valid = points.filter(p => p && typeof p.x === 'number' && typeof p.y === 'number' && !isNaN(p.x) && !isNaN(p.y));
+  if (valid.length === 0) return '';
+  if (valid.length === 1) return `M ${valid[0].x.toFixed(1)} ${valid[0].y.toFixed(1)}`;
+  let d = `M ${valid[0].x.toFixed(1)} ${valid[0].y.toFixed(1)}`;
+  for (let i = 0; i < valid.length - 1; i++) {
+    const p0 = valid[Math.max(0, i - 1)];
+    const p1 = valid[i];
+    const p2 = valid[i + 1];
+    const p3 = valid[Math.min(valid.length - 1, i + 2)];
 
     const cp1x = p1.x + (p2.x - p0.x) / 6;
     const cp1y = p1.y + (p2.y - p0.y) / 6;
@@ -92,11 +97,13 @@ function createSmoothPath(points: Array<{ x: number; y: number }>): string {
  * Creates a closed area path underneath the smooth curve for gradient fill.
  */
 function createSmoothAreaPath(points: Array<{ x: number; y: number }>, baselineY: number): string {
-  if (points.length === 0) return '';
-  const curve = createSmoothPath(points);
-  const first = points[0];
-  const last = points[points.length - 1];
-  return `${curve} L ${last.x.toFixed(1)} ${baselineY} L ${first.x.toFixed(1)} ${baselineY} Z`;
+  const valid = points.filter(p => p && typeof p.x === 'number' && typeof p.y === 'number' && !isNaN(p.x) && !isNaN(p.y));
+  if (valid.length === 0) return '';
+  const curve = createSmoothPath(valid);
+  if (!curve) return '';
+  const first = valid[0];
+  const last = valid[valid.length - 1];
+  return `${curve} L ${last.x.toFixed(1)} ${baselineY.toFixed(1)} L ${first.x.toFixed(1)} ${baselineY.toFixed(1)} Z`;
 }
 
 export function AlertAnalyticsPanel({
@@ -110,11 +117,20 @@ export function AlertAnalyticsPanel({
   analytics: controlledAnalytics,
   isFetching: controlledFetching,
   customStartDate: customStartDateProp,
+  customStartTime: customStartTimeProp,
   customEndDate: customEndDateProp,
+  customEndTime: customEndTimeProp,
   onCustomRangeChange,
 }: AlertAnalyticsPanelProps) {
-  const [internalRange, setInternalRange] = useState<TimeRangeKey>('7d');
+  const [internalRange, setInternalRange] = useState<TimeRangeKey>(controlledRange || 'all');
   const selectedRange = controlledRange ?? internalRange;
+
+  useEffect(() => {
+    if (controlledRange) {
+      setInternalRange(controlledRange);
+    }
+  }, [controlledRange]);
+
   const handleRangeChange = (r: TimeRangeKey) => {
     setInternalRange(r);
     onRangeChange?.(r);
@@ -132,20 +148,36 @@ export function AlertAnalyticsPanel({
   };
 
   const [localStartDate, setLocalStartDate] = useState(customStartDateProp || getDefaultStartDate());
+  const [localStartTime, setLocalStartTime] = useState(customStartTimeProp || '00:00');
   const [localEndDate, setLocalEndDate] = useState(customEndDateProp || getDefaultEndDate());
-  const [appliedCustomRange, setAppliedCustomRange] = useState<{ startDate: string; endDate: string }>({
+  const [localEndTime, setLocalEndTime] = useState(customEndTimeProp || '23:59');
+  const [appliedCustomRange, setAppliedCustomRange] = useState<{
+    startDate: string;
+    startTime?: string;
+    endDate: string;
+    endTime?: string;
+  }>({
     startDate: customStartDateProp || getDefaultStartDate(),
+    startTime: customStartTimeProp || '00:00',
     endDate: customEndDateProp || getDefaultEndDate(),
+    endTime: customEndTimeProp || '23:59',
   });
 
   const handleApplyCustom = () => {
     if (localStartDate && localEndDate) {
-      if (localStartDate > localEndDate) {
-        alert('Start date must be before or equal to End date');
+      const fullStart = `${localStartDate}T${localStartTime || '00:00'}`;
+      const fullEnd = `${localEndDate}T${localEndTime || '23:59'}`;
+      if (fullStart > fullEnd) {
+        alert('Start date & time must be before or equal to End date & time');
         return;
       }
-      setAppliedCustomRange({ startDate: localStartDate, endDate: localEndDate });
-      onCustomRangeChange?.(localStartDate, localEndDate);
+      setAppliedCustomRange({
+        startDate: localStartDate,
+        startTime: localStartTime,
+        endDate: localEndDate,
+        endTime: localEndTime,
+      });
+      onCustomRangeChange?.(localStartDate, localEndDate, localStartTime, localEndTime);
     }
   };
 
@@ -156,6 +188,7 @@ export function AlertAnalyticsPanel({
     enabled: !controlledAnalytics,
     staleTime: 60_000,
     refetchInterval: 120_000,
+    placeholderData: (prev) => prev,
   });
 
   const effectiveServerData = (controlledAnalytics && controlledAnalytics.range === selectedRange)
@@ -163,25 +196,42 @@ export function AlertAnalyticsPanel({
     : (serverAnalytics && serverAnalytics.range === selectedRange ? serverAnalytics : (controlledAnalytics || serverAnalytics));
   const isFetching = controlledFetching ?? queryFetching;
 
+  const prevLoadedAlertsCountRef = useRef<number>(-1);
   useEffect(() => {
-    if (effectiveServerData?.alerts && onAlertsLoaded) {
-      onAlertsLoaded(effectiveServerData.alerts);
+    if (effectiveServerData?.alerts && Array.isArray(effectiveServerData.alerts) && onAlertsLoaded) {
+      if (prevLoadedAlertsCountRef.current !== effectiveServerData.alerts.length) {
+        prevLoadedAlertsCountRef.current = effectiveServerData.alerts.length;
+        onAlertsLoaded(effectiveServerData.alerts);
+      }
     }
   }, [effectiveServerData?.alerts, onAlertsLoaded]);
 
   // Client-side fallback calculation from local open & closed alerts
   const localAnalytics: AlertAnalyticsResult = useMemo(() => {
-    const rangeObj = ALERT_TIME_RANGES.find(r => r.key === selectedRange) || ALERT_TIME_RANGES[2];
+    const rangeObj = ALERT_TIME_RANGES.find(r => r.key === selectedRange) || ALERT_TIME_RANGES[0];
     const now = Date.now();
-    const windowStart = selectedRange === 'custom' && appliedCustomRange.startDate
-      ? new Date(`${appliedCustomRange.startDate}T00:00:00Z`).getTime()
-      : (now - (rangeObj.hours || 168) * 60 * 60 * 1000);
-    const windowEnd = selectedRange === 'custom' && appliedCustomRange.endDate
-      ? new Date(`${appliedCustomRange.endDate}T23:59:59.999Z`).getTime()
+    const startStr = appliedCustomRange.startDate.includes('T')
+      ? appliedCustomRange.startDate
+      : `${appliedCustomRange.startDate}T${appliedCustomRange.startTime || '00:00'}:00`;
+    const endStr = appliedCustomRange.endDate.includes('T')
+      ? appliedCustomRange.endDate
+      : `${appliedCustomRange.endDate}T${appliedCustomRange.endTime || '23:59'}:59.999`;
+
+    const customStart = new Date(startStr).getTime();
+    const customEnd = new Date(endStr).getTime();
+
+    const windowStart = selectedRange === 'custom' && !isNaN(customStart)
+      ? customStart
+      : selectedRange === 'today'
+      ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })()
+      : (now - (rangeObj.hours || 2160) * 60 * 60 * 1000);
+    const windowEnd = selectedRange === 'custom' && !isNaN(customEnd)
+      ? customEnd
       : now;
 
-    const allLocal = [...openAlerts, ...closedAlerts];
+    const allLocal = [...(openAlerts || []), ...(closedAlerts || [])];
     const windowAlerts = allLocal.filter(a => {
+      if (!a) return false;
       const created = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
       return ((created >= windowStart && created <= windowEnd) || !a.CreatedDate);
     });
@@ -256,8 +306,10 @@ export function AlertAnalyticsPanel({
     const properCloseRate = closedCount > 0 ? Math.round((properCloseCount / closedCount) * 100) : 100;
 
     // Build line buckets
-    const bucketCount = rangeObj.hours <= 48 ? 24 : rangeObj.hours <= 168 ? 14 : rangeObj.hours <= 360 ? 15 : 30;
-    const bucketDurationMs = (rangeObj.hours * 60 * 60 * 1000) / bucketCount;
+    const totalSpanMs = Math.max(3600000, windowEnd - windowStart);
+    const totalHours = Math.max(1, Math.ceil(totalSpanMs / 3600000));
+    const bucketCount = totalHours <= 48 ? 24 : totalHours <= 168 ? 14 : totalHours <= 360 ? 15 : 30;
+    const bucketDurationMs = totalSpanMs / bucketCount;
     const buckets: AlertAnalyticsBucket[] = [];
 
     for (let i = 0; i < bucketCount; i++) {
@@ -265,7 +317,7 @@ export function AlertAnalyticsPanel({
       const bEnd = bStart + bucketDurationMs;
       const bDate = new Date(bStart);
 
-      const label = rangeObj.hours <= 48
+      const label = totalHours <= 48
         ? bDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : bDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
@@ -350,37 +402,37 @@ export function AlertAnalyticsPanel({
       topAlerts,
       alerts: enrichedAlerts,
     };
-  }, [selectedRange, openAlerts, closedAlerts, siteName]);
+  }, [selectedRange, openAlerts, closedAlerts, siteName, appliedCustomRange]);
 
   // Use server analytics if available, otherwise seamlessly use local analytics
-  const analytics: AlertAnalyticsResult = (effectiveServerData && effectiveServerData.buckets?.length > 0)
+  const analytics: AlertAnalyticsResult = (effectiveServerData && Array.isArray(effectiveServerData.buckets) && effectiveServerData.buckets.length > 0)
     ? effectiveServerData
     : localAnalytics;
 
   // Synchronize live open alerts count with openAlerts prop to eliminate discrepancy
-  const displayOpenAlerts = openAlerts !== undefined ? openAlerts.length : analytics.openAlerts;
-  const displayClosedAlerts = closedAlerts !== undefined && closedAlerts.length > 0 ? Math.max(closedAlerts.length, analytics.closedAlerts) : analytics.closedAlerts;
-  const displayTotalAlerts = Math.max(displayOpenAlerts + displayClosedAlerts, analytics.totalAlerts > 0 ? (analytics.totalAlerts - Math.max(0, analytics.openAlerts - displayOpenAlerts)) : (displayOpenAlerts + displayClosedAlerts));
+  const displayOpenAlerts = openAlerts !== undefined ? openAlerts.length : (analytics?.openAlerts || 0);
+  const displayClosedAlerts = closedAlerts !== undefined && closedAlerts.length > 0 ? Math.max(closedAlerts.length, analytics?.closedAlerts || 0) : (analytics?.closedAlerts || 0);
+  const displayTotalAlerts = Math.max(displayOpenAlerts + displayClosedAlerts, (analytics?.totalAlerts || 0) > 0 ? ((analytics.totalAlerts || 0) - Math.max(0, (analytics.openAlerts || 0) - displayOpenAlerts)) : (displayOpenAlerts + displayClosedAlerts));
 
-  const buckets = analytics.buckets || [];
-  const maxBucketTotal = Math.max(1, ...buckets.map(b => b.total));
+  const buckets = (analytics?.buckets && Array.isArray(analytics.buckets)) ? analytics.buckets : [];
+  const maxBucketTotal = Math.max(1, ...buckets.map(b => (typeof b.total === 'number' && !isNaN(b.total)) ? b.total : 0));
 
   // Compute duration distribution velocity bands (<15m, 15m-1h, >1h, Active Ongoing)
   const durationBands = useMemo(() => {
-    const alerts = effectiveServerData?.alerts || [...openAlerts, ...closedAlerts];
+    const alerts = effectiveServerData?.alerts || [...(openAlerts || []), ...(closedAlerts || [])];
     let under15m = 0;
     let under1h = 0;
     let over1h = 0;
     let ongoing = displayOpenAlerts;
 
     for (const a of alerts) {
-      if (isOpenAlert(a)) {
+      if (!a || isOpenAlert(a)) {
         continue;
       }
       const raw = a as Record<string, unknown>;
-      const dur = typeof a.duration_minutes === 'number'
+      const dur = typeof a.duration_minutes === 'number' && !isNaN(a.duration_minutes)
         ? a.duration_minutes
-        : typeof raw['duration_minutes'] === 'number'
+        : typeof raw['duration_minutes'] === 'number' && !isNaN(raw['duration_minutes'] as number)
         ? (raw['duration_minutes'] as number)
         : (() => {
             const cTime = a.CreatedDate ? new Date(a.CreatedDate).getTime() : 0;
@@ -394,7 +446,7 @@ export function AlertAnalyticsPanel({
       else over1h++;
     }
 
-    const total = (under15m + under1h + over1h + ongoing) || alerts.length || 1;
+    const total = Math.max(1, under15m + under1h + over1h + ongoing);
     return [
       {
         label: '< 15 mins (FR SLA Met / Auto-Resolved)',
@@ -425,16 +477,20 @@ export function AlertAnalyticsPanel({
 
   // Compute top alert signatures with percentage of highest for progress bar
   const topAlertsList = useMemo(() => {
-    const list = analytics.topAlerts && analytics.topAlerts.length > 0
+    const list = (analytics?.topAlerts && Array.isArray(analytics.topAlerts))
       ? analytics.topAlerts
       : [];
     if (list.length === 0) return [];
-    const maxCount = Math.max(1, ...list.map(t => t.count));
-    return list.map(t => ({
-      ...t,
-      barPct: Math.max(6, Math.round((t.count / maxCount) * 100)),
-    }));
-  }, [analytics.topAlerts]);
+    const maxCount = Math.max(1, ...list.map(t => (typeof t.count === 'number' && !isNaN(t.count)) ? t.count : 0));
+    return list.map(t => {
+      const count = (typeof t.count === 'number' && !isNaN(t.count)) ? t.count : 0;
+      return {
+        ...t,
+        count,
+        barPct: Math.max(6, Math.min(100, Math.round((count / maxCount) * 100))),
+      };
+    });
+  }, [analytics?.topAlerts]);
 
   // SVG Line Chart coordinates and paths
   const chartWidth = 1000;
@@ -466,9 +522,10 @@ export function AlertAnalyticsPanel({
 
     buckets.forEach((b, idx) => {
       const x = padLeft + (idx / Math.max(1, buckets.length - 1)) * usableW;
-      const totalY = baselineY - (b.total / maxBucketTotal) * usableH;
-      const breachCount = b.breached || 0;
-      const breachY = baselineY - (breachCount / maxBucketTotal) * usableH;
+      const bTot = (typeof b.total === 'number' && !isNaN(b.total)) ? b.total : 0;
+      const totalY = baselineY - (bTot / (maxBucketTotal || 1)) * usableH;
+      const breachCount = (typeof b.breached === 'number' && !isNaN(b.breached)) ? b.breached : 0;
+      const breachY = baselineY - (breachCount / (maxBucketTotal || 1)) * usableH;
 
       tPts.push({ x, y: totalY });
       bPts.push({ x, y: breachY });
@@ -492,12 +549,15 @@ export function AlertAnalyticsPanel({
 
   // Handle mouse move over SVG to track active hovered bucket
   const handleSvgMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    if (buckets.length === 0) return;
+    if (!buckets || buckets.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || rect.width <= 0) return;
     const clientX = e.clientX - rect.left;
     const scale = rect.width / chartWidth;
+    if (scale <= 0) return;
     const svgX = clientX / scale;
     const ratio = Math.max(0, Math.min(1, (svgX - padLeft) / usableW));
+    if (isNaN(ratio)) return;
     const closestIdx = Math.round(ratio * (buckets.length - 1));
     if (buckets[closestIdx]) {
       setHoveredBucket(buckets[closestIdx]);
@@ -599,16 +659,16 @@ export function AlertAnalyticsPanel({
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: analytics.slaComplianceRate >= 85 ? 'var(--success)' : 'var(--soft-orange)',
+                background: (analytics?.slaComplianceRate ?? 100) >= 85 ? 'var(--success)' : 'var(--soft-orange)',
                 display: 'inline-block',
-                boxShadow: `0 0 0 2px color-mix(in oklch, ${analytics.slaComplianceRate >= 85 ? 'var(--success)' : 'var(--soft-orange)'} 20%, transparent)`,
+                boxShadow: `0 0 0 2px color-mix(in oklch, ${(analytics?.slaComplianceRate ?? 100) >= 85 ? 'var(--success)' : 'var(--soft-orange)'} 20%, transparent)`,
               }}
             />
             <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               SLA Compliance:
             </span>
             <strong style={{ color: 'var(--foreground)', fontWeight: 700 }}>
-              {analytics.slaComplianceRate}%
+              {analytics?.slaComplianceRate ?? 100}%
             </strong>
           </div>
 
@@ -741,7 +801,22 @@ export function AlertAnalyticsPanel({
                       color: 'var(--foreground)',
                       border: '1px solid var(--border)',
                       borderRadius: 3,
-                      padding: '2px 6px',
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <input
+                    type="time"
+                    value={localStartTime}
+                    onChange={(e) => setLocalStartTime(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
                       fontFamily: 'var(--font-mono)',
                       fontSize: 10.5,
                       outline: 'none',
@@ -757,7 +832,22 @@ export function AlertAnalyticsPanel({
                       color: 'var(--foreground)',
                       border: '1px solid var(--border)',
                       borderRadius: 3,
-                      padding: '2px 6px',
+                      padding: '2px 5px',
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: 10.5,
+                      outline: 'none',
+                    }}
+                  />
+                  <input
+                    type="time"
+                    value={localEndTime}
+                    onChange={(e) => setLocalEndTime(e.target.value)}
+                    style={{
+                      background: 'var(--secondary)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 3,
+                      padding: '2px 5px',
                       fontFamily: 'var(--font-mono)',
                       fontSize: 10.5,
                       outline: 'none',
@@ -882,14 +972,14 @@ export function AlertAnalyticsPanel({
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
                 <strong style={{ fontSize: 26, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--foreground)', lineHeight: 1 }}>
-                  {analytics.avgDurationMinutes > 0 ? formatDuration(analytics.avgDurationMinutes) : '—'}
+                  {(analytics?.avgDurationMinutes || 0) > 0 ? formatDuration(analytics?.avgDurationMinutes) : '—'}
                 </strong>
                 <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>avg resolution</span>
               </div>
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
-                <span>Min: {formatDuration(analytics.minDurationMinutes)}</span>
+                <span>Min: {formatDuration(analytics?.minDurationMinutes)}</span>
                 <span style={{ margin: '0 5px' }}>•</span>
-                <span>Max: {formatDuration(analytics.maxDurationMinutes)}</span>
+                <span>Max: {formatDuration(analytics?.maxDurationMinutes)}</span>
               </div>
             </div>
 
@@ -914,21 +1004,21 @@ export function AlertAnalyticsPanel({
                     fontSize: 26,
                     fontWeight: 600,
                     fontFamily: 'var(--font-mono)',
-                    color: analytics.breachedAlerts > 0 ? 'var(--destructive)' : 'var(--foreground)',
+                    color: (analytics?.breachedAlerts || 0) > 0 ? 'var(--destructive)' : 'var(--foreground)',
                     lineHeight: 1,
                   }}
                 >
-                  {analytics.breachedAlerts}
+                  {analytics?.breachedAlerts ?? 0}
                 </strong>
                 <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>resolution breaches (&gt;60m)</span>
               </div>
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)', display: 'flex', gap: 6, alignItems: 'center' }}>
-                <span style={{ color: analytics.frBreachedAlerts > 0 ? 'var(--soft-orange)' : 'var(--muted-foreground)', fontWeight: 600 }}>
-                  {analytics.frBreachedAlerts} FR breaches (&gt;15m)
+                <span style={{ color: (analytics?.frBreachedAlerts || 0) > 0 ? 'var(--soft-orange)' : 'var(--muted-foreground)', fontWeight: 600 }}>
+                  {analytics?.frBreachedAlerts ?? 0} FR breaches (&gt;15m)
                 </span>
                 <span>•</span>
                 <span style={{ color: 'var(--success)', fontWeight: 600 }}>
-                  {analytics.slaComplianceRate}% met SLA
+                  {analytics?.slaComplianceRate ?? 100}% met SLA
                 </span>
               </div>
             </div>
@@ -950,15 +1040,15 @@ export function AlertAnalyticsPanel({
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginTop: 8 }}>
                 <strong style={{ fontSize: 26, fontWeight: 600, fontFamily: 'var(--font-mono)', color: 'var(--success)', lineHeight: 1 }}>
-                  {analytics.autoResolvedAlerts}
+                  {analytics?.autoResolvedAlerts ?? 0}
                 </strong>
                 <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-                  ({analytics.autoResolvedRate}% auto-cleared)
+                  ({analytics?.autoResolvedRate ?? 0}% auto-cleared)
                 </span>
               </div>
               <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border)', fontSize: 10, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                 <span style={{ color: 'var(--foreground)', fontWeight: 600 }}>
-                  {analytics.properCloseRate}% verified telemetry close
+                  {analytics?.properCloseRate ?? 100}% verified telemetry close
                 </span>
               </div>
             </div>
@@ -1205,9 +1295,9 @@ export function AlertAnalyticsPanel({
                 >
                   {buckets.length > 0 && (
                     <>
-                      <span>{buckets[0].label}</span>
-                      {buckets.length > 6 && <span>{buckets[Math.floor(buckets.length / 2)].label}</span>}
-                      <span>{buckets[buckets.length - 1].label}</span>
+                      <span>{buckets[0]?.label || ''}</span>
+                      {buckets.length > 6 && <span>{buckets[Math.floor(buckets.length / 2)]?.label || ''}</span>}
+                      <span>{buckets[buckets.length - 1]?.label || ''}</span>
                     </>
                   )}
                 </div>

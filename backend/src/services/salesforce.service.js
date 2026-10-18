@@ -2392,8 +2392,8 @@ export async function fetchAllLiveCases(forceRefresh = false) {
  * Fetch all LIVE OPEN cases for a specific site (strictly excluding Alerts and Solved/Closed/On Hold).
  * Returns ONLY cases mapped to this site, or [] if none exist.
  */
-export async function fetchOpenCasesForSite({ siteId, siteName, accountId, forceRefresh = false }) {
-  console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'} (forceRefresh: ${forceRefresh})`);
+export async function fetchOpenCasesForSite({ siteId, siteName, accountId, forceRefresh = false, range = null, startDate = null, endDate = null }) {
+  console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'} (forceRefresh: ${forceRefresh}, range: ${range || 'default'})`);
 
   let allSites = [];
   try {
@@ -2418,18 +2418,82 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
   const targetLower = cleanText(effectiveSiteName);
 
-  const matched = liveCases.filter(c => {
+  let matched = liveCases.filter(c => {
     const best = findBestSiteForCase(c, compiledSites);
     return best && areSameSite(best, effectiveSiteName, compiledSites);
   });
-  const matchedAlerts = liveAlerts.filter(a => {
+  let matchedAlerts = liveAlerts.filter(a => {
     const best = findBestSiteForCase(a, compiledSites);
     return best && areSameSite(best, effectiveSiteName, compiledSites);
   });
-  const matchedClosed = liveClosed.filter(c => {
+  let matchedClosed = liveClosed.filter(c => {
     const best = findBestSiteForCase(c, compiledSites);
     return best && areSameSite(best, effectiveSiteName, compiledSites);
   });
+
+  // If user requests a specific historical range (48h, 7d, 15d, 1m, 2m, 3m, custom), query extra site tickets
+  if (range && range !== 'today' && range !== 'all' && range !== 'default' && range !== '24h' && effectiveSiteName) {
+    try {
+      const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
+      if (siteWhere) {
+        let dateCondition = "CreatedDate >= LAST_N_DAYS:30";
+        if (range === '24h') dateCondition = "CreatedDate >= LAST_N_DAYS:1";
+        else if (range === '48h') dateCondition = "CreatedDate >= LAST_N_DAYS:2";
+        else if (range === '7d') dateCondition = "CreatedDate >= LAST_N_DAYS:7";
+        else if (range === '15d') dateCondition = "CreatedDate >= LAST_N_DAYS:15";
+        else if (range === '1m') dateCondition = "CreatedDate >= LAST_N_DAYS:30";
+        else if (range === '2m') dateCondition = "CreatedDate >= LAST_N_DAYS:60";
+        else if (range === '3m' || range === 'all') dateCondition = "CreatedDate >= LAST_N_DAYS:90";
+        else if (range === 'custom' && startDate && endDate) {
+          const sIso = new Date(startDate).toISOString();
+          const eIso = new Date(endDate).toISOString();
+          dateCondition = `CreatedDate >= ${sIso} AND CreatedDate <= ${eIso}`;
+        }
+        const siteSoql = [
+          'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
+          'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
+          'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
+          'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
+          'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
+          'FROM Case',
+          `WHERE ${dateCondition} AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))`,
+          `AND ${siteWhere}`,
+          'ORDER BY CreatedDate DESC LIMIT 1000'
+        ].join(' ');
+        const siteRes = await executeSOQL(siteSoql);
+        const extraCases = siteRes.records || [];
+        const seenIds = new Set(matched.map(c => c.Id));
+        for (const ec of extraCases) {
+          if (ec && ec.Id && !seenIds.has(ec.Id)) {
+            seenIds.add(ec.Id);
+            matched.push(ec);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[fetchOpenCasesForSite] Historical cases query notice:', err.message);
+    }
+
+    try {
+      const historicalAlertsResult = await fetchHistoricalAlerts(false, effectiveSiteName);
+      if (Array.isArray(historicalAlertsResult) && historicalAlertsResult.length > 0) {
+        const seenAlertIds = new Set(matchedAlerts.map(a => a.Id));
+        const seenClosedIds = new Set(matchedClosed.map(c => c.Id));
+        for (const ha of historicalAlertsResult) {
+          if (!ha || !ha.Id) continue;
+          if (isOpenAlert(ha) && !seenAlertIds.has(ha.Id)) {
+            seenAlertIds.add(ha.Id);
+            matchedAlerts.push(ha);
+          } else if (isClosedAlert(ha) && !seenClosedIds.has(ha.Id)) {
+            seenClosedIds.add(ha.Id);
+            matchedClosed.push(ha);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[fetchOpenCasesForSite] Historical alerts query notice:', err.message);
+    }
+  }
 
   // Strictly open cases: omit any ticket having an end time or downtime!
   const strictlyOpenCases = matched.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
@@ -3054,11 +3118,13 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', st
   let windowEnd;
 
   if (isCustom) {
-    const customStartMs = new Date(`${startDate}T00:00:00Z`).getTime();
-    const customEndMs = new Date(`${endDate}T23:59:59.999Z`).getTime();
-    const totalMs = Math.max(86400000, customEndMs - customStartMs);
+    const startStr = startDate.includes('T') ? (startDate.includes(':') && startDate.split(':').length === 2 ? `${startDate}:00Z` : (startDate.endsWith('Z') ? startDate : `${startDate}Z`)) : `${startDate}T00:00:00Z`;
+    const endStr = endDate.includes('T') ? (endDate.includes(':') && endDate.split(':').length === 2 ? `${endDate}:59.999Z` : (endDate.endsWith('Z') ? endDate : `${endDate}Z`)) : `${endDate}T23:59:59.999Z`;
+    const customStartMs = new Date(startStr).getTime();
+    const customEndMs = new Date(endStr).getTime();
+    const totalMs = Math.max(60000, customEndMs - customStartMs);
     const totalDays = Math.max(1, Math.ceil(totalMs / 86400000));
-    const totalHours = totalDays * 24;
+    const totalHours = Math.max(1, Math.ceil(totalMs / 3600000));
 
     let bucketType = 'day';
     let bucketCount = totalDays;
@@ -3080,13 +3146,14 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', st
       bucketType,
       label: `${startDate} to ${endDate}`,
       isCustom: true,
-      windowStart: customStartMs,
-      windowEnd: customEndMs,
+      windowStart: isNaN(customStartMs) ? Date.now() - 7 * 86400000 : customStartMs,
+      windowEnd: isNaN(customEndMs) ? Date.now() : customEndMs,
     };
-    windowStart = customStartMs;
-    windowEnd = customEndMs;
+    windowStart = cfg.windowStart;
+    windowEnd = cfg.windowEnd;
   } else {
     const rangeConfig = {
+      'today': { hours: 24, queryDays: 1, bucketCount: 24, bucketType: 'hour', label: 'Today', isToday: true },
       '24h': { hours: 24, queryDays: 1, bucketCount: 24, bucketType: 'hour', label: 'Past 24 Hours' },
       '48h': { hours: 48, queryDays: 2, bucketCount: 24, bucketType: '2hour', label: 'Past 48 Hours' },
       '7d': { hours: 7 * 24, queryDays: 7, bucketCount: 14, bucketType: 'day', label: 'Past 7 Days' },
@@ -3097,17 +3164,25 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', st
       '60d': { hours: 60 * 24, queryDays: 60, bucketCount: 30, bucketType: '2day', label: 'Past 2 Months' },
       '3m': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
       '90d': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'Past 3 Months' },
+      'all': { hours: 90 * 24, queryDays: 90, bucketCount: 30, bucketType: '3day', label: 'All Records' },
     };
 
     cfg = rangeConfig[range] || rangeConfig['7d'];
-    windowStart = now - (cfg.hours * 60 * 60 * 1000);
-    windowEnd = now;
+    if (cfg.isToday) {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      windowStart = startOfToday.getTime();
+      windowEnd = now;
+    } else {
+      windowStart = now - (cfg.hours * 60 * 60 * 1000);
+      windowEnd = now;
+    }
   }
 
   const whereClause = buildSiteSOQLWhereClause(siteName);
   const dateCond = cfg.isCustom
     ? `CreatedDate >= ${new Date(cfg.windowStart).toISOString()} AND CreatedDate <= ${new Date(cfg.windowEnd).toISOString()}`
-    : `(CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY)`;
+    : (cfg.isToday ? 'CreatedDate = TODAY' : `(CreatedDate = LAST_N_DAYS:${cfg.queryDays} OR CreatedDate = TODAY)`);
 
   // 1. Parallel SOQL Query Suite:
   // Q1: Time-series volume distribution across the entire window
