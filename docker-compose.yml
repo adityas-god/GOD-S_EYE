@@ -37,11 +37,11 @@ services:
     networks:
       - gods-eye-net
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:5000/health || node -e \"fetch('http://127.0.0.1:5000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
-      interval: 5s
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 25s
+      start_period: 30s
 
   frontend:
     build:
@@ -55,8 +55,7 @@ services:
     networks:
       - gods-eye-net
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
 
 networks:
   gods-eye-net:
