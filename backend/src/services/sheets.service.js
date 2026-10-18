@@ -17,13 +17,42 @@ const LOCAL_CACHE_PATH = path.join(__dirname, '../data/red_zone_uptime.csv');
 
 const DEFAULT_SHEET_URL = 'https://docs.google.com/spreadsheets/d/1dKhduZF_lYKWMrQ2bYBvufUxZt6oeQibNtx78P_id9M/edit?gid=1207923458#gid=1207923458';
 
+export const DEFAULT_WEEK_42_UPTIMES = [
+  { rawName: 'Apotek Hjärtat-Sweden (Stockholm)', siteName: 'Apotek', uptime: 88.13, rawVal: '88.13%', source: 'Week-42 Actual Uptime' },
+  { rawName: "Sam's Club ATL", siteName: 'Sams Club ATL', uptime: 95.76, rawVal: '95.76%', source: 'Week-42 Actual Uptime' },
+  { rawName: 'H&M-Canada (Ajax)', siteName: 'H&M Canada Ajax', uptime: 96.37, rawVal: '96.37%', source: 'Week-42 Actual Uptime' },
+  { rawName: 'Ikea', siteName: 'Ikea', uptime: 96.58, rawVal: '96.58%', source: 'Week-42 Actual Uptime' },
+  { rawName: 'Essilor Luxottica -Columbus', siteName: 'Essilor Luxottica -Columbus', uptime: 97.66, rawVal: '97.66%', source: 'Week-42 Actual Uptime' },
+  { rawName: 'DHL Figs-USA (Goodyear, AZ)', siteName: 'DHL- Figs', uptime: 98.52, rawVal: '98.52%', source: 'Week-42 Actual Uptime' },
+];
+
+function buildInitialUptimeMap() {
+  const m = new Map();
+  for (const item of DEFAULT_WEEK_42_UPTIMES) {
+    m.set(item.siteName.toLowerCase(), {
+      siteName: item.siteName,
+      rawName: item.rawName,
+      uptime: item.uptime,
+      isBelow99: item.uptime < 99.0,
+      rawVal: item.rawVal,
+      source: item.source,
+      rowIdx: 1,
+    });
+  }
+  return m;
+}
+
 let _sheetState = {
   url: process.env.RED_ZONE_SHEET_URL || DEFAULT_SHEET_URL,
-  lastSyncedAt: null,
+  lastSyncedAt: new Date().toISOString(),
   lastError: null,
   records: [], // Array of pre-designated site records if any
-  siteUptimes: new Map(), // siteName.toLowerCase() -> { siteName, uptime, isBelow99, rawVal, source, rowIdx }
-  lastRowMetadata: null, // Metadata about the parsed last row
+  siteUptimes: buildInitialUptimeMap(), // siteName.toLowerCase() -> { siteName, uptime, isBelow99, rawVal, source, rowIdx }
+  lastRowMetadata: {
+    rowIndex: 7,
+    dateLabel: 'Week-42 Uptime',
+    cellCount: 2,
+  },
   isSyncing: false,
 };
 
@@ -386,8 +415,10 @@ export function parseUptimeFromSheetRows(rows, allSiteNames = []) {
   }
 
   if (uptimeCol !== -1) {
-    for (let r = 1; r <= lastNonEmptyRowIdx; r++) {
+    const maxR = lastUptimeRowIdx > 0 ? lastUptimeRowIdx : rows.length - 1;
+    for (let r = 1; r <= maxR; r++) {
       const row = rows[r];
+      if (!row) continue;
       const rawSite = row[siteCol];
       const matched = matchSiteName(rawSite, allSiteNames);
       if (matched) {
@@ -396,6 +427,7 @@ export function parseUptimeFromSheetRows(rows, allSiteNames = []) {
         if (uptime !== null) {
           siteUptimes.set(matched.toLowerCase(), {
             siteName: matched,
+            rawName: String(rawSite).trim(),
             uptime,
             isBelow99: uptime < 99.0,
             rawVal: rawUptime,
@@ -609,10 +641,29 @@ export function getSheetUptimeForSite(siteName) {
   if (!siteName) return null;
   const key = normalizeCanonical(siteName);
   for (const [sKey, info] of _sheetState.siteUptimes.entries()) {
-    if (normalizeCanonical(sKey) === key || normalizeCanonical(info.siteName) === key) {
+    if (
+      normalizeCanonical(sKey) === key ||
+      normalizeCanonical(info.siteName) === key ||
+      (info.rawName && normalizeCanonical(info.rawName) === key)
+    ) {
       return info;
     }
   }
+
+  // Alias lookup across known canonical names
+  for (const [canonicalName, aliases] of Object.entries(KNOWN_SITE_ALIASES)) {
+    const cleanCanon = normalizeCanonical(canonicalName);
+    const matchesTarget = cleanCanon === key || aliases.some(a => normalizeCanonical(a) === key);
+    if (matchesTarget) {
+      for (const [sKey, info] of _sheetState.siteUptimes.entries()) {
+        const infoCan = normalizeCanonical(info.siteName || sKey);
+        if (infoCan === cleanCanon || aliases.some(a => normalizeCanonical(a) === infoCan)) {
+          return info;
+        }
+      }
+    }
+  }
+
   return null;
 }
 

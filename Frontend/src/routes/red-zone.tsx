@@ -1192,23 +1192,23 @@ function RedZonePage() {
                 </div>
               </div>
 
-              {/* Metric 3: Sev 1 & Sev 2 Urgent Cases Count */}
+              {/* Metric 3: Sev-1 & Sev-2 Incidents Count */}
               <div className="metric">
                 <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
                   <AlertCircle />
-                  Sev-1 &amp; Sev-2 Urgent Cases ({TIMEFRAME_CONFIG[timeframe].label})
+                  Sev-1 &amp; Sev-2 Incidents ({TIMEFRAME_CONFIG[timeframe].label})
                 </span>
                 <div>
                   <strong>
                     {managementInsights?.qualifyingSev12Count ?? 0}
                   </strong>
                   <span style={{ fontFamily: 'var(--font-mono)' }}>
-                    {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2 Urgent
+                    {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2
                   </span>
                 </div>
                 <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
                   <span className="source-dot" style={{ background: (managementInsights?.qualifyingSev12Count ?? 0) > 0 ? 'var(--primary)' : 'var(--muted-foreground)' }} />
-                  {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2 Urgent recorded
+                  {managementInsights?.sev1UrgentCount ?? 0} Sev-1 • {managementInsights?.sev2UrgentCount ?? 0} Sev-2 recorded
                 </div>
               </div>
 
@@ -1962,7 +1962,7 @@ function RedZonePage() {
                 className="source-dot"
                 style={{ background: activeBreachesCount > 0 ? '#ef4444' : '#22c55e' }}
               />
-              Sev-1 &ge; 3, Sev-2 &ge; 5, or MTBF &lt; 36h
+              Uptime &lt; 99%, Sev-1 &ge; 3, Sev-2 &ge; 5, or MTBF &lt; 36h
             </div>
           </div>
 

@@ -894,11 +894,11 @@ export function normalizeCanonical(str) {
 }
 
 export const KNOWN_SITE_ALIASES = {
-  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)', 'flexo-hnm-canada', 'flexo-hnm', 'hnm-canada-prod'],
+  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)', 'flexo-hnm-canada', 'flexo-hnm', 'hnm-canada-prod', 'h&m-canada (ajax)', 'h&m-canada', 'hm-canada'],
   'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
-  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta', 'samprod', 'samsprod', 'samsatlprod', 'samsatl', 'samatlprod', 'samatl', 'sams-atl', 'samatl-prod', '4993.us', '4993-us', 'samprod-cluster', 'samsatlprod-cluster', 'sam\'s atl', 'sam atl'],
+  'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', "sam's club atl", "sam's club(atl)-atlanta", 'sams club(atl)-atlanta', 'samprod', 'samsprod', 'samsatlprod', 'samsatl', 'samatlprod', 'samatl', 'sams-atl', 'samatl-prod', '4993.us', '4993-us', 'samprod-cluster', 'samsatlprod-cluster', "sam's atl", 'sam atl'],
   'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california', 'samslaxprod', 'samslax', 'samlaxprod', 'samlax', 'sams-lax', '8799.us', '9476.us'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs-usa (goodyear, az)', 'dhl figs usa goodyear az', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
   'GXO-H&M Prod': ['gxo hm prod', 'xpo hnm', 'gxo hnm', 'gxo hm perris', 'gxo hm', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'xpo-hnm', 'xpo_anf'],
   'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond', 'evergreenprod'],
@@ -932,13 +932,13 @@ export const KNOWN_SITE_ALIASES = {
   'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms', 'h&m (project1) _ rms'],
   'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilorluxottica-fhr(california)', 'fhr luxottica', 'fhr'],
   'Essilor Luxottica Atlanta': ['essilorluxottica atlanta (el-atl)', 'essilorluxottica atlanta', 'el-atl', 'el atl', 'essilor luxottica atlanta', 'elatl', 'elatlprod', 'el-atlprod'],
-  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)', 'elcolombus', 'elcolombusprod', 'elcolumbusprod'],
+  'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)', 'elcolombus', 'elcolombusprod', 'elcolumbusprod', 'essilor luxottica -columbus'],
   'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)', 'sedicoprod'],
   'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico', 'walmartmxprod', 'walmartmx'],
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden'],
   'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
@@ -3269,11 +3269,13 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
   let sheetDesignatedSites = [];
   let getSheetUptimeForSite = () => null;
   let hasActiveSheetUptime = () => false;
+  let getAllSheetSiteUptimes = () => [];
   try {
     const sheets = await import('./sheets.service.js');
     sheetDesignatedSites = sheets.getSheetDesignatedRedZoneSites?.() || [];
     getSheetUptimeForSite = sheets.getSheetUptimeForSite || (() => null);
     hasActiveSheetUptime = sheets.hasActiveSheetUptime || (() => false);
+    getAllSheetSiteUptimes = sheets.getAllSheetSiteUptimes || (() => []);
   } catch {}
 
   const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : allSiteNames);
@@ -3398,6 +3400,15 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       });
     }
   }
+  for (const uRec of getAllSheetSiteUptimes()) {
+    const k = uRec.siteName.toLowerCase();
+    if (!siteIncidentsMap.has(k)) {
+      siteIncidentsMap.set(k, {
+        siteName: uRec.siteName,
+        incidents: [],
+      });
+    }
+  }
 
   for (const c of validIncidents) {
     let matchedSite = findBestSiteForCase(c, compiledSites);
@@ -3460,14 +3471,18 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
 
-    // Criteria-2: Uptime (omitted for now per user instruction)
+    // Criteria-2: Uptime (evaluated from sheet / Week-42 actual uptime data)
+    const uptimeInfo = getSheetUptimeForSite(currentSiteName);
+    const uptimeVal = typeof uptimeInfo?.uptime === 'number' ? uptimeInfo.uptime : null;
+    const criteria2Met = uptimeVal !== null && uptimeVal < 99.0;
     const criteria2 = {
-      met: false,
-      uptimePercentage: null,
-      omitted: true,
+      met: criteria2Met,
+      uptimePercentage: uptimeVal,
+      omitted: false,
       threshold: 99.0,
-      source: null,
-      rowIdx: null,
+      source: uptimeInfo?.source || (uptimeVal !== null ? 'Week-42 Actual Uptime' : null),
+      rowIdx: uptimeInfo?.rowIdx || null,
+      rawVal: uptimeInfo?.rawVal || (uptimeVal !== null ? `${uptimeVal}%` : null),
     };
 
     // Criteria-3: MTBF < 36 hours (Last two weeks = 14 days)
@@ -3492,8 +3507,22 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     );
     const isSheetDesignated = Boolean(sheetRecord);
 
-    // Entry Criteria (Any one): Criteria-1 OR Criteria-3
-    const isCurrentBreach = criteria1Met || criteria3Met || isSheetDesignated;
+    const isExplicitlyRequestedSite =
+      Boolean(siteName) &&
+      (normalizeCanonical(siteName) === normalizeCanonical(key) ||
+        normalizeCanonical(siteName) === normalizeCanonical(currentSiteName) ||
+        key.includes(siteName.toLowerCase()) ||
+        siteName.toLowerCase().includes(key));
+
+    // User requirement: "there are 5 sites in red zone add these only with uptime data given and aslo consider these sites otrht criteria we mentioned only work in redzone area rest dont disturb other part of the code base like site logics and all"
+    // Only evaluate sites that have uptime data given (or are explicitly sheet-designated or queried directly)
+    const hasUptimeData = uptimeVal !== null;
+    if (!hasUptimeData && !isSheetDesignated && !isExplicitlyRequestedSite) {
+      continue;
+    }
+
+    // Entry Criteria (Any one): Criteria-1 OR Criteria-2 OR Criteria-3 OR isSheetDesignated
+    const isCurrentBreach = criteria1Met || criteria2Met || criteria3Met || isSheetDesignated;
 
     // Exit Criteria: "If Criteria 1 & Criteria 2 are not met continually for 3 weeks/21 Days, Site will exit from RedZone."
     // Determine the most recent breach date across 21 continuous days:
@@ -3523,12 +3552,6 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       }
     }
 
-    const isExplicitlyRequestedSite =
-      Boolean(siteName) &&
-      (normalizeCanonical(siteName) === normalizeCanonical(key) ||
-        key.includes(siteName.toLowerCase()) ||
-        siteName.toLowerCase().includes(key));
-
     if (!lastBreachTime) {
       // Never breached within the last 21 days -> Clean site, not in Red Zone!
       if (!isExplicitlyRequestedSite && !isSheetDesignated) {
@@ -3547,6 +3570,9 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     const reasons = [];
     if (isSheetDesignated) {
       reasons.push(`[Cloud Sheet] ${sheetRecord.reason || 'Designated as Red Zone via Cloud Sheet'}`);
+    }
+    if (criteria2Met) {
+      reasons.push(`Actual Uptime is ${uptimeVal}% (< 99.0% threshold in Week-42)`);
     }
     if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
     if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
@@ -3671,11 +3697,11 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         thresholdMtbf: 36,
       },
       meanTimeToResolveHours,
-      dailyMetrics,
       qualifyingIncidents: (() => {
-        const sev12 = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
-        const others = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS && i.severity !== 'sev1' && i.severity !== 'sev2');
-        return [...sev12, ...others].slice(0, 15).map(i => ({
+        const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+        const sev12 = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
+        const others = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && i.severity !== 'sev1' && i.severity !== 'sev2');
+        return [...sev12, ...others].slice(0, 200).map(i => ({
           id: i.id,
           caseNumber: i.caseNumber,
           subject: i.subject,
@@ -3718,7 +3744,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     sheetSync,
     criteriaSummary: {
       criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
-      criteria2: '< 99% uptime for last 7 days (omitted for now)',
+      criteria2: '< 99% actual uptime (evaluated from Week-42 uptime data)',
       criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
       exitCriteria: '21 continuous days without breach to exit Red Zone',
     },

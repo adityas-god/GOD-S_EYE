@@ -2174,7 +2174,11 @@ export interface RedZoneSiteInfo {
   criteria2: {
     met: boolean;
     uptimePercentage: number | null;
-    omitted: true;
+    omitted: boolean;
+    threshold?: number;
+    source?: string | null;
+    rowIdx?: number | null;
+    rawVal?: string | null;
   };
   criteria3: {
     met: boolean;
@@ -2223,11 +2227,20 @@ export interface RedZoneOverviewResult {
   timestamp: string;
 }
 
+export const WEEK_42_UPTIMES: Record<string, { uptime: number; rawVal: string }> = {
+  'apotek': { uptime: 88.13, rawVal: '88.13%' },
+  'sams club atl': { uptime: 95.76, rawVal: '95.76%' },
+  'h&m canada ajax': { uptime: 96.37, rawVal: '96.37%' },
+  'ikea': { uptime: 96.58, rawVal: '96.58%' },
+  'essilor luxottica -columbus': { uptime: 97.66, rawVal: '97.66%' },
+  'dhl- figs': { uptime: 98.52, rawVal: '98.52%' },
+};
+
 /**
  * Client-side calculation engine for RED Zone sites.
  * Evaluates:
  * - Criteria 1: >= 3 Sev-1 OR >= 5 Sev-2 in last 7 days
- * - Criteria 2: Uptime < 99% (omitted for now)
+ * - Criteria 2: Uptime < 99% (evaluated from actual uptime sheet data)
  * - Criteria 3: MTBF < 36 hours in last 14 days (calculated per site individually)
  * - Exit Criteria: 21 continuous days without breach to exit
  */
@@ -2306,14 +2319,26 @@ export function computeRedZoneSitesClientSide(
     const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
 
-    // Criteria-2: Uptime (omitted for now)
+    // Criteria-2: Uptime (evaluated from Week-42 actual uptime data)
+    const cleanSiteKey = normalizeCanonical(siteName);
+    const uptimeData = WEEK_42_UPTIMES[cleanSiteKey] || null;
+    const uptimeVal = uptimeData ? uptimeData.uptime : null;
+    const criteria2Met = uptimeVal !== null && uptimeVal < 99.0;
     const criteria2 = {
-      met: false,
-      uptimePercentage: null,
-      omitted: true as const,
+      met: criteria2Met,
+      uptimePercentage: uptimeVal,
+      omitted: false,
+      threshold: 99.0,
+      source: uptimeVal !== null ? 'Week-42 Actual Uptime' : null,
+      rowIdx: uptimeVal !== null ? 1 : null,
+      rawVal: uptimeData ? uptimeData.rawVal : null,
     };
 
-    // 14-day window MTBF per individual site (336 operating hours / Sev-1 and Sev-2 failure count)
+    // User requirement: Only evaluate sites that have uptime data given
+    if (uptimeVal === null) {
+      continue;
+    }
+
     // 14-day window MTBF per individual site (336 operating hours / operational incident count)
     const incidents14d = distinctIncidents.filter(i => (now - i.createdTime) <= FOURTEEN_DAYS_MS);
     const N = incidents14d.length;
@@ -2328,7 +2353,7 @@ export function computeRedZoneSitesClientSide(
       criteria3Met = mtbfHours < 36;
     }
 
-    const isCurrentBreach = criteria1Met || criteria3Met;
+    const isCurrentBreach = criteria1Met || criteria2Met || criteria3Met;
 
     // Check rolling windows for 21-day exit calculation
     let lastBreachTime: number | null = null;
@@ -2368,6 +2393,7 @@ export function computeRedZoneSitesClientSide(
     }
 
     const reasons: string[] = [];
+    if (criteria2Met) reasons.push(`Actual Uptime is ${uptimeVal}% (< 99.0% threshold in Week-42)`);
     if (sev1_7d >= 3) reasons.push(`${sev1_7d} Sev-1 Incidents in last 7 days (Threshold: 3)`);
     if (sev2_7d >= 5) reasons.push(`${sev2_7d} Sev-2 Incidents in last 7 days (Threshold: 5)`);
     if (criteria3Met) reasons.push(`Site MTBF is ${mtbfHours}h (< 36h threshold in last 14 days)`);
@@ -2438,7 +2464,10 @@ export function computeRedZoneSitesClientSide(
       },
       meanTimeToResolveHours,
       dailyMetrics,
-      qualifyingIncidents: distinctIncidents.filter(i => i.severity === 'sev1' || i.severity === 'sev2').map(i => ({
+      qualifyingIncidents: (() => {
+        const sev12 = distinctIncidents.filter(i => i.severity === 'sev1' || i.severity === 'sev2');
+        const others = distinctIncidents.filter(i => i.severity !== 'sev1' && i.severity !== 'sev2');
+        return [...sev12, ...others].slice(0, 200).map(i => ({
         id: i.id,
         caseNumber: i.caseNumber,
         subject: i.subject,
@@ -2452,8 +2481,9 @@ export function computeRedZoneSitesClientSide(
         durationHours: i.durationHours,
         description: i.description,
         isSiteDown: i.isSiteDown,
-      })),
-    });
+      }));
+    })(),
+  });
   }
 
   redZoneSites.sort((a, b) => {
@@ -2471,7 +2501,7 @@ export function computeRedZoneSitesClientSide(
     redZoneSites,
     criteriaSummary: {
       criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
-      criteria2: '< 99% uptime for last 7 days (omitted for now)',
+      criteria2: '< 99% actual uptime (evaluated from Week-42 uptime data)',
       criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
       exitCriteria: '21 continuous days without breach to exit Red Zone',
     },
@@ -2514,7 +2544,7 @@ export const sfFetchRedZoneSites = async (forceRefresh: boolean = false, siteNam
       redZoneSites: [],
       criteriaSummary: {
         criteria1: '>= 3 Sev-1 or >= 5 Sev-2 in last 7 days',
-        criteria2: '< 99% uptime for last 7 days (omitted for now)',
+        criteria2: '< 99% actual uptime (evaluated from Week-42 uptime data)',
         criteria3: 'MTBF < 36 hours in last 14 days (calculated per individual site)',
         exitCriteria: '21 continuous days without breach to exit Red Zone',
       },

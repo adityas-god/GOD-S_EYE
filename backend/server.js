@@ -1,4 +1,4 @@
-// God's Eye Backend Server - Live Salesforce & Site Management [reload 24]
+// God's Eye Backend Server - Live Salesforce & Site Management [reload 39 - 10:49]
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -147,5 +147,3 @@ async function startServer() {
 }
 
 startServer();
-// Reload trigger: 2026-10-17T06:55:00
-
