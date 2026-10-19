@@ -5,7 +5,7 @@ const options = {
   port: process.env.PORT || 5000,
   path: '/health',
   method: 'GET',
-  timeout: 3000,
+  timeout: 8000,
 };
 
 const req = http.request(options, (res) => {

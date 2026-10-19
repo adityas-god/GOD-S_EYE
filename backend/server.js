@@ -149,6 +149,10 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   }, 2000);
 });
 
+// Configure keepalive timeouts higher than Nginx's proxy timeout to prevent 502/503 socket resets
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`[Server] Port ${PORT} in use, waiting for previous process to release...`);
