@@ -63,10 +63,7 @@ export function getSessionMessages(sessionId) {
 }
 
 function getGeminiApiKey() {
-  return (
-    process.env.GEMINI_API_KEY ||
-    'AQ.Ab8RN6IovetHzHV6nFg359mp1u06S-jlhkFT_JfzE-lmsiexoA'
-  );
+  return process.env.GEMINI_API_KEY || '';
 }
 
 // Declarations of Available Operational Intelligence Tools
@@ -607,8 +604,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
 
   const apiKeys = [
     process.env.GEMINI_API_KEY,
-    'AQ.Ab8RN6I4mTCzTfGZz3ypNFnsl2k8ytgOLoB29tJqpxg7EmRuDQ',
-    'AQ.Ab8RN6IovetHzHV6nFg359mp1u06S-jlhkFT_JfzE-lmsiexoA',
+    process.env.GEMINI_BACKUP_API_KEY,
   ].filter(Boolean);
   const uniqueApiKeys = [...new Set(apiKeys)];
 
