@@ -26,6 +26,7 @@ import analyticsRouter from './src/routes/analytics.routes.js';
 import pulseAiRouter from './src/routes/pulse-ai.routes.js';
 
 import { getSfConfig, getSalesforceToken, getLastSalesforceError, fetchRedZoneSitesOverview } from './src/services/salesforce.service.js';
+import { getLastPulseAiStatus } from './src/services/pulse-ai.service.js';
 
 // Process Safety Handlers - prevent container crashes from uncaught errors or unhandled promise rejections
 process.on('uncaughtException', (err) => {
@@ -101,6 +102,7 @@ app.get('/api/health', async (req, res) => {
       lastError: getLastSalesforceError(),
       liveAuth,
     },
+    pulseAi: getLastPulseAiStatus(),
   });
 });
 

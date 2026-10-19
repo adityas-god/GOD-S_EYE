@@ -62,6 +62,18 @@ export function getSessionMessages(sessionId) {
   return _ephemeralSessions.get(sessionId).messages;
 }
 
+let _lastPulseAiError = null;
+
+export function getLastPulseAiStatus() {
+  const key = process.env.GEMINI_API_KEY || '';
+  return {
+    apiKeyConfigured: Boolean(key && key.trim().length > 0),
+    apiKeyMasked: key && key.trim().length > 0 ? `${key.trim().slice(0, 6)}...${key.trim().slice(-4)}` : 'NOT_SET',
+    preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
+  };
+}
+
 function getGeminiApiKey() {
   return process.env.GEMINI_API_KEY || '';
 }
@@ -608,6 +620,11 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
   ].filter(Boolean);
   const uniqueApiKeys = [...new Set(apiKeys)];
 
+  if (uniqueApiKeys.length === 0) {
+    _lastPulseAiError = new Error('No GEMINI_API_KEY found in process.env. Please configure GEMINI_API_KEY in your .env file and restart the container.');
+    console.warn('[Pulse AI]', _lastPulseAiError.message);
+  }
+
   const modelsToTry = [
     process.env.GEMINI_MODEL,
     'gemini-2.5-flash',
@@ -869,6 +886,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
 
     } catch (err) {
       lastError = err;
+      _lastPulseAiError = err;
       console.warn(`[Pulse AI] Model ${model} failed, trying fallback:`, err.message);
     }
   }
