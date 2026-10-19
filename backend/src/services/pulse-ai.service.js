@@ -627,10 +627,11 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
 
   const modelsToTry = [
     process.env.GEMINI_MODEL,
-    'gemini-2.5-flash',
+    'gemini-3.8-flash',
     'gemini-flash-latest',
-    'gemini-2.5-flash-lite',
     'gemini-3-flash-preview',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
     'gemini-2.5-pro',
   ].filter(Boolean);
   let lastError = null;
@@ -655,7 +656,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
   for (const apiKey of uniqueApiKeys) {
     for (const model of modelsToTry) {
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         console.log(`[Pulse AI] Invoking Gemini model=${model} for prompt: "${cleanInput.slice(0, 60)}..."`);
 
         let currentContents = [...contents];
@@ -667,15 +668,11 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
             temperature: 0.2,
             maxOutputTokens: 8192,
           };
-          // For Gemini 2.5 Flash / Flash-Lite, disable thinking mode (thinkingBudget: 0)
+          // For Gemini 3.8 / 2.5 Flash, disable thinking mode (thinkingBudget: 0)
           // This avoids thought signature errors and reduces response latency to zero
-          if (model.includes('2.5-flash') || model.includes('flash-lite')) {
+          if (model.includes('3.8') || model.includes('2.5') || model.includes('flash')) {
             generationConfig.thinkingConfig = {
               thinkingBudget: 0,
-            };
-          } else if (model.includes('3.8') || model.includes('3.7')) {
-            generationConfig.thinkingConfig = {
-              thinkingLevel: 'LOW',
             };
           }
 
@@ -698,6 +695,19 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
             headers: requestHeaders,
             body: JSON.stringify(body),
           });
+
+          // If 401 returned, retry with query parameter ?key=
+          if (!res.ok && res.status === 401) {
+            const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
+            const queryRes = await fetch(queryUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+            });
+            if (queryRes.ok) {
+              res = queryRes;
+            }
+          }
 
           // If 400 returned, retry once without thinkingConfig or by toggling functionResponse role
           if (!res.ok && res.status === 400) {
@@ -807,10 +817,8 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
             temperature: 0.2,
             maxOutputTokens: 8192,
           };
-          if (model.includes('2.5-flash') || model.includes('flash-lite')) {
+          if (model.includes('3.8') || model.includes('2.5') || model.includes('flash')) {
             finalGenConfig.thinkingConfig = { thinkingBudget: 0 };
-          } else if (model.includes('3.8') || model.includes('3.7')) {
-            finalGenConfig.thinkingConfig = { thinkingLevel: 'LOW' };
           }
           let finalBody = {
             contents: currentContents,
