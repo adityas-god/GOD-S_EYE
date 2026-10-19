@@ -750,10 +750,16 @@ export async function syncFromCsvText(csvText, allSiteNames = []) {
     _sheetState.lastError = null;
     _sheetState.isSyncing = false;
 
-    // Cache to local file so it persists across server restarts
+    // Cache to local file so it persists across server restarts (only write if content actually changed to prevent watcher restart loops)
     try {
-      fs.writeFileSync(LOCAL_CACHE_PATH, csvText, 'utf8');
-      console.log(`[Cloud Sheet] Cached CSV data saved to ${LOCAL_CACHE_PATH}`);
+      let existingText = '';
+      if (fs.existsSync(LOCAL_CACHE_PATH)) {
+        existingText = fs.readFileSync(LOCAL_CACHE_PATH, 'utf8');
+      }
+      if (existingText !== csvText) {
+        fs.writeFileSync(LOCAL_CACHE_PATH, csvText, 'utf8');
+        console.log(`[Cloud Sheet] Cached CSV data saved to ${LOCAL_CACHE_PATH}`);
+      }
     } catch {}
 
     console.log(

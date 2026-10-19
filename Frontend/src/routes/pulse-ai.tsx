@@ -311,8 +311,19 @@ export function PulseAIPage() {
         }),
       });
 
+      if (!res.ok) {
+        let errMessage = `Server returned HTTP ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData?.error) errMessage = errData.error;
+        } catch {
+          errMessage = `Server error (${res.status} ${res.statusText || 'Bad Gateway'}). Backend service may be restarting.`;
+        }
+        throw new Error(errMessage);
+      }
+
       const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!data.success) {
         throw new Error(data.error || 'Failed to receive response from Pulse AI.');
       }
 

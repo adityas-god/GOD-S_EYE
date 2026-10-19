@@ -128,7 +128,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start server immediately so health checks pass in < 50ms
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`=======================================================`);
   console.log(`  Insight Hub Backend Service running on port ${PORT}`);
   console.log(`  Health Check: http://localhost:${PORT}/api/health`);
@@ -147,4 +147,12 @@ app.listen(PORT, '0.0.0.0', () => {
       console.warn('[Startup] Red Zone cache pre-warm notice:', err.message);
     });
   }, 2000);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[Server] Port ${PORT} in use, waiting for previous process to release...`);
+  } else {
+    console.error('[Server Error]', err.message);
+  }
 });
