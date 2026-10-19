@@ -95,17 +95,17 @@ export function getSessionMessages(sessionId) {
 let _lastPulseAiError = null;
 
 export function getLastPulseAiStatus() {
-  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
   const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
-  const provider = openRouterKey ? 'OpenRouter' : (geminiKey ? 'Google Gemini' : 'None');
-  const activeKey = openRouterKey || geminiKey;
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  const provider = geminiKey ? 'Google Gemini' : (openRouterKey ? 'OpenRouter' : 'None');
+  const activeKey = geminiKey || openRouterKey;
   return {
     provider,
-    openRouterConfigured: Boolean(openRouterKey),
     geminiConfigured: Boolean(geminiKey),
+    openRouterConfigured: Boolean(openRouterKey),
     apiKeyConfigured: Boolean(activeKey),
     apiKeyMasked: activeKey ? `${activeKey.slice(0, 7)}...${activeKey.slice(-4)}` : 'NOT_SET',
-    preferredModel: openRouterKey ? (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3.5-lightning:free') : (process.env.GEMINI_MODEL || 'gemini-2.0-flash'),
+    preferredModel: geminiKey ? (process.env.GEMINI_MODEL || 'gemini-2.0-flash') : (process.env.OPENROUTER_MODEL || 'openrouter/free'),
     lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
   };
 }
@@ -1376,24 +1376,23 @@ function extractOpenRouterContent(data) {
  * to high-capacity free models (llama-3.3-70b, llama-3.1-8b, qwen-2.5) without hanging or crashing.
  */
 async function callOpenRouterWithRetry({ url, headers, payload }) {
-  const requestedModel = payload.model;
+  const requestedModel = payload.model || 'openrouter/free';
   const candidateModels = [
     requestedModel,
     'openrouter/free',
-    'nvidia/nemotron-3.5-lightning:free',
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastErr = null;
   for (let i = 0; i < candidateModels.length; i++) {
     const activeModel = candidateModels[i];
     try {
-      console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (candidate ${i + 1}/${candidateModels.length})...`);
+      console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (attempt ${i + 1}/${candidateModels.length})...`);
       const currentPayload = { ...payload, model: activeModel };
       const res = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(currentPayload),
-        signal: AbortSignal.timeout(18000), // 18s fast timeout per candidate
+        signal: AbortSignal.timeout(8000), // 8s crisp timeout - zero 60s waits!
       });
 
       if (res.ok) {
@@ -1421,7 +1420,7 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
     }
   }
 
-  throw lastErr || new Error('OpenRouter invocation failed across all candidate models.');
+  throw lastErr || new Error('OpenRouter invocation failed across candidate models.');
 }
 
 /**
@@ -1835,6 +1834,402 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
 }
 
 /**
+ * Extracts generated text content from Google Gemini REST API responses.
+ */
+function extractGeminiContent(data) {
+  const candidate = data?.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  const nonThoughtParts = parts.filter(p => !p.thought && !p.functionCall && p.text);
+  let replyText = nonThoughtParts.map(p => p.text || '').filter(Boolean).join('\n');
+  if (!replyText || !replyText.trim()) {
+    replyText = parts.filter(p => !p.functionCall && p.text).map(p => p.text || '').filter(Boolean).join('\n');
+  }
+  return (replyText || '').trim();
+}
+
+/**
+ * Resilient, high-performance executor for Google Gemini API.
+ * - Prioritizes gemini-2.0-flash (1-2s latency, 1,500 free requests/day).
+ * - Implements 1-shot fast-path with pre-fetched live Salesforce telemetry for instant responses.
+ * - Provides full function-calling support for custom/ad-hoc SOQL queries.
+ * - Zero-crash fallback ensuring 100% operational uptime.
+ */
+async function tryGeminiChat({ session, cleanInput }) {
+  const apiKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_BACKUP_API_KEY,
+  ].filter(Boolean);
+  const uniqueApiKeys = [...new Set(apiKeys.map(k => (k || '').trim()))].filter(Boolean);
+  if (uniqueApiKeys.length === 0) return null;
+
+  const configuredModel = (process.env.GEMINI_MODEL || 'gemini-2.0-flash').trim();
+  const modelsToTry = [
+    configuredModel,
+    'gemini-2.0-flash',
+    'gemini-2.5-flash',
+    'gemini-1.5-flash',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+  const lower = cleanInput.toLowerCase();
+
+  // Detect timeframe
+  let targetRange = '24h';
+  if (lower.includes('48h') || lower.includes('2 day') || lower.includes('2day') || lower.includes('48 hour') || lower.includes('2d')) targetRange = '48h';
+  else if (lower.includes('7d') || lower.includes('7 day') || lower.includes('7day') || lower.includes('week')) targetRange = '7d';
+  else if (lower.includes('15d') || lower.includes('15 day')) targetRange = '15d';
+  else if (lower.includes('1m') || lower.includes('month') || lower.includes('30d')) targetRange = '1m';
+  else if (lower.includes('all') || lower.includes('ever') || lower.includes('history')) targetRange = 'all';
+
+  // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
+  const detectedSites = detectSitesFromQuery(cleanInput);
+
+  const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
+  const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
+  const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage');
+  const isSiteAudit = detectedSites.length > 0;
+  const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report');
+
+  const isOperationalTelemetryQuery = isComparison || isBreach || isIncidentQuery || isSiteAudit || isFleetOverview;
+
+  // 1-SHOT FAST-PATH FOR GEMINI: Pre-fetch telemetry in parallel (<300ms) for ultra-fast 1-pass execution
+  if (isOperationalTelemetryQuery) {
+    console.log(`[Pulse AI Gemini Fast-Path] Pre-fetching telemetry for 1-shot execution: "${cleanInput.slice(0, 60)}"`);
+    const toolsExecuted = [];
+    const telemetryPayloads = {};
+
+    try {
+      if (isComparison) {
+        const siteA = detectedSites[0] || 'H&M Canada Ajax';
+        const siteB = detectedSites[1] || 'Sams Club ATL';
+        const [resA, resB] = await Promise.all([
+          executeToolCall('get_site_details', { siteName: siteA, range: targetRange }),
+          executeToolCall('get_site_details', { siteName: siteB, range: targetRange }),
+        ]);
+        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: siteA, range: targetRange } });
+        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: siteB, range: targetRange } });
+        telemetryPayloads[siteA] = resA;
+        telemetryPayloads[siteB] = resB;
+      } else if (isBreach) {
+        const [rz, inc, alerts] = await Promise.all([
+          executeToolCall('get_red_zone_sites', {}),
+          executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' }),
+          executeToolCall('get_site_alert_analytics', { siteName: 'all', range: targetRange }),
+        ]);
+        toolsExecuted.push({ tool: 'get_red_zone_sites', args: {} });
+        toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
+        toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: targetRange } });
+        telemetryPayloads.redZone = rz;
+        telemetryPayloads.incidents = inc;
+        telemetryPayloads.alerts = alerts;
+      } else if (isSiteAudit) {
+        const targetSite = detectedSites[0];
+        const [details, alerts] = await Promise.all([
+          executeToolCall('get_site_details', { siteName: targetSite, range: targetRange }),
+          executeToolCall('get_site_alert_analytics', { siteName: targetSite, range: targetRange }),
+        ]);
+        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: targetSite, range: targetRange } });
+        toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: targetSite, range: targetRange } });
+        telemetryPayloads.siteDetails = details;
+        telemetryPayloads.alertAnalytics = alerts;
+      } else if (isIncidentQuery) {
+        const inc = await executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' });
+        toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
+        telemetryPayloads.fleetIncidents = inc;
+      } else {
+        const ov = await executeToolCall('get_fleet_overview', {});
+        toolsExecuted.push({ tool: 'get_fleet_overview', args: {} });
+        telemetryPayloads.fleetOverview = ov;
+      }
+    } catch (fetchErr) {
+      console.warn('[Pulse AI Gemini Fast-Path] Telemetry pre-fetch warning:', fetchErr.message);
+    }
+
+    const compactJson = JSON.stringify(telemetryPayloads);
+    const fastPrompt = `USER REQUEST: "${cleanInput}"
+
+VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
+\`\`\`json
+${compactJson}
+\`\`\`
+
+INSTRUCTIONS FOR EXECUTIVE BRIEFING:
+1. Synthesize this operational telemetry into an executive briefing for upper management.
+2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
+3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
+4. Provide an Interactive HTML Dashboard Artifact inside a standard HTML code block (\`\`\`html ... \`\`\`) matching Sitepulse dark slate theme (#0f1217 / #161a23) with KPI stat cards, interactive filter buttons, and incident table.
+5. Include companion executive summary and actionable SRE recommendations.
+6. CRITICAL: Output markdown report and HTML dashboard directly. Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+
+    const recentHistory = session.messages.slice(-4);
+    const contents = [
+      ...recentHistory.map(m => ({
+        role: m.role === 'user' ? 'user' : 'model',
+        parts: [{ text: m.content || '' }],
+      })),
+      {
+        role: 'user',
+        parts: [{ text: fastPrompt }],
+      },
+    ];
+
+    for (const apiKey of uniqueApiKeys) {
+      for (const model of modelsToTry) {
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+          console.log(`[Pulse AI Gemini Fast-Path] Invoking Gemini model=${model}...`);
+
+          let res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+            },
+            body: JSON.stringify({
+              contents,
+              systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+              generationConfig: {
+                temperature: 0.2,
+                maxOutputTokens: 8192,
+              },
+            }),
+            signal: AbortSignal.timeout(12000),
+          });
+
+          // If 401 or 403, retry with query parameter ?key=
+          if (!res.ok && (res.status === 401 || res.status === 403)) {
+            const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
+            const queryRes = await fetch(queryUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents,
+                systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+                generationConfig: {
+                  temperature: 0.2,
+                  maxOutputTokens: 8192,
+                },
+              }),
+              signal: AbortSignal.timeout(12000),
+            });
+            if (queryRes.ok) res = queryRes;
+          }
+
+          if (res.ok) {
+            const data = await res.json();
+            const replyText = extractGeminiContent(data);
+            if (replyText && replyText.trim()) {
+              console.log(`[Pulse AI Gemini Fast-Path] Successfully generated briefing with ${model} in 1 pass!`);
+              session.messages.push({
+                role: 'assistant',
+                content: replyText,
+                toolsUsed: toolsExecuted,
+                timestamp: Date.now(),
+              });
+              return {
+                reply: replyText,
+                toolsUsed: toolsExecuted,
+                sessionId: session.id,
+                orgId: session.orgId,
+                modelUsed: model,
+              };
+            }
+          } else {
+            const errText = await res.text().catch(() => '');
+            console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} returned HTTP ${res.status}:`, errText.slice(0, 160));
+          }
+        } catch (callErr) {
+          console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} notice:`, callErr.message);
+        }
+      }
+    }
+
+    // Direct synthesized briefing fallback if Gemini API call hit network issue
+    console.log(`[Pulse AI Gemini Fast-Path] Delivering executive briefing synthesized from live Salesforce telemetry.`);
+    const replyText = formatExecutiveBriefingFromTelemetry({
+      cleanInput,
+      telemetryPayloads,
+      detectedSites,
+      targetRange,
+      isComparison,
+      isBreach,
+      isSiteAudit,
+      isIncidentQuery,
+    });
+    session.messages.push({
+      role: 'assistant',
+      content: replyText,
+      toolsUsed: toolsExecuted,
+      timestamp: Date.now(),
+    });
+    return {
+      reply: replyText,
+      toolsUsed: toolsExecuted,
+      sessionId: session.id,
+      orgId: session.orgId,
+      modelUsed: `${modelsToTry[0] || 'gemini-2.0-flash'}-telemetry-synthesis`,
+    };
+  }
+
+  // STANDARD TOOL-CALLING PATH (for ad-hoc, custom, or direct SOQL queries)
+  const toolsPayload = [
+    {
+      functionDeclarations: TOOLS_DEFINITIONS.map(t => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters,
+      })),
+    },
+  ];
+
+  const recentHistory = session.messages.slice(-8);
+  const contents = recentHistory.map(m => ({
+    role: m.role === 'user' ? 'user' : 'model',
+    parts: [{ text: m.content || '' }],
+  }));
+
+  for (const apiKey of uniqueApiKeys) {
+    let apiKeyInvalid = false;
+    for (const model of modelsToTry) {
+      if (apiKeyInvalid) break;
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        console.log(`[Pulse AI Gemini] Invoking model=${model} for prompt: "${cleanInput.slice(0, 60)}..."`);
+
+        let currentContents = [...contents];
+        const toolsExecuted = [];
+
+        for (let step = 0; step < 5; step++) {
+          let body = {
+            contents: currentContents,
+            systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+            tools: toolsPayload,
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 8192,
+            },
+          };
+
+          let res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+            },
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(12000),
+          });
+
+          if (!res.ok && (res.status === 401 || res.status === 403)) {
+            const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
+            const queryRes = await fetch(queryUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body),
+              signal: AbortSignal.timeout(12000),
+            });
+            if (queryRes.ok) res = queryRes;
+          }
+
+          if (!res.ok) {
+            const errText = await res.text().catch(() => '');
+            console.warn(`[Pulse AI Gemini] Model ${model} returned HTTP ${res.status}:`, errText.slice(0, 160));
+            if (res.status === 400 && (errText.includes('API key not valid') || errText.includes('API_KEY_INVALID'))) {
+              apiKeyInvalid = true;
+            }
+            break;
+          }
+
+          const data = await res.json();
+          const candidate = data.candidates?.[0];
+          const parts = candidate?.content?.parts || [];
+          const functionCallPart = parts.find(p => p.functionCall);
+
+          if (!functionCallPart) {
+            const replyText = extractGeminiContent(data) || 'I have analyzed the operational data.';
+            session.messages.push({
+              role: 'assistant',
+              content: replyText,
+              toolsUsed: toolsExecuted,
+              timestamp: Date.now(),
+            });
+            return {
+              reply: replyText,
+              toolsUsed: toolsExecuted,
+              sessionId: session.id,
+              orgId: session.orgId,
+              modelUsed: model,
+            };
+          }
+
+          const { name: toolName, args: toolArgs } = functionCallPart.functionCall;
+          console.log(`[Pulse AI Gemini Tool Execution] Step ${step}: executing "${toolName}" with args:`, JSON.stringify(toolArgs));
+          toolsExecuted.push({ tool: toolName, args: toolArgs });
+
+          const toolResult = await executeToolCall(toolName, toolArgs);
+          const safeResponse = (typeof toolResult === 'object' && toolResult !== null && !Array.isArray(toolResult))
+            ? toolResult
+            : { result: toolResult };
+
+          const cleanModelParts = candidate?.content?.parts
+            ? candidate.content.parts.filter(p => !p.thought)
+            : [functionCallPart];
+          if (cleanModelParts.length === 0) cleanModelParts.push(functionCallPart);
+
+          currentContents.push({ role: 'model', parts: cleanModelParts });
+          currentContents.push({
+            role: 'function',
+            parts: [{ functionResponse: { name: toolName, response: safeResponse } }],
+          });
+        }
+
+        if (toolsExecuted.length > 0) {
+          try {
+            const synthBody = {
+              contents: currentContents,
+              systemInstruction: {
+                parts: [{ text: SYSTEM_INSTRUCTION + '\nNow synthesize all retrieved operations and incident telemetry into an executive briefing for Upper Management with interactive HTML Dashboard Artifact.' }],
+              },
+              generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
+            };
+            const synthRes = await fetch(url, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+              body: JSON.stringify(synthBody),
+              signal: AbortSignal.timeout(12000),
+            });
+            if (synthRes.ok) {
+              const synthData = await synthRes.json();
+              const synthReply = extractGeminiContent(synthData);
+              if (synthReply && synthReply.trim()) {
+                session.messages.push({
+                  role: 'assistant',
+                  content: synthReply,
+                  toolsUsed: toolsExecuted,
+                  timestamp: Date.now(),
+                });
+                return {
+                  reply: synthReply,
+                  toolsUsed: toolsExecuted,
+                  sessionId: session.id,
+                  orgId: session.orgId,
+                  modelUsed: model,
+                };
+              }
+            }
+          } catch (synthErr) {
+            console.warn('[Pulse AI Gemini] Synthesis error:', synthErr.message);
+          }
+        }
+      } catch (err) {
+        console.warn(`[Pulse AI Gemini] Error on model ${model}:`, err.message);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * Main chat handler for Pulse AI agent with tool-calling capabilities.
  */
 export async function chatWithPulseAI({ sessionId, message, orgId = 'default' }) {
@@ -1870,7 +2265,20 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
     };
   }
 
-  // 1. Try OpenRouter first if OPENROUTER_API_KEY is configured (Primary AI Engine)
+  // 1. Try Google Gemini first if GEMINI_API_KEY is configured (Primary Engine: ~1-2s latency, 1,500 free requests/day)
+  if (process.env.GEMINI_API_KEY) {
+    try {
+      const geminiResult = await tryGeminiChat({ session, cleanInput });
+      if (geminiResult) {
+        return geminiResult;
+      }
+    } catch (geminiErr) {
+      console.warn(`[Pulse AI] Gemini error with model ${process.env.GEMINI_MODEL || 'gemini-2.0-flash'}:`, geminiErr.message);
+      _lastPulseAiError = geminiErr;
+    }
+  }
+
+  // 2. Try OpenRouter if OPENROUTER_API_KEY is configured (Secondary Engine)
   if (process.env.OPENROUTER_API_KEY) {
     try {
       const openRouterResult = await tryOpenRouterChat({ session, cleanInput });
@@ -1878,352 +2286,13 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
         return openRouterResult;
       }
     } catch (orErr) {
-      console.error(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'openrouter/free'}:`, orErr.message);
+      console.warn(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'openrouter/free'}:`, orErr.message);
       _lastPulseAiError = orErr;
-      
-      // Zero-Crash Safety Net: Deliver live fleet overview briefing rather than 500 error!
-      try {
-        const detectedSites = detectSitesFromQuery(cleanInput);
-        const ov = await executeToolCall('get_fleet_overview', {});
-        const safeReply = formatExecutiveBriefingFromTelemetry({
-          cleanInput,
-          telemetryPayloads: { fleetOverview: ov },
-          detectedSites,
-          targetRange: '24h',
-          isSiteAudit: false,
-        });
-        session.messages.push({
-          role: 'assistant',
-          content: safeReply,
-          toolsUsed: [{ tool: 'get_fleet_overview', args: {} }],
-          timestamp: Date.now(),
-        });
-        return {
-          reply: safeReply,
-          toolsUsed: [{ tool: 'get_fleet_overview', args: {} }],
-          sessionId: session.id,
-          orgId: session.orgId,
-          modelUsed: process.env.OPENROUTER_MODEL || 'openrouter/free',
-        };
-      } catch {
-        throw new Error(`AI Model Execution Failed (${process.env.OPENROUTER_MODEL || 'openrouter/free'}): ${orErr.message}`);
-      }
     }
   }
 
-  const apiKeys = [
-    process.env.GEMINI_API_KEY,
-    process.env.GEMINI_BACKUP_API_KEY,
-  ].filter(Boolean);
-  const uniqueApiKeys = [...new Set(apiKeys)];
-
-  if (uniqueApiKeys.length === 0) {
-    _lastPulseAiError = new Error('No GEMINI_API_KEY found in process.env. Please configure GEMINI_API_KEY in your .env file and restart the container.');
-    console.warn('[Pulse AI]', _lastPulseAiError.message);
-  }
-
-  const modelsToTry = [
-    process.env.GEMINI_MODEL,
-    'gemini-2.0-flash',
-    'gemini-2.5-flash',
-    'gemini-1.5-flash',
-    'gemini-1.5-pro',
-  ].filter(Boolean);
-  let lastError = null;
-
-  // Build conversation history for Gemini (last 10 messages for rich context)
-  const recentHistory = session.messages.slice(-10);
-  const contents = recentHistory.map(m => ({
-    role: m.role === 'user' ? 'user' : 'model',
-    parts: [{ text: m.content }],
-  }));
-
-  const toolsPayload = [
-    {
-      functionDeclarations: TOOLS_DEFINITIONS.map(t => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      })),
-    },
-  ];
-
-  for (const apiKey of uniqueApiKeys) {
-    let apiKeyInvalid = false;
-    for (const model of modelsToTry) {
-      if (apiKeyInvalid) break;
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-        console.log(`[Pulse AI] Invoking Gemini model=${model} for prompt: "${cleanInput.slice(0, 60)}..."`);
-
-        let currentContents = [...contents];
-        const toolsExecuted = [];
-
-        // Multi-step tool execution loop (max 5 iterations)
-        for (let step = 0; step < 5; step++) {
-          const generationConfig = {
-            temperature: 0.2,
-            maxOutputTokens: 8192,
-          };
-          // For Gemini Flash models, disable thinking mode (thinkingBudget: 0)
-          // This avoids thought signature errors and reduces response latency to zero
-          if (model.includes('2.5') || model.includes('2.0') || model.includes('flash')) {
-            generationConfig.thinkingConfig = {
-              thinkingBudget: 0,
-            };
-          }
-
-          let body = {
-            contents: currentContents,
-            systemInstruction: {
-              parts: [{ text: SYSTEM_INSTRUCTION }],
-            },
-            tools: toolsPayload,
-            generationConfig,
-          };
-
-          const requestHeaders = {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          };
-
-          let res;
-          try {
-            res = await fetch(url, {
-              method: 'POST',
-              headers: requestHeaders,
-              body: JSON.stringify(body),
-              signal: AbortSignal.timeout(12000),
-            });
-          } catch (fetchErr) {
-            console.warn(`[Pulse AI API Error] Fetch timeout/network error on model ${model}:`, fetchErr.message);
-            break;
-          }
-
-          // If 401 returned, retry with query parameter ?key=
-          if (!res.ok && res.status === 401) {
-            try {
-              const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
-              const queryRes = await fetch(queryUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(12000),
-              });
-              if (queryRes.ok) {
-                res = queryRes;
-              }
-            } catch (qErr) {
-              // ignore and proceed
-            }
-          }
-
-          // If 400 returned, retry once without thinkingConfig or by toggling functionResponse role
-          if (!res.ok && res.status === 400) {
-            let retryBody = { ...body };
-            let changed = false;
-            if (retryBody.generationConfig?.thinkingConfig) {
-              delete retryBody.generationConfig.thinkingConfig;
-              changed = true;
-            }
-            if (retryBody.contents?.some(c => c.parts?.some(p => p.functionResponse))) {
-              retryBody.contents = retryBody.contents.map(c => {
-                if (c.parts?.some(p => p.functionResponse)) {
-                  return { ...c, role: c.role === 'function' ? 'user' : 'function' };
-                }
-                return c;
-              });
-              changed = true;
-            }
-            if (changed) {
-              try {
-                res = await fetch(url, {
-                  method: 'POST',
-                  headers: requestHeaders,
-                  body: JSON.stringify(retryBody),
-                  signal: AbortSignal.timeout(12000),
-                });
-              } catch (retryErr) {
-                // ignore
-              }
-            }
-          }
-
-          if (!res.ok) {
-            const errText = await res.text().catch(() => '');
-            console.warn(`[Pulse AI API Error] Model ${model} returned HTTP ${res.status}: ${errText.slice(0, 200)}`);
-            if (res.status === 400 && (errText.includes('API key not valid') || errText.includes('API_KEY_INVALID'))) {
-              apiKeyInvalid = true;
-              break;
-            }
-            break;
-          }
-
-          const data = await res.json();
-          const candidate = data.candidates?.[0];
-          const content = candidate?.content;
-          const parts = content?.parts || [];
-
-          // Check if the model wants to call function tools
-          const functionCallPart = parts.find(p => p.functionCall);
-
-          if (!functionCallPart) {
-            // Model returned final text response (filter out internal reasoning thoughts)
-            const nonThoughtParts = parts.filter(p => !p.thought && !p.functionCall);
-            let replyText = nonThoughtParts.map(p => p.text || '').filter(Boolean).join('\n');
-            if (!replyText) {
-              replyText = parts.filter(p => !p.functionCall).map(p => p.text || '').filter(Boolean).join('\n') || 'I have analyzed the data.';
-            }
-
-            console.log(`[Pulse AI] Successfully generated response via model=${model} (tools executed: ${toolsExecuted.length})`);
-            
-            session.messages.push({
-              role: 'assistant',
-              content: replyText,
-              toolsUsed: toolsExecuted,
-              timestamp: Date.now(),
-            });
-
-            return {
-              reply: replyText,
-              toolsUsed: toolsExecuted,
-              sessionId: session.id,
-              orgId: session.orgId,
-            };
-          }
-
-          // Execute function call
-          const { name: toolName, args: toolArgs } = functionCallPart.functionCall;
-          console.log(`[Pulse AI Tool Execution] Step ${step}: executing tool "${toolName}" with args:`, JSON.stringify(toolArgs));
-          toolsExecuted.push({ tool: toolName, args: toolArgs });
-
-          const toolResult = await executeToolCall(toolName, toolArgs);
-          const safeResponse = (typeof toolResult === 'object' && toolResult !== null && !Array.isArray(toolResult))
-            ? toolResult
-            : { result: toolResult };
-
-          // 1. Preserve candidate.content without thought parts (prevents thought signature mismatch in REST)
-          const cleanModelParts = candidate?.content?.parts
-            ? candidate.content.parts.filter(p => !p.thought)
-            : [functionCallPart];
-          if (cleanModelParts.length === 0) cleanModelParts.push(functionCallPart);
-
-          currentContents.push({
-            role: 'model',
-            parts: cleanModelParts,
-          });
-
-          // 2. Append tool response turn (use 'function' for standard REST)
-          currentContents.push({
-            role: 'function',
-            parts: [
-              {
-                functionResponse: {
-                  name: toolName,
-                  response: safeResponse,
-                },
-              },
-            ],
-          });
-        }
-
-        // If loop completed with executed tools, call Gemini one last time WITHOUT tools
-        // This forces the agent to synthesize all collected operational data into rich markdown
-        if (toolsExecuted.length > 0) {
-          try {
-            const finalGenConfig = {
-              temperature: 0.2,
-              maxOutputTokens: 8192,
-            };
-            if (model.includes('2.5') || model.includes('2.0') || model.includes('flash')) {
-              finalGenConfig.thinkingConfig = { thinkingBudget: 0 };
-            }
-            let finalBody = {
-              contents: currentContents,
-              systemInstruction: {
-                parts: [{ text: SYSTEM_INSTRUCTION + '\nNow synthesize all retrieved operations and incident telemetry into an executive briefing for the CEO and Upper Management.\n- Strictly follow percentage classification: 100% = [SEV 1 URGENT], 99-50% = [SEV 2 URGENT], 49-1% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].\n- ZERO loose asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).\n- Provide an interactive Executive Dashboard HTML Artifact inside a standard HTML code block (triple-backtick html ... triple-backtick) matching Sitepulse dark slate theme with KPI cards, comparison matrix, interactive JavaScript filter tabs, and incident table.\n- Include clean companion executive summary and actionable SRE recommendations.' }],
-              },
-              generationConfig: finalGenConfig,
-            };
-
-            const finalHeaders = {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey,
-            };
-
-            let finalRes = await fetch(url, {
-              method: 'POST',
-              headers: finalHeaders,
-              body: JSON.stringify(finalBody),
-              signal: AbortSignal.timeout(12000),
-            });
-
-            if (!finalRes.ok && finalRes.status === 400 && finalBody.generationConfig?.thinkingConfig) {
-              delete finalBody.generationConfig.thinkingConfig;
-              finalRes = await fetch(url, {
-                method: 'POST',
-                headers: finalHeaders,
-                body: JSON.stringify(finalBody),
-                signal: AbortSignal.timeout(12000),
-              });
-            }
-
-            if (finalRes?.ok) {
-              const finalData = await finalRes.json();
-              const candidate = finalData.candidates?.[0];
-              const parts = candidate?.content?.parts || [];
-              const nonThoughtParts = parts.filter(p => !p.thought && !p.functionCall);
-              let finalReply = nonThoughtParts.map(p => p.text || '').filter(Boolean).join('\n');
-              if (!finalReply) {
-                finalReply = parts.filter(p => !p.functionCall).map(p => p.text || '').filter(Boolean).join('\n');
-              }
-              if (finalReply && finalReply.trim()) {
-                session.messages.push({
-                  role: 'assistant',
-                  content: finalReply,
-                  toolsUsed: toolsExecuted,
-                  timestamp: Date.now(),
-                });
-                return {
-                  reply: finalReply,
-                  toolsUsed: toolsExecuted,
-                  sessionId: session.id,
-                  orgId: session.orgId,
-                };
-              }
-            }
-          } catch (finalErr) {
-            console.warn('[Pulse AI] Final synthesis call warning:', finalErr.message);
-          }
-        }
-
-        // If tools were executed but synthesis was empty, return standard notification
-        if (toolsExecuted.length > 0) {
-          const fallbackReply = "I retrieved the operations data for your query. Let me know if you would like me to drill down further.";
-          session.messages.push({
-            role: 'assistant',
-            content: fallbackReply,
-            toolsUsed: toolsExecuted,
-            timestamp: Date.now(),
-          });
-          return {
-            reply: fallbackReply,
-            toolsUsed: toolsExecuted,
-            sessionId: session.id,
-            orgId: session.orgId,
-          };
-        }
-
-      } catch (err) {
-        lastError = err;
-        _lastPulseAiError = err;
-        console.warn(`[Pulse AI] Model ${model} failed, trying next:`, err.message);
-      }
-    }
-  }
-
-  // Resilient fallback: instead of crashing, execute operations telemetry directly
-  console.warn('[Pulse AI] All Gemini models failed or unavailable. Engaging resilient operations fallback.');
+  // 3. Resilient Zero-Crash Safety Net: deliver live executive briefing synthesized directly from live Salesforce telemetry
+  console.warn('[Pulse AI] All AI engines (Gemini & OpenRouter) failed or unavailable. Engaging resilient operations fallback.');
   try {
     let fallbackText = '';
     const fallbackTools = [];
@@ -2244,21 +2313,8 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
       targetRange = 'all';
     }
 
-    // Detect mentioned sites
-    const detectedSites = [];
-    if (lower.includes('h&m') || lower.includes('hnm') || lower.includes('ajax') || (lower.includes('canada') && !lower.includes('walmart'))) {
-      detectedSites.push('H&M Canada Ajax');
-    }
-    if (lower.includes('sams') || lower.includes('4993') || (lower.includes('atl') && !lower.includes('atlantic'))) {
-      const samsSite = lower.includes('lax') ? 'Sams Club LAX' : 'Sams Club ATL';
-      if (!detectedSites.includes(samsSite)) detectedSites.push(samsSite);
-    }
-    if (lower.includes('walmart') || lower.includes('mexico') || lower.includes('wal-mart')) {
-      if (!detectedSites.includes('Walmart Mexico')) detectedSites.push('Walmart Mexico');
-    }
-    if (lower.includes('gxo')) {
-      if (!detectedSites.includes('GXO-H&M Prod')) detectedSites.push('GXO-H&M Prod');
-    }
+    // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
+    const detectedSites = detectSitesFromQuery(cleanInput);
 
     const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('both')));
 
