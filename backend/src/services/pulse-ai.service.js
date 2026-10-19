@@ -151,7 +151,7 @@ export function getLastPulseAiStatus() {
     openRouterConfigured: Boolean(openRouterKey),
     apiKeyConfigured: Boolean(activeKey),
     apiKeyMasked: activeKey ? `${activeKey.slice(0, 7)}...${activeKey.slice(-4)}` : 'NOT_SET',
-    preferredModel: isGeminiValid ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash') : (process.env.OPENROUTER_MODEL || 'openrouter/free'),
+    preferredModel: isGeminiValid ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash') : (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free'),
     lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
   };
 }
@@ -1636,30 +1636,38 @@ function extractOpenRouterContent(data) {
   const choice = data?.choices?.[0];
   if (!choice) return '';
   const msg = choice.message;
-  const content = msg?.content || '';
-  if (content && typeof content === 'string' && content.trim()) return content.trim();
-  const reasoning = msg?.reasoning || msg?.reasoning_content || '';
-  if (reasoning && typeof reasoning === 'string' && reasoning.trim()) return reasoning.trim();
-  if (choice.text && typeof choice.text === 'string' && choice.text.trim()) return choice.text.trim();
+  let text = '';
+  if (msg?.content && typeof msg.content === 'string' && msg.content.trim()) {
+    text = msg.content.trim();
+  } else if (msg?.reasoning && typeof msg.reasoning === 'string' && msg.reasoning.trim()) {
+    text = msg.reasoning.trim();
+  } else if (msg?.reasoning_content && typeof msg.reasoning_content === 'string' && msg.reasoning_content.trim()) {
+    text = msg.reasoning_content.trim();
+  } else if (choice.text && typeof choice.text === 'string' && choice.text.trim()) {
+    text = choice.text.trim();
+  }
+  if (text) {
+    // Strip <think>...</think> reasoning blocks if returned by reasoning models
+    text = text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    return text;
+  }
   return '';
 }
 
 /**
  * Resilient, fast caller for OpenRouter OpenAI-compatible chat completions API.
- * Automatically handles multi-model auto-failover:
- * If the configured model hits a temporary 429 upstream rate limit, it seamlessly fails over
- * to high-capacity free models (llama-3.3-70b, llama-3.1-8b, qwen-2.5) without hanging or crashing.
+ * Prioritizes minimax/minimax-m3.1-flash:free with low reasoning effort and auto-failover
+ * to healthy high-capacity free models (openrouter/free, nemotron, xing4.0).
  */
 async function callOpenRouterWithRetry({ url, headers, payload }) {
-  const requestedModel = payload.model || (process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
+  const requestedModel = payload.model || (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free').trim();
   const candidateModels = [
-    'openrouter/free',
     requestedModel,
-    'google/gemini-2.0-flash-exp:free',
     'minimax/minimax-m3.1-flash:free',
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'qwen/qwen-2.5-72b-instruct:free',
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('nemotron') && !m.includes('3.8') && !m.includes('llama-3.2-3b'));
+    'openrouter/free',
+    'nvidia/nemotron-3.5-super-vl:free',
+    'xingchen-agi/xing4.0-29b-a4b:free',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('llama-3.2-3b') && !m.includes('llama-3.3-70b-instruct:free') && !m.includes('qwen-2.5-72b-instruct:free') && !m.includes('gemini-2.0-flash-exp:free'));
 
   // Free models often reject or 404 when OpenAI 'tools' / function-calling schema is passed.
   // Strip 'tools' and 'tool_choice' to ensure universal compatibility across free endpoints!
@@ -1675,8 +1683,12 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
     try {
       console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (attempt ${i + 1}/${candidateModels.length})...`);
       const currentPayload = { ...cleanPayload, model: activeModel };
-      // 25s timeout for primary candidate, 20s for fallbacks - gives free models ample time to complete reports
-      const timeoutMs = i === 0 ? 25000 : 20000;
+      // For MiniMax, set low reasoning effort so it produces crisp answers in seconds without massive thought token delays
+      if (activeModel.includes('minimax')) {
+        currentPayload.reasoning = { effort: 'low' };
+      }
+      // 60s timeout for primary candidate, 35s for fallbacks - gives models ample time to complete reports
+      const timeoutMs = i === 0 ? 60000 : 35000;
       const res = await fetch(url, {
         method: 'POST',
         headers,
@@ -1803,8 +1815,8 @@ async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
   const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (!apiKey) return null;
 
-  // Use the exact configured model, defaulting to openrouter/free
-  const model = (process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
+  // Use the exact configured model, defaulting to minimax/minimax-m3.1-flash:free
+  const model = (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free').trim();
   const url = 'https://openrouter.ai/api/v1/chat/completions';
   const headers = {
     'Content-Type': 'application/json',
@@ -1964,7 +1976,7 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
         model,
         messages: fastMessages,
         temperature: 0.25,
-        max_tokens: 4096,
+        max_tokens: 2048,
       },
       maxRetries: 1,
     });
@@ -2009,6 +2021,36 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
       orgId: session.orgId,
       modelUsed: data?._modelUsed || model,
     };
+  }
+
+  // If Fast-Path model timed out or failed, but we already have live telemetry, synthesize the report directly!
+  if (hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+    console.log('[Pulse AI Fast-Path] OpenRouter completion timed out/unavailable; synthesizing direct executive briefing from live telemetry');
+    const directBriefing = formatExecutiveBriefingFromTelemetry({
+      cleanInput,
+      telemetryPayloads,
+      detectedSites,
+      targetRange,
+      isComparison,
+      isBreach,
+      isSiteAudit,
+      isIncidentQuery,
+    });
+    if (directBriefing && directBriefing.trim()) {
+      session.messages.push({
+        role: 'assistant',
+        content: directBriefing,
+        toolsUsed: toolsExecuted,
+        timestamp: Date.now(),
+      });
+      return {
+        reply: directBriefing,
+        toolsUsed: toolsExecuted,
+        sessionId: session.id,
+        orgId: session.orgId,
+        modelUsed: 'sitepulse-engine',
+      };
+    }
   }
 
   // STANDARD TOOL-CALLING PATH (for ad-hoc, custom, or direct SOQL queries)
@@ -2057,6 +2099,42 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
     let replyText = initialData ? extractOpenRouterContent(initialData) : '';
     if (!replyText || !replyText.trim()) {
       return null;
+    }
+
+    // Intercept raw text function calls if model printed them instead of returning real answer
+    const textFnRegex = /\b(get_[a-z_]+)\(([^)]*)\)/gi;
+    if (textFnRegex.test(replyText) && !replyText.includes('Executive') && !replyText.includes('Status:')) {
+      console.log('[Pulse AI OpenRouter] Model printed raw function calls as text; executing and generating executive briefing');
+      const parsedCalls = [];
+      let m;
+      while ((m = textFnRegex.exec(replyText)) !== null) {
+        const fnName = m[1];
+        const rawArgs = m[2];
+        const argsObj = {};
+        const argPairRegex = /([a-zA-Z0-9_]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([a-zA-Z0-9_]+))/g;
+        let ap;
+        while ((ap = argPairRegex.exec(rawArgs)) !== null) {
+          argsObj[ap[1]] = ap[2] ?? ap[3] ?? ap[4];
+        }
+        parsedCalls.push({ name: fnName, args: argsObj });
+      }
+      if (parsedCalls.length > 0) {
+        const executedPayloads = {};
+        for (const pc of parsedCalls) {
+          fallbackToolsExecuted.push({ tool: pc.name, args: pc.args });
+          executedPayloads[pc.name] = await executeToolCall(pc.name, pc.args);
+        }
+        replyText = formatExecutiveBriefingFromTelemetry({
+          cleanInput,
+          telemetryPayloads: executedPayloads,
+          detectedSites: detectedSites.length > 0 ? detectedSites : [parsedCalls[0]?.args?.siteName || 'Site'],
+          targetRange,
+          isComparison,
+          isBreach,
+          isSiteAudit: true,
+          isIncidentQuery,
+        });
+      }
     }
     session.messages.push({
       role: 'assistant',
@@ -2669,7 +2747,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default', m
         return openRouterResult;
       }
     } catch (orErr) {
-      console.warn(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'openrouter/free'}:`, orErr.message);
+      console.warn(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free'}:`, orErr.message);
       _lastPulseAiError = orErr;
     }
   }
