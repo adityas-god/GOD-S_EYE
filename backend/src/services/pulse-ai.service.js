@@ -1379,9 +1379,8 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
   const requestedModel = payload.model;
   const candidateModels = [
     requestedModel,
-    'meta-llama/llama-3.3-70b-instruct:free',
-    'meta-llama/llama-3.1-8b-instruct:free',
-    'qwen/qwen-2.5-72b-instruct:free',
+    'openrouter/free',
+    'nvidia/nemotron-3.5-lightning:free',
   ].filter((m, i, arr) => m && arr.indexOf(m) === i);
 
   let lastErr = null;
@@ -1394,7 +1393,7 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
         method: 'POST',
         headers,
         body: JSON.stringify(currentPayload),
-        signal: AbortSignal.timeout(35000), // 35s max per candidate
+        signal: AbortSignal.timeout(18000), // 18s fast timeout per candidate
       });
 
       if (res.ok) {
@@ -1409,8 +1408,8 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
       const errText = await res.text().catch(() => '');
       console.warn(`[Pulse AI OpenRouter] Model ${activeModel} HTTP ${res.status}:`, errText.slice(0, 180));
 
-      // If 429 rate limit or 500/502/503 queue spike, failover immediately to next candidate model!
-      if (res.status === 429 || res.status >= 500) {
+      // If 404 (free tier discontinued), 429 (rate-limited), or 500-503 (server error), failover immediately!
+      if (res.status === 404 || res.status === 429 || res.status >= 500) {
         lastErr = new Error(`OpenRouter HTTP ${res.status} on ${activeModel}: ${errText.slice(0, 120)}`);
         continue;
       }
@@ -1418,7 +1417,7 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
       throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 120)}`);
     } catch (err) {
       lastErr = err;
-      console.warn(`[Pulse AI OpenRouter] Model ${activeModel} error:`, err.message);
+      console.warn(`[Pulse AI OpenRouter] Model ${activeModel} notice:`, err.message);
     }
   }
 
@@ -1486,9 +1485,9 @@ export function detectSitesFromQuery(input) {
 }
 
 /**
- * Executes a fast, resilient conversation turn with OpenRouter targeting nvidia/nemotron-3-ultra-550b-a55b:free.
+ * Executes a fast, resilient conversation turn with OpenRouter targeting openrouter/free.
  * Features:
- * - Direct execution with nvidia/nemotron-3-ultra-550b-a55b:free (no model override)
+ * - Direct execution with openrouter/free (no model override)
  * - Dynamic Site Detection: Recognizes Apotek Hjärtat and all 80+ customer fulfillment sites.
  * - 1-Shot Telemetry Pre-fetch: Resolves all site/incident data in Node.js (<200ms) and passes ground-truth in prompt.
  * - Zero-Crash Resilience: If OpenRouter returns finish_reason="length" or empty content, formats live Salesforce telemetry directly.
@@ -1498,8 +1497,8 @@ async function tryOpenRouterChat({ session, cleanInput }) {
   const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (!apiKey) return null;
 
-  // Use the exact configured model, defaulting to nvidia/nemotron-3-ultra-550b-a55b:free
-  const model = (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free').trim();
+  // Use the exact configured model, defaulting to openrouter/free
+  const model = (process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
   const url = 'https://openrouter.ai/api/v1/chat/completions';
   const headers = {
     'Content-Type': 'application/json',
@@ -1530,7 +1529,7 @@ async function tryOpenRouterChat({ session, cleanInput }) {
   const isOperationalTelemetryQuery = isComparison || isBreach || isIncidentQuery || isSiteAudit || isFleetOverview;
 
   // 1-SHOT FAST-PATH: Proactively pre-fetch all telemetry in parallel (<200ms)
-  // Sends a single inference pass to nvidia/nemotron-3-ultra-550b-a55b:free, cutting 300s tool loops down to 3-8s!
+  // Sends a single inference pass to openrouter/free, cutting 300s tool loops down to 3-8s!
   if (isOperationalTelemetryQuery) {
     console.log(`[Pulse AI Fast-Path] Pre-fetching telemetry for 1-shot execution: "${cleanInput.slice(0, 60)}"`);
     const toolsExecuted = [];
@@ -1861,7 +1860,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
         return openRouterResult;
       }
     } catch (orErr) {
-      console.error(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free'}:`, orErr.message);
+      console.error(`[Pulse AI] OpenRouter error with model ${process.env.OPENROUTER_MODEL || 'openrouter/free'}:`, orErr.message);
       _lastPulseAiError = orErr;
       
       // Zero-Crash Safety Net: Deliver live fleet overview briefing rather than 500 error!
@@ -1886,10 +1885,10 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
           toolsUsed: [{ tool: 'get_fleet_overview', args: {} }],
           sessionId: session.id,
           orgId: session.orgId,
-          modelUsed: process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free',
+          modelUsed: process.env.OPENROUTER_MODEL || 'openrouter/free',
         };
       } catch {
-        throw new Error(`AI Model Execution Failed (${process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free'}): ${orErr.message}`);
+        throw new Error(`AI Model Execution Failed (${process.env.OPENROUTER_MODEL || 'openrouter/free'}): ${orErr.message}`);
       }
     }
   }
