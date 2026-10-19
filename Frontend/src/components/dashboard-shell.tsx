@@ -48,6 +48,7 @@ export function DashboardShell({
   const currentPath = routerState?.location?.pathname ?? '';
   const isRedZoneActive = currentPath === '/red-zone';
   const isAnalyticsActive = currentPath === '/analytics';
+  const isPulseAiActive = currentPath === '/pulse-ai' || currentPath.startsWith('/pulse-ai');
 
   const { data: sites } = useQuery(sitesQueryOptions());
   const actualSitesCount = sites?.length ?? 78;
@@ -147,6 +148,29 @@ export function DashboardShell({
             <Link to="/analytics">
               <BarChart3 />
               GO analytics
+            </Link>
+          </Button>
+
+          <Button
+            variant="nav"
+            asChild
+            className={isPulseAiActive ? 'active' : ''}
+          >
+            <Link to="/pulse-ai">
+              <span>pulse AI</span>
+              <span className="nav-ai-badge" style={{
+                marginLeft: 'auto',
+                fontSize: 10,
+                fontWeight: 700,
+                padding: '1px 6px',
+                borderRadius: 999,
+                background: 'linear-gradient(135deg, #f97316, #ef4444)',
+                color: '#fff',
+                letterSpacing: '0.5px',
+                boxShadow: 'none',
+              }}>
+                AI
+              </span>
             </Link>
           </Button>
 
@@ -308,8 +332,11 @@ export function DashboardShell({
           </div>
         </div>
       </aside>
-      <div className="main-column">
-        <header className="topbar">
+      <div
+        className="main-column"
+        style={isPulseAiActive ? { height: '100vh', maxHeight: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : undefined}
+      >
+        <header className="topbar" style={isPulseAiActive ? { flexShrink: 0 } : undefined}>
           <div className="breadcrumb">
             <button
               className="sidebar-toggle"
@@ -321,7 +348,7 @@ export function DashboardShell({
             </button>
             <span>Workspace</span>
             <span className="crumb-slash">/</span>
-            <span>{detail ? 'Site details' : isRedZoneActive ? 'RED zone sites' : isAnalyticsActive ? 'GO analytics' : 'Site overview'}</span>
+            <span>{detail ? 'Site details' : isRedZoneActive ? 'RED zone sites' : isAnalyticsActive ? 'GO analytics' : isPulseAiActive ? 'pulse AI' : 'Site overview'}</span>
           </div>
           <div className="top-actions">
             <span className="workspace-status">
@@ -389,18 +416,22 @@ export function DashboardShell({
             </div>
           </div>
         </header>
-        <main>{children}</main>
-        <footer className="main-footer">
-          <span>
-            <span className="footer-dot" />
-            Operations, in focus.
-          </span>
-          <span>
-            <Shield size={12} /> Secure workspace
-            <span className="footer-separator">·</span>
-            Sitepulse © 2026
-          </span>
-        </footer>
+        <main style={isPulseAiActive ? { flex: 1, height: 'calc(100vh - 77px)', maxHeight: 'calc(100vh - 77px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' } : undefined}>
+          {children}
+        </main>
+        {!isPulseAiActive && (
+          <footer className="main-footer">
+            <span>
+              <span className="footer-dot" />
+              Operations, in focus.
+            </span>
+            <span>
+              <Shield size={12} /> Secure workspace
+              <span className="footer-separator">·</span>
+              Sitepulse © 2026
+            </span>
+          </footer>
+        )}
       </div>
       <ConnectionsDialog open={connections} onOpenChange={setConnections} />
     </div>

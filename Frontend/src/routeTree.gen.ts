@@ -15,6 +15,7 @@ import { Route as RedZoneRouteImport } from './routes/red-zone'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as SfTestRouteImport } from './routes/sf-test'
 import { Route as SitesSiteIdRouteImport } from './routes/sites/$siteId'
+import { Route as PulseAiRouteImport } from './routes/pulse-ai'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +47,11 @@ const SitesSiteIdRoute = SitesSiteIdRouteImport.update({
   path: '/sites/$siteId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PulseAiRoute = PulseAiRouteImport.update({
+  id: '/pulse-ai',
+  path: '/pulse-ai',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,6 +60,7 @@ export interface FileRoutesByFullPath {
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
   '/sites/$siteId': typeof SitesSiteIdRoute
+  '/pulse-ai': typeof PulseAiRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -62,6 +69,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
   '/sites/$siteId': typeof SitesSiteIdRoute
+  '/pulse-ai': typeof PulseAiRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -71,13 +79,14 @@ export interface FileRoutesById {
   '/reset-password': typeof ResetPasswordRoute
   '/sf-test': typeof SfTestRoute
   '/sites/$siteId': typeof SitesSiteIdRoute
+  '/pulse-ai': typeof PulseAiRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
+  fullPaths: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId' | '/pulse-ai'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
-  id: '__root__' | '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId'
+  to: '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId' | '/pulse-ai'
+  id: '__root__' | '/' | '/analytics' | '/red-zone' | '/reset-password' | '/sf-test' | '/sites/$siteId' | '/pulse-ai'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -87,6 +96,7 @@ export interface RootRouteChildren {
   ResetPasswordRoute: typeof ResetPasswordRoute
   SfTestRoute: typeof SfTestRoute
   SitesSiteIdRoute: typeof SitesSiteIdRoute
+  PulseAiRoute: typeof PulseAiRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -133,6 +143,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SitesSiteIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/pulse-ai': {
+      id: '/pulse-ai'
+      path: '/pulse-ai'
+      fullPath: '/pulse-ai'
+      preLoaderRoute: typeof PulseAiRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -143,6 +160,7 @@ const rootRouteChildren: RootRouteChildren = {
   ResetPasswordRoute: ResetPasswordRoute,
   SfTestRoute: SfTestRoute,
   SitesSiteIdRoute: SitesSiteIdRoute,
+  PulseAiRoute: PulseAiRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

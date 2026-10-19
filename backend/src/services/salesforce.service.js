@@ -731,7 +731,7 @@ export function calculateSiteUrgentCounts(casesForSite = []) {
   const urgentTickets = (casesForSite || []).filter(c => {
     if (!isIncidentTicket(c)) return false;
     const sev = detectSeverity(c);
-    return sev === 'sev1' || sev === 'sev2';
+    return sev === 'sev1' || sev === 'sev2' || sev === 'sev2_urgent';
   });
 
   if (urgentTickets.length === 0) {
@@ -755,7 +755,10 @@ export function calculateSiteUrgentCounts(casesForSite = []) {
 
   for (const cluster of incidentClusters) {
     const hasSev1 = cluster.some(t => detectSeverity(t) === 'sev1');
-    const hasSev2 = cluster.some(t => detectSeverity(t) === 'sev2');
+    const hasSev2 = cluster.some(t => {
+      const s = detectSeverity(t);
+      return s === 'sev2' || s === 'sev2_urgent';
+    });
 
     if (hasSev1) {
       sev1Count++;
@@ -1496,17 +1499,21 @@ export function areSameSite(nameA, nameB, compiledSites = []) {
     if (isFhrOrGeneric(nameA) !== isFhrOrGeneric(nameB)) return false;
   }
 
+  // Essilor Luxottica vs Sams Club must NEVER cross-match:
+  if (/sam/i.test(nameA) && /essilor|luxottica/i.test(nameB)) return false;
+  if (/essilor|luxottica/i.test(nameA) && /sam/i.test(nameB)) return false;
+
   // Sams Club ATL vs LAX must NEVER be matched together:
-  if (/sam.*atl|samprod|samsprod|^4993/i.test(nameA) && /sam.*lax|samlax|^8799|^9476/i.test(nameB)) return false;
-  if (/sam.*lax|samlax|^8799|^9476/i.test(nameA) && /sam.*atl|samprod|samsprod|^4993/i.test(nameB)) return false;
+  if (/sam.*atl|samsatl|samatl|samprod|samsprod|4993/i.test(nameA) && /sam.*lax|samslax|samlax|8799|9476/i.test(nameB)) return false;
+  if (/sam.*lax|samslax|samlax|8799|9476/i.test(nameA) && /sam.*atl|samsatl|samatl|samprod|samsprod|4993/i.test(nameB)) return false;
 
   // Domain aliases:
   // Sams Club ATL: sams atl, sam atl, samatl, samprod, samsprod, 4993
-  const isSamsAtl = (s) => /sam.*atl|samprod|samsprod|^4993/i.test(s);
+  const isSamsAtl = (s) => /sam.*atl|samsatl|samatl|samprod|samsprod|4993/i.test(s);
   if (isSamsAtl(nameA) && isSamsAtl(nameB)) return true;
 
   // Sams Club LAX: sams lax, sam lax, samlax, samlaxprod, 8799, 9476
-  const isSamsLax = (s) => /sam.*lax|samlax|^8799|^9476/i.test(s);
+  const isSamsLax = (s) => /sam.*lax|samslax|samlax|samlaxprod|8799|9476/i.test(s);
   if (isSamsLax(nameA) && isSamsLax(nameB)) return true;
 
   // Casey's: casey, caseys, casey's, caseyprod, caseysprod, casey joplin
@@ -1546,6 +1553,7 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
 
   // Level 0: Primary authoritative Subject line & location fields check
   const sub = String(caseRecord.Subject || caseRecord.subject || '').trim();
+  const accIdRaw = String(caseRecord.AccountId || caseRecord.account_id || '').trim();
   const combinedContext = [
     caseRecord.Snow_Sitename__c,
     caseRecord.Customer_Location__c,
@@ -1553,6 +1561,7 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
     caseRecord.Impacted_Sites__c,
     sub,
     caseRecord.Account_Name__c || caseRecord.account_name,
+    accIdRaw,
   ].filter(Boolean).join(' ').toLowerCase();
 
   // Primary authoritative XPO -> GXO site resolution:
@@ -1585,9 +1594,33 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
     }
   }
 
+  // Sams Club multi-site resolution (evaluate before generic city matching):
+  if (
+    accIdRaw === '001OX00000qZLbBYAW' ||
+    accIdRaw === '001OX00000qZLaxYAG' ||
+    /sam(s)?(\s*club)?|4993|8799|9476|samsatl|samatl|samprod|samsprod|samslax|samlax/i.test(combinedContext)
+  ) {
+    if (
+      accIdRaw === '001OX00000qZLbBYAW' ||
+      /atl|atlanta|4993|samsatl|samatl|samprod|samsprod/i.test(combinedContext)
+    ) {
+      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club ATL';
+    }
+    if (
+      accIdRaw === '001OX00000qZLaxYAG' ||
+      /lax|california|8799|9476|samslax|samlax|samlaxprod/i.test(combinedContext)
+    ) {
+      const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
+      if (sam) return sam.originalName;
+      return 'Sams Club LAX';
+    }
+  }
+
   // Essilor Luxottica multi-site resolution:
   if (/essilor|luxottica/i.test(combinedContext) || /el[-_]?atl|el[-_]?col|sedico/i.test(combinedContext)) {
-    if (/\b(atl|atlanta|el-atl|elatl)\b/i.test(combinedContext)) {
+    if (/\b(atl|atlanta|el-atl|elatl)\b/i.test(combinedContext) && !/sam/i.test(combinedContext)) {
       const atl = compiledSites.find(x => /atlanta/i.test(x.originalName) && /luxottica/i.test(x.originalName));
       if (atl) return atl.originalName;
       return 'Essilor Luxottica Atlanta';
@@ -1606,20 +1639,6 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
       const fhr = compiledSites.find(x => x.originalName === 'Essilor Luxottica');
       if (fhr) return fhr.originalName;
       return 'Essilor Luxottica';
-    }
-  }
-
-  // Sams Club multi-site resolution:
-  if (/sam(s)?(\s+club)?|4993|8799|9476/i.test(combinedContext)) {
-    if (/\b(atl|atlanta|4993|samprod|samsprod)\b/i.test(combinedContext)) {
-      const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
-      if (sam) return sam.originalName;
-      return 'Sams Club ATL';
-    }
-    if (/\b(lax|california|8799|9476|samlax)\b/i.test(combinedContext)) {
-      const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
-      if (sam) return sam.originalName;
-      return 'Sams Club LAX';
     }
   }
 
@@ -1820,6 +1839,8 @@ export function getImpactPercentage(c) {
     c.impact_percentage,
     c.Impacted_Percentage__c,
     c.Impacted_Percent__c,
+    c.Impact_Pct__c,
+    c.Business_Impact__c,
   ];
 
   for (const val of rawFields) {
@@ -1839,10 +1860,21 @@ export function getImpactPercentage(c) {
     if (/\b(?:site\s+)?100\s*%\s*(?:down|impact|outage)\b/i.test(textToScan) || /\b100\s*%\s*site\s+down\b/i.test(textToScan)) {
       return 100;
     }
-    const match = textToScan.match(/(?:impact|impacted|down|area down)[^0-9\n]{0,20}(\d+(?:\.\d+)?)\s*%/i);
+    const match = textToScan.match(/(?:impact|impacted|area down|operational|severity|sev)[^0-9\n]{0,25}(\d+(?:\.\d+)?)\s*%/i);
     if (match) {
       const parsed = parseFloat(match[1]);
       if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+    }
+    // Also check for explicit operational impact in Subject line (e.g. "50% down", "75% capacity loss", "50% picking line stopped")
+    if (c.Subject) {
+      const isResourceMetric = /\b(?:disk|battery|cpu|memory|storage|utilization|charge)\b/i.test(c.Subject);
+      if (!isResourceMetric) {
+        const subMatch = String(c.Subject).match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:down|impact|outage|capacity|line|picking|grid|facility|throughput|stopped|failure)\b/i);
+        if (subMatch) {
+          const parsed = parseFloat(subMatch[1]);
+          if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+        }
+      }
     }
   }
 
@@ -1871,34 +1903,30 @@ export function detectSeverity(c) {
   if (isPmTicket(c)) return 'sev3';
 
   const raw = c;
-  const rawType = String(raw.Type || raw.type || '').trim().toLowerCase();
-  // Feature requests, queries, and analysis are never operational outage incidents
-  if (rawType === 'feature request' || rawType === 'query' || rawType === 'analysis' || rawType === 'change') {
-    return 'sev3';
-  }
+  const rawType = String(raw.Type || raw.type || raw.Snow_Category__c || raw.Category__c || '').trim().toLowerCase();
+  const sub = String(c.Subject || raw.subject || '').trim();
+  const highestSevRaw = String(raw.Highest_Severity__c || raw.highest_severity || raw.Severity__c || '').trim();
+  const highestSev = highestSevRaw.toUpperCase();
+  const prio = String(raw.Priority || raw.priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
 
-  // Rule 1: 100% Impact or Site 100% Down -> Sev 1 Urgent
+  // 1. Percentage-based classification (User Rule):
+  // 100% -> Sev 1 Urgent
+  // 99% - 50% -> Sev 2 Urgent
+  // 49% - 1% -> Sev 2 High
+  // Below that -> Sev 3 Incident or Sev 4 Service Request
   const impact = getImpactPercentage(c);
-  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || impact >= 100) {
+  if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || Boolean(raw.isSiteDown) || impact >= 100) {
     return 'sev1';
   }
-
-  // Explicit low severity guard: if Salesforce explicitly designates Severity 3 or 4, it is not Sev 1/2 Urgent
-  const highestSevRaw = String(raw.Highest_Severity__c || '').trim();
-  if (/severity\s*[34]|sev[-_ ]*[34]|low|minor/i.test(highestSevRaw) && impact < 50 && !raw.Is_Site_100_Down__c) {
-    return 'sev3';
-  }
-
-  // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
   if (impact >= 50 && impact < 100) {
-    return 'sev2';
+    return 'sev2_urgent';
+  }
+  if (impact >= 1 && impact < 50) {
+    return 'sev2_high';
   }
 
-  // Authoritative case severity fields
-  const highestSev = highestSevRaw.toUpperCase();
-  const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
-
-  // Rule 3: Explicit Severity 1 Urgent / Critical in authoritative case fields
+  // 2. Field-based classification (when percentage is 0 or null):
+  // Explicit Sev 1
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 1' ||
@@ -1914,27 +1942,57 @@ export function detectSeverity(c) {
       return 'sev1';
     }
   }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev1';
+  }
 
-  // Rule 4: Explicit Sev 2 Urgent (Must be explicitly 'Urgent', NOT standard Sev 2 High)
+  // Explicit Sev 2 Urgent
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s.includes('2 - URGENT') ||
       s.includes('SEV 2 - URGENT') ||
       s.includes('SEV 2 URGENT') ||
       s.includes('SEVERITY 2 - URGENT') ||
-      s.includes('SEVERITY 2 URGENT')
+      s.includes('SEVERITY 2 URGENT') ||
+      s.includes('P2 - URGENT') ||
+      s.includes('P2 URGENT')
     ) {
-      return 'sev2';
+      return 'sev2_urgent';
     }
   }
-
-  // Rule 5: Subject line explicit urgency / severity tags (must be explicit tag, not regular English adjective)
-  const sub = String(c.Subject || raw.subject || '').trim();
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
-    return 'sev1';
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT)(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev2_urgent';
   }
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
-    return 'sev2';
+
+  // Explicit Sev 2 High (Standard Sev 2)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s === 'SEVERITY 2' ||
+      s === 'SEV 2' ||
+      s === 'SEV-2' ||
+      s === 'P2' ||
+      s.includes('2 - HIGH') ||
+      s.includes('2 - STANDARD') ||
+      s.includes('HIGH')
+    ) {
+      return 'sev2_high';
+    }
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2(?![-_ ]*URGENT)|P2(?![-_ ]*URGENT)|SEVERITY[-_ ]*2(?![-_ ]*URGENT)|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev2_high';
+  }
+
+  // Below that: Sev 4 (Service Request / Query / Change) vs Sev 3 (Incident)
+  if (
+    rawType.includes('service request') ||
+    rawType.includes('request') ||
+    rawType.includes('change') ||
+    rawType.includes('feature') ||
+    rawType.includes('query') ||
+    rawType.includes('analysis') ||
+    /severity\s*4|sev[-_ ]*4|low|minor/i.test(highestSevRaw)
+  ) {
+    return 'sev4';
   }
 
   return 'sev3';
@@ -2535,19 +2593,20 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     return best && areSameSite(best, effectiveSiteName, compiledSites);
   });
 
-  // If user requests a specific historical range (48h, 7d, 15d, 1m, 2m, 3m, custom), query extra site tickets
-  if (range && range !== 'today' && range !== 'all' && range !== 'default' && range !== '24h' && effectiveSiteName) {
+  // If user requests a specific historical range, or if 0 cases were matched from the global 800 cache,
+  // query Salesforce directly for site-specific cases using siteWhere:
+  if (effectiveSiteName && (matched.length === 0 || (range && range !== 'today' && range !== 'all' && range !== 'default' && range !== '24h'))) {
     try {
       const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
       if (siteWhere) {
-        let dateCondition = "CreatedDate >= LAST_N_DAYS:30";
-        if (range === '24h') dateCondition = "CreatedDate >= LAST_N_DAYS:1";
-        else if (range === '48h') dateCondition = "CreatedDate >= LAST_N_DAYS:2";
-        else if (range === '7d') dateCondition = "CreatedDate >= LAST_N_DAYS:7";
-        else if (range === '15d') dateCondition = "CreatedDate >= LAST_N_DAYS:15";
-        else if (range === '1m') dateCondition = "CreatedDate >= LAST_N_DAYS:30";
-        else if (range === '2m') dateCondition = "CreatedDate >= LAST_N_DAYS:60";
-        else if (range === '3m' || range === 'all') dateCondition = "CreatedDate >= LAST_N_DAYS:90";
+        let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled')";
+        if (range === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1)";
+        else if (range === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2)";
+        else if (range === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7)";
+        else if (range === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15)";
+        else if (range === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30)";
+        else if (range === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60)";
+        else if (range === '3m' || range === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90)";
         else if (range === 'custom' && startDate && endDate) {
           const sIso = new Date(startDate).toISOString();
           const eIso = new Date(endDate).toISOString();
@@ -2989,7 +3048,24 @@ export function getSiteMatchSOQLParts(siteName) {
   const clean = cleanText(siteName);
   const parts = [];
 
-  if (clean.includes('ajax') || (clean.includes('canada') && !clean.includes('walmart') && !clean.includes('aritzia') && !clean.includes('apple express'))) {
+  if ((clean.includes('sam') || clean.includes('4993')) && (clean.includes('atl') || clean.includes('4993') || clean.includes('club') || clean.includes('samprod'))) {
+    parts.push(
+      "AccountId = '001OX00000qZLbBYAW'",
+      "Account_Name__c LIKE '%Sam%ATL%'",
+      "Account_Name__c LIKE '%Sam%Atlanta%'",
+      "Account_Name__c LIKE '%Sam%Club%'",
+      "Account_Name__c LIKE '%4993%'",
+      "Subject LIKE '%samsatl%'",
+      "Subject LIKE '%samprod%'",
+      "Subject LIKE '%samatl%'",
+      "Customer_Location__c LIKE '%Atlanta%'",
+      "Snow_Sitename__c LIKE '%Sam%'",
+      "Snow_Sitename__c LIKE '%Atlanta%'",
+      "Snow_Sitename__c LIKE '%4993%'"
+    );
+  } else if ((clean.includes('sam') || clean.includes('8799') || clean.includes('9476')) && (clean.includes('lax') || clean.includes('california') || clean.includes('8799') || clean.includes('9476'))) {
+    parts.push("Subject LIKE '%samslax%'", "Subject LIKE '%samlax%'", "Account_Name__c LIKE '%8799%'", "Account_Name__c LIKE '%Sam%Club(LAX)%'", "Account_Name__c LIKE '%Sam%LAX%'");
+  } else if (clean.includes('ajax') || (clean.includes('canada') && !clean.includes('walmart') && !clean.includes('aritzia') && !clean.includes('apple express'))) {
     parts.push(
       "Subject LIKE '%flexo-hnm%'",
       "Subject LIKE '%hnm-canada%'",
@@ -2997,7 +3073,7 @@ export function getSiteMatchSOQLParts(siteName) {
       "Account_Name__c LIKE '%Ajax%'",
       "Snow_Sitename__c LIKE '%Ajax%'"
     );
-  } else if (clean.includes('atlanta') || clean.includes('elatl') || clean.includes('el-atl')) {
+  } else if ((clean.includes('essilor') || clean.includes('luxottica') || clean.includes('elatl') || clean.includes('el-atl')) || (clean.includes('atlanta') && !clean.includes('sam'))) {
     parts.push(
       "Subject LIKE '%elatl%'",
       "Subject LIKE '%el-atl%'",
@@ -3022,10 +3098,6 @@ export function getSiteMatchSOQLParts(siteName) {
     parts.push("Subject LIKE '%walmartmx%'", "Account_Name__c LIKE '%Walmart-Mexico%'", "Snow_Sitename__c LIKE '%Tepotzotlan%'");
   } else if (clean.includes('walmart') && clean.includes('calgary')) {
     parts.push("Subject LIKE '%walmartca%'", "Account_Name__c LIKE '%Walmart-Calgary%'", "Snow_Sitename__c LIKE '%Calgary%'");
-  } else if (clean.includes('sams') && (clean.includes('atl') || clean.includes('4993'))) {
-    parts.push("Subject LIKE '%samsatl%'", "Subject LIKE '%samprod%'", "Subject LIKE '%samatl%'", "Account_Name__c LIKE '%4993%'", "Account_Name__c LIKE '%Sam%Club(ATL)%'");
-  } else if (clean.includes('sams') && (clean.includes('lax') || clean.includes('8799'))) {
-    parts.push("Subject LIKE '%samslax%'", "Subject LIKE '%samlax%'", "Account_Name__c LIKE '%8799%'", "Account_Name__c LIKE '%Sam%Club(LAX)%'");
   } else if (clean.includes('casey')) {
     parts.push("Subject LIKE '%casey%'", "Account_Name__c LIKE '%Casey%'", "Snow_Sitename__c LIKE '%Casey%'");
   } else if (clean.includes('owens') || clean.includes('onm')) {
@@ -3163,11 +3235,18 @@ export function buildSiteIncidentSOQLWhereClause(siteName, compiledSites = []) {
   // 2. Extra broad matching for Sams Club ATL
   if (clean.includes('sams') && (clean.includes('atl') || clean.includes('4993'))) {
     parts.push(
+      "AccountId = '001OX00000qZLbBYAW'",
+      "Account_Name__c LIKE '%Sam%ATL%'",
+      "Account_Name__c LIKE '%Sam%Atlanta%'",
       "Account_Name__c LIKE '%Sam%Club%'",
-      "Account_Name__c LIKE '%Atlanta%'",
+      "Account_Name__c LIKE '%4993%'",
+      "Subject LIKE '%samsatl%'",
+      "Subject LIKE '%samprod%'",
+      "Subject LIKE '%samatl%'",
       "Customer_Location__c LIKE '%Atlanta%'",
       "Snow_Sitename__c LIKE '%Sam%'",
-      "Snow_Sitename__c LIKE '%Atlanta%'"
+      "Snow_Sitename__c LIKE '%Atlanta%'",
+      "Snow_Sitename__c LIKE '%4993%'"
     );
   }
 
@@ -3912,7 +3991,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       caseNumber: c.CaseNumber,
       subject: c.Subject || 'No Subject',
       severity: sev,
-      rawSeverity: c.Highest_Severity__c || c.Priority || (sev === 'sev1' ? 'Sev 1 Urgent' : sev === 'sev2' ? 'Sev 2 Urgent' : 'Sev 3'),
+      rawSeverity: c.Highest_Severity__c || c.Priority || (sev === 'sev1' ? 'Sev 1 Urgent' : (sev === 'sev2' || sev === 'sev2_urgent') ? 'Sev 2 Urgent' : sev === 'sev2_high' ? 'Sev 2 High' : 'Sev 3'),
       productType: normalizeProductType(c.Product_Type__c || c.Parent_Product_Type__c) || 'RMS',
       status: c.Status || (endTime ? 'Closed' : 'Active'),
       createdDate: c.CreatedDate,
@@ -3941,7 +4020,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
     // Incidents in last 7 days
     const incidents7d = distinctIncidents.filter(i => (now - i.createdTime) <= SEVEN_DAYS_MS);
     const sev1_7d = incidents7d.filter(i => i.severity === 'sev1').length;
-    const sev2_7d = incidents7d.filter(i => i.severity === 'sev2').length;
+    const sev2_7d = incidents7d.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent').length;
     const criteria1Met = (sev1_7d >= 3) || (sev2_7d >= 5);
 
     // Criteria-2: Uptime (evaluated from sheet / Week-42 actual uptime data)

@@ -1779,10 +1779,20 @@ export function getImpactPercentage(c: SFCase): number {
     if (/\b(?:site\s+)?100\s*%\s*(?:down|impact|outage)\b/i.test(textToScan) || /\b100\s*%\s*site\s+down\b/i.test(textToScan)) {
       return 100;
     }
-    const match = textToScan.match(/(?:impact|impacted|down|area down)[^0-9\n]{0,20}(\d+(?:\.\d+)?)\s*%/i);
+    const match = textToScan.match(/(?:impact|impacted|area down|operational|severity|sev)[^0-9\n]{0,25}(\d+(?:\.\d+)?)\s*%/i);
     if (match) {
       const parsed = parseFloat(match[1]);
       if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+    }
+    if (c.Subject) {
+      const isResourceMetric = /\b(?:disk|battery|cpu|memory|storage|utilization|charge)\b/i.test(c.Subject);
+      if (!isResourceMetric) {
+        const subMatch = String(c.Subject).match(/\b(\d+(?:\.\d+)?)\s*%\s*(?:down|impact|outage|capacity|line|picking|grid|facility|throughput|stopped|failure)\b/i);
+        if (subMatch) {
+          const parsed = parseFloat(subMatch[1]);
+          if (!isNaN(parsed) && parsed > 0 && parsed <= 100) return parsed;
+        }
+      }
     }
   }
 
@@ -1832,9 +1842,31 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     return 'sev2';
   }
 
+  // Explicit Sev 2 High: 1% - 49% Impact is Sev 2 High (NOT Sev 2 Urgent)
+  if (impact >= 1 && impact < 50) {
+    return 'sev3';
+  }
+
   // Authoritative case severity fields
   const highestSev = highestSevRaw.toUpperCase();
   const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
+
+  // Explicit Standard Sev 2 High (e.g. "2 - High", "Severity 2", "High", "P2" without "Urgent") is NOT Sev 2 Urgent
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s.includes('2 - HIGH') ||
+      s.includes('2 - STANDARD') ||
+      s === 'HIGH' ||
+      s === 'P2' ||
+      s === 'SEV 2' ||
+      s === 'SEVERITY 2' ||
+      s === 'SEV-2'
+    ) {
+      if (!s.includes('URGENT')) {
+        return 'sev3';
+      }
+    }
+  }
 
   // Rule 3: Explicit Severity 1 Urgent / Critical in authoritative case fields
   for (const s of [highestSev, prio].filter(Boolean)) {
@@ -1860,7 +1892,9 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
       s.includes('SEV 2 - URGENT') ||
       s.includes('SEV 2 URGENT') ||
       s.includes('SEVERITY 2 - URGENT') ||
-      s.includes('SEVERITY 2 URGENT')
+      s.includes('SEVERITY 2 URGENT') ||
+      s.includes('P2 - URGENT') ||
+      s.includes('P2 URGENT')
     ) {
       return 'sev2';
     }
@@ -1871,7 +1905,7 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
   if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev1';
   }
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT)(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2';
   }
 

@@ -1076,3 +1076,40 @@ select option { background: var(--card); }
 .telemetry-live-dot {
   animation: telemetryPulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
+
+/* Pulse AI Navigation & Chat Interface */
+.nav-ai-badge {
+  box-shadow: none;
+}
+
+/* Pulse AI Smooth Transition & Docking Animations */
+@keyframes pulseAiSlideUp {
+  0% {
+    transform: translateY(32px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulseAiFadeIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pulse-ai-docked-input {
+  animation: pulseAiSlideUp 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.pulse-ai-message-fade {
+  animation: pulseAiFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+

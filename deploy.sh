@@ -27,8 +27,9 @@ HOST_PORT=${HOST_PORT:-8081}
 echo "📍 Configured Host Port: $HOST_PORT"
 
 echo "📥 Pulling latest changes from Git..."
-git fetch origin main
-git reset --hard origin/main
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+git fetch origin "$CURRENT_BRANCH" 2>/dev/null || git fetch origin main 2>/dev/null || true
+git reset --hard "origin/$CURRENT_BRANCH" 2>/dev/null || git reset --hard origin/main 2>/dev/null || git pull || true
 
 echo "🛑 Stopping running containers..."
 docker compose down --remove-orphans 2>/dev/null || true

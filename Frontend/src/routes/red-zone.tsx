@@ -105,7 +105,7 @@ function computeSingleIncidentDowntime(i: {
 }): number {
   // Only Sev 1 and Sev 2 urgent incidents qualify for outage duration (not High / Sev 3 / Sev 4)
   const sev = String(i.severity || '').toLowerCase();
-  const isSev12Urgent = sev === 'sev1' || sev === 'sev2';
+  const isSev12Urgent = sev === 'sev1' || sev === 'sev2' || sev === 'sev2_urgent';
   if (!isSev12Urgent) return 0;
 
   // Strict Start Time and End Time difference only
@@ -783,7 +783,7 @@ function RedZonePage() {
       // Strictly within selected window (from window start up to now)
       const isWithinWindow = created >= timeframeStart && created <= (now + 3600000);
       // Strictly Sev-1 or Sev-2 urgent cases
-      const isSev12Urgent = inc.severity === 'sev1' || inc.severity === 'sev2';
+      const isSev12Urgent = inc.severity === 'sev1' || inc.severity === 'sev2' || inc.severity === 'sev2_urgent';
       return isWithinWindow && isSev12Urgent;
     });
 

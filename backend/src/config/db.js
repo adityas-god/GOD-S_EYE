@@ -12,6 +12,7 @@ export async function connectDB() {
   try {
     mongoose.set('strictQuery', false);
     const conn = await mongoose.connect(uri, {
+      dbName: process.env.MONGODB_DB_NAME || 'operations_db',
       serverSelectionTimeoutMS: 5000,
     });
     isConnected = true;

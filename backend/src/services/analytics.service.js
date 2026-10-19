@@ -139,8 +139,8 @@ export function classifyDetailedSeverity(c) {
     return 'sev2_urgent';
   }
 
-  // Explicit Sev 2 High (standard Sev 2, not marked Urgent)
-  if (impact >= 20 && impact < 50) {
+  // Explicit Sev 2 High (standard Sev 2: 1% to 49% impact)
+  if (impact >= 1 && impact < 50) {
     return 'sev2_high';
   }
   for (const s of [highestSev, prio].filter(Boolean)) {

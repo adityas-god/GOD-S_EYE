@@ -14,20 +14,16 @@ dotenv.config({ path: path.resolve(__dirname, '../Frontend/.env') });
 import fs from 'fs';
 import { connectDB, isDbConnected } from './src/config/db.js';
 
-// Auto-copy user uploaded GreyOrange logo to Frontend public folder
+// Ensure Frontend public directory exists for static assets
 try {
-  const logoSource = 'C:\\Users\\aditya.s.ctr\\.gemini\\antigravity-ide\\brain\\cf935505-4d18-4c58-8714-38813cace52e\\.user_uploaded\\media_1792269238564.jpg';
   const logoDestDir = path.resolve(__dirname, '../Frontend/public');
-  if (fs.existsSync(logoSource)) {
-    if (!fs.existsSync(logoDestDir)) fs.mkdirSync(logoDestDir, { recursive: true });
-    fs.copyFileSync(logoSource, path.join(logoDestDir, 'greyorange-logo.jpg'));
-    fs.copyFileSync(logoSource, path.join(logoDestDir, 'greyorange-logo.png'));
-  }
+  if (!fs.existsSync(logoDestDir)) fs.mkdirSync(logoDestDir, { recursive: true });
 } catch {}
 import sitesRouter from './src/routes/sites.routes.js';
 import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
 import analyticsRouter from './src/routes/analytics.routes.js';
+import pulseAiRouter from './src/routes/pulse-ai.routes.js';
 
 import { getSfConfig, getSalesforceToken, getLastSalesforceError, fetchRedZoneSitesOverview } from './src/services/salesforce.service.js';
 
@@ -113,6 +109,7 @@ app.use('/api/sites', sitesRouter);
 app.use('/api/cases', casesRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/analytics', analyticsRouter);
+app.use('/api/pulse-ai', pulseAiRouter);
 
 // 404 Handler
 app.use((req, res) => {
