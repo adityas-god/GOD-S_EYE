@@ -9,27 +9,66 @@ import {
   getImpactPercentage,
   DEFAULT_ALL_SITE_NAMES,
   areSameSite,
+  findBestSiteForCase,
 } from './salesforce.service.js';
 import { getCasesAnalytics } from './analytics.service.js';
 import { defaultSites } from '../data/defaultSites.js';
 
 /**
- * Fuzzy matches a site or case against a target site query (e.g. "Apotek Hjärtat" <-> "Apotek").
+ * Fuzzy matches a site or case against a target site query (e.g. "Apotek Hjärtat" <-> "Apotek", "Sams Club ATL" <-> "samsatl").
  */
 function isMatchingSite(siteOrCase, targetSite) {
   if (!targetSite || targetSite === 'all') return true;
   if (!siteOrCase) return false;
-  const raw = typeof siteOrCase === 'string'
-    ? siteOrCase
-    : (siteOrCase.siteName || siteOrCase.Snow_Sitename__c || siteOrCase.Account_Name__c || '');
-  if (!raw) return false;
-  if (areSameSite(raw, targetSite)) return true;
-  const sA = raw.toLowerCase().trim();
-  const sB = targetSite.toLowerCase().trim();
-  if (sA === sB || sA.includes(sB) || sB.includes(sA)) return true;
-  const tokensA = sA.split(/[\s\-_,.]+/).filter(t => t.length >= 3);
-  const tokensB = sB.split(/[\s\-_,.]+/).filter(t => t.length >= 3);
-  return tokensB.some(t => sA.includes(t)) || tokensA.some(t => sB.includes(t));
+
+  if (typeof siteOrCase === 'string') {
+    if (areSameSite(siteOrCase, targetSite)) return true;
+    const sA = siteOrCase.toLowerCase().trim();
+    const sB = targetSite.toLowerCase().trim();
+    if (sA === sB || sA.includes(sB) || sB.includes(sA)) return true;
+    const tokensA = sA.split(/[\s\-_,.]+/).filter(t => t.length >= 3);
+    const tokensB = sB.split(/[\s\-_,.]+/).filter(t => t.length >= 3);
+    return tokensB.some(t => sA.includes(t)) || tokensA.some(t => sB.includes(t));
+  }
+
+  // Object (Case, Alert, Incident):
+  // 1. Direct explicit site name properties
+  const explicitSite = siteOrCase.siteName || siteOrCase.site_name || siteOrCase.site;
+  if (explicitSite) {
+    if (areSameSite(explicitSite, targetSite)) return true;
+    const sA = explicitSite.toLowerCase().trim();
+    const sB = targetSite.toLowerCase().trim();
+    if (sA === sB || sA.includes(sB) || sB.includes(sA)) return true;
+  }
+
+  // 2. Authoritative site resolution via findBestSiteForCase
+  try {
+    const bestSite = findBestSiteForCase(siteOrCase);
+    if (bestSite && areSameSite(bestSite, targetSite)) return true;
+  } catch {}
+
+  // 3. Fallback: check all location, subject, and account fields
+  const sub = String(siteOrCase.Subject || siteOrCase.subject || '');
+  const snow = String(siteOrCase.Snow_Sitename__c || '');
+  const loc = String(siteOrCase.Customer_Location__c || '');
+  const siteInput = String(siteOrCase.Site_Name_Customer_Input__c || '');
+  const acc = String(siteOrCase.Account_Name__c || siteOrCase.account_name || siteOrCase.Account?.Name || '');
+  const combined = [sub, snow, loc, siteInput, acc].filter(Boolean).join(' ').toLowerCase();
+
+  const targetLower = targetSite.toLowerCase().trim();
+  if (areSameSite(combined, targetSite)) return true;
+  if (combined.includes(targetLower)) return true;
+
+  // Specific high-frequency site keywords
+  if (targetLower.includes('sams') && (targetLower.includes('atl') || targetLower.includes('4993'))) {
+    if (/sam.*atl|samsatl|samatl|samprod|samsprod|4993/i.test(combined)) return true;
+  }
+  if (targetLower.includes('sams') && (targetLower.includes('lax') || targetLower.includes('8799'))) {
+    if (/sam.*lax|samslax|samlax|samlaxprod|8799|9476/i.test(combined)) return true;
+  }
+
+  const targetTokens = targetLower.split(/[\s\-_,.]+/).filter(t => t.length >= 3);
+  return targetTokens.length > 0 && targetTokens.every(t => combined.includes(t));
 }
 
 /**
@@ -260,7 +299,7 @@ async function executeToolCall(toolName, args = {}) {
         // Also fetch currently active open cases and live alerts from fetchAllLiveCasesAndAlerts
         const { cases: liveOpenCases = [], alerts: liveOpenAlerts = [] } = await withTimeout(
           fetchAllLiveCasesAndAlerts(false),
-          3500,
+          10000,
           { cases: [], alerts: [] }
         );
         const filteredOpenCases = targetSite && targetSite !== 'all'
@@ -359,7 +398,7 @@ async function executeToolCall(toolName, args = {}) {
       case 'get_fleet_overview': {
         const overview = await withTimeout(
           fetchLiveCasesOverview(),
-          3500,
+          10000,
           { totalSites: 80, totalOpenCases: 0, totalOpenAlerts: 0, sev1Count: 0, sev2Count: 0, downSitesCount: 0, sitesDownList: [], sites: [] }
         );
         return {
@@ -389,11 +428,39 @@ async function executeToolCall(toolName, args = {}) {
       case 'get_site_details': {
         const siteName = args.siteName || '';
         const range = args.range || '24h';
-        const res = await withTimeout(
-          fetchOpenCasesForSite({ siteName, range, forceRefresh: false }),
-          3500,
-          { site: { name: siteName }, cases: [], alerts: [], closed: [], product_lines: [] }
-        );
+        let res = null;
+        try {
+          res = await withTimeout(
+            fetchOpenCasesForSite({ siteName, range, forceRefresh: false }),
+            12000,
+            null
+          );
+        } catch (err) {
+          console.warn(`[Pulse AI get_site_details] Notice: ${err.message}`);
+        }
+
+        // Fast fallback to live cache if site-specific SOQL timed out or returned no records
+        if (!res || ((!res.cases || res.cases.length === 0) && (!res.alerts || res.alerts.length === 0) && (!res.closed || res.closed.length === 0))) {
+          try {
+            const { cases: liveCases = [], alerts: liveAlerts = [], closed: liveClosed = [] } = await fetchAllLiveCasesAndAlerts(false);
+            const fallbackCases = liveCases.filter(c => isMatchingSite(c, siteName));
+            const fallbackAlerts = liveAlerts.filter(a => isMatchingSite(a, siteName));
+            const fallbackClosed = liveClosed.filter(c => isMatchingSite(c, siteName));
+            if (fallbackCases.length > 0 || fallbackAlerts.length > 0 || fallbackClosed.length > 0) {
+              res = {
+                site: { name: siteName },
+                cases: fallbackCases,
+                alerts: fallbackAlerts,
+                closed: fallbackClosed,
+                product_lines: (res && res.product_lines && res.product_lines.length > 0) ? res.product_lines : ['RMS', 'RIL'],
+              };
+            }
+          } catch {}
+        }
+
+        if (!res) {
+          res = { site: { name: siteName }, cases: [], alerts: [], closed: [], product_lines: [] };
+        }
         
         const allCases = res.cases || [];
         // Prioritize open cases: Sev 1 first, Sev 2 Urgent second, Sev 2 High third, Sev 3, Sev 4
@@ -474,7 +541,7 @@ async function executeToolCall(toolName, args = {}) {
       case 'get_red_zone_sites': {
         const rz = await withTimeout(
           fetchRedZoneSitesOverview({ forceRefresh: false }),
-          3500,
+          10000,
           { totalRedZoneSites: 0, activeBreachesCount: 0, exitPendingCount: 0, redZoneSites: [] }
         );
         const formatSevBadge = (detailedSev) => {
@@ -544,11 +611,11 @@ async function executeToolCall(toolName, args = {}) {
         const siteName = args.siteName || 'all';
         const range = args.range || '7d';
 
-        // 2.5s fast timeout wrapper: avoids hanging the agent if Salesforce GROUP BY SOQL is slow
+        // 8s timeout wrapper: allows Salesforce GROUP BY SOQL to complete without hanging
         let analytics = null;
         try {
           const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Alert analytics SOQL timeout (2.5s)')), 2500)
+            setTimeout(() => reject(new Error('Alert analytics SOQL timeout (8s)')), 8000)
           );
           analytics = await Promise.race([
             getAlertAnalyticsForSite({ siteName, range, forceRefresh: false }),
@@ -556,17 +623,21 @@ async function executeToolCall(toolName, args = {}) {
           ]);
         } catch (err) {
           console.warn(`[Pulse AI get_site_alert_analytics] Notice: ${err.message}. Using fast live alerts telemetry fallback.`);
-          const { alerts: liveOpenAlerts = [] } = await fetchAllLiveCasesAndAlerts(false);
+          const { alerts: liveOpenAlerts = [], closedAlerts: liveClosedAlerts = [] } = await fetchAllLiveCasesAndAlerts(false);
           const siteAlerts = siteName && siteName !== 'all'
             ? liveOpenAlerts.filter(a => isMatchingSite(a, siteName))
             : liveOpenAlerts;
+          const siteClosedAlerts = siteName && siteName !== 'all'
+            ? liveClosedAlerts.filter(a => isMatchingSite(a, siteName))
+            : liveClosedAlerts;
+          const totalAlertsCount = siteAlerts.length + siteClosedAlerts.length;
           analytics = {
             siteName,
             timeframe: range,
             summary: {
-              totalAlerts: siteAlerts.length,
+              totalAlerts: totalAlertsCount,
               openAlerts: siteAlerts.length,
-              closedAlerts: 0,
+              closedAlerts: siteClosedAlerts.length,
               avgDurationMinutes: 18,
               mttrFormatted: '18m',
               resolutionSlaMetPercent: 96.0,

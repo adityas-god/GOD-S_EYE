@@ -2680,13 +2680,13 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
       if (siteWhere) {
         let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled')";
-        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1)";
-        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2)";
-        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7)";
-        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15)";
-        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30)";
-        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60)";
-        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90)";
+        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1 OR CreatedDate = TODAY)";
+        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2 OR CreatedDate = TODAY)";
+        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7 OR CreatedDate = TODAY)";
+        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15 OR CreatedDate = TODAY)";
+        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30 OR CreatedDate = TODAY)";
+        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60 OR CreatedDate = TODAY)";
+        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90 OR CreatedDate = TODAY)";
         else if (normRange === 'custom' && startDate && endDate) {
           const sIso = new Date(startDate).toISOString();
           const eIso = new Date(endDate).toISOString();
@@ -2708,8 +2708,12 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
         const seenIds = new Set(matched.map(c => c.Id));
         for (const ec of extraCases) {
           if (ec && ec.Id && !seenIds.has(ec.Id)) {
-            seenIds.add(ec.Id);
-            matched.push(mapRecord(ec));
+            const mapped = mapRecord(ec);
+            const best = findBestSiteForCase(mapped, compiledSites);
+            if (!best || areSameSite(best, effectiveSiteName, compiledSites)) {
+              seenIds.add(ec.Id);
+              matched.push(mapped);
+            }
           }
         }
       }
