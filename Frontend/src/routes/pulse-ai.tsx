@@ -903,7 +903,7 @@ export function PulseAIPage() {
             background: '#0e1117',
             display: 'block',
           }}
-          sandbox="allow-scripts allow-same-origin allow-modals"
+          sandbox="allow-scripts allow-modals"
           title={title}
         />
       </div>
@@ -2150,7 +2150,7 @@ export function PulseAIPage() {
                 border: 'none',
                 background: '#0e1117',
               }}
-              sandbox="allow-scripts allow-same-origin allow-modals"
+              sandbox="allow-scripts allow-modals"
               title={fullscreenArtifact.title}
             />
           </div>

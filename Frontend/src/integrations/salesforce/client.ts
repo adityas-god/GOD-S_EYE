@@ -2343,7 +2343,7 @@ export const sfFetchAlertAnalytics = async (
     }
     if (forceRefresh) params.set('force', 'true');
     const res = await fetch(`/api/cases/alerts/analytics?${params.toString()}`, {
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(45000),
     });
     if (res.ok) {
       const data = await res.json();
