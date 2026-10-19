@@ -1438,11 +1438,29 @@ export function detectSitesFromQuery(input) {
   if (normInput.includes('h&m') || normInput.includes('hnm') || normInput.includes('ajax') || (normInput.includes('canada') && !normInput.includes('walmart'))) {
     detected.add('H&M Canada Ajax');
   }
-  if (normInput.includes('sams') || normInput.includes('4993') || (normInput.includes('atl') && !normInput.includes('atlantic'))) {
-    detected.add(normInput.includes('lax') ? 'Sams Club LAX' : 'Sams Club ATL');
+  if (normInput.includes('sams') || normInput.includes('4993')) {
+    if (normInput.includes('lax') && !normInput.includes('atl')) {
+      detected.add('Sams Club LAX');
+    } else if (normInput.includes('atl') && !normInput.includes('lax')) {
+      detected.add('Sams Club ATL');
+    } else if (!normInput.includes('lax') && !normInput.includes('atl')) {
+      detected.add('Sams Club ATL');
+    } else {
+      detected.add('Sams Club ATL');
+      detected.add('Sams Club LAX');
+    }
   }
-  if (normInput.includes('walmart') || normInput.includes('mexico') || normInput.includes('wal-mart')) {
-    detected.add('Walmart Mexico');
+  if (normInput.includes('walmart') || normInput.includes('wal-mart')) {
+    if (normInput.includes('canada') && !normInput.includes('mexico')) {
+      detected.add('Walmart-Canada');
+    } else if (normInput.includes('mexico') && !normInput.includes('canada')) {
+      detected.add('Walmart Mexico');
+    } else if (normInput.includes('mexico') && normInput.includes('canada')) {
+      detected.add('Walmart Mexico');
+      detected.add('Walmart-Canada');
+    } else {
+      detected.add('Walmart Mexico');
+    }
   }
   if (normInput.includes('gxo')) {
     detected.add('GXO-H&M Prod');
@@ -1475,8 +1493,8 @@ export function detectSitesFromQuery(input) {
       detected.add(siteName);
       continue;
     }
-    const tokens = normSite.split(/[\s\-_,.]+/).filter(t => t.length >= 4 && !['club', 'prod', 'live', 'site', 'whse', 'warehouse', 'canada', 'north', 'south', 'east', 'west', 'dc01', 'dc02'].includes(t));
-    if (tokens.length > 0 && tokens.every(t => normInput.includes(t))) {
+    const tokens = normSite.split(/[\s\-_,.]+/).filter(t => t.length >= 3 && !['club', 'prod', 'live', 'site', 'whse', 'warehouse', 'the', 'and', 'for', 'dc01', 'dc02'].includes(t));
+    if (tokens.length >= 2 && tokens.every(t => normInput.includes(t))) {
       detected.add(siteName);
     }
   }
