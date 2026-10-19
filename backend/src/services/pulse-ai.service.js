@@ -82,7 +82,7 @@ function getGeminiApiKey() {
 const TOOLS_DEFINITIONS = [
   {
     name: 'get_fleet_incidents',
-    description: 'Retrieves live Salesforce incident cases and operations telemetry across all customer sites for any timeframe (e.g. "today", "24h", "48h", "7d", "15d", "1m", "all"). Returns verified Sev 1, Sev 2 Urgent, Sev 2 High, Sev 3, Sev 4 incident counts, case numbers, subjects, sites, statuses, and downtime. ALWAYS use this tool first when asked about Sev 1 / Sev 2 / Sev 3 / Sev 4 cases, fleet incidents, or recent downtime.',
+    description: 'Retrieves live Salesforce incident cases and operations telemetry across all customer sites for any timeframe (e.g. "today", "24h", "48h", "7d", "15d", "1m", "all"). Returns active Sev 1 Urgent (100% impact), Sev 2 Urgent (50-99% impact), Sev 2 High (1-49% impact), Sev 3, and Sev 4 incident cases, case numbers, subjects, sites, statuses, and downtime. Use this tool when asked about support cases, incident tickets, Sev 1 / Sev 2 urgent outages, or downtime.',
     parameters: {
       type: 'object',
       properties: {
@@ -129,7 +129,7 @@ const TOOLS_DEFINITIONS = [
   },
   {
     name: 'get_red_zone_sites',
-    description: 'Retrieves all customer sites currently qualifying for RED Zone reliability audit (based on >=3 Sev-1s or >=5 Sev-2s in 7 days, or MTBF < 36h in 14 days), with breach reasons and active qualifying incidents.',
+    description: 'Retrieves all customer sites currently in the RED Zone reliability audit or breaching reliability thresholds. Returns active breaches, audited uptime percentage (< 99.0% threshold), 7-day Sev-1 (>=3) / Sev-2 (>=5) incident counts, 14-day MTBF (< 36h), 21-day exit probation status, and qualifying incident cases. MANDATORY tool to call whenever the user asks for breaches, RED zone sites, reliability breaches, or an alert/breach report.',
     parameters: {
       type: 'object',
       properties: {},
@@ -137,7 +137,7 @@ const TOOLS_DEFINITIONS = [
   },
   {
     name: 'get_site_alert_analytics',
-    description: 'Fetches historical alert analytics, time-series distribution, MTTR, SLA compliance rates, auto-resolve rates, and top failure signatures for a site or all sites.',
+    description: 'Fetches telemetry alert analytics, Opsgenie/Prometheus alarm distributions, MTTR, SLA compliance rates, auto-resolve percentages, and top automated alert signatures (DiskUtilHigh, BotsAvailableLow, BotsAvgPowerLow, MemUtilHigh) for a specific site or fleet-wide ("all"). MANDATORY tool to call whenever the user asks for an alert report, telemetry alarms, alert analytics, or MTTR.',
     parameters: {
       type: 'object',
       properties: {
@@ -387,24 +387,64 @@ async function executeToolCall(toolName, args = {}) {
 
       case 'get_red_zone_sites': {
         const rz = await fetchRedZoneSitesOverview({ forceRefresh: false });
+        const formatSevBadge = (detailedSev) => {
+          if (detailedSev === 'sev1') return '[SEV 1 URGENT]';
+          if (detailedSev === 'sev2' || detailedSev === 'sev2_urgent') return '[SEV 2 URGENT]';
+          if (detailedSev === 'sev2_high') return '[SEV 2 HIGH]';
+          if (detailedSev === 'sev4') return '[SEV 4 SERVICE REQUEST]';
+          return '[SEV 3 INCIDENT]';
+        };
+
         return {
-          totalRedZoneSites: rz.totalRedZoneSites,
-          activeBreachesCount: rz.activeBreachesCount,
-          exitPendingCount: rz.exitPendingCount,
+          totalRedZoneSites: rz.totalRedZoneSites || 0,
+          activeBreachesCount: rz.activeBreachesCount || 0,
+          exitPendingCount: rz.exitPendingCount || 0,
+          criteriaRules: {
+            criteria1: '>= 3 Sev-1s OR >= 5 Sev-2s in rolling 7 days',
+            criteria2: 'Audited Uptime < 99.0% (tracked via Cloud Sheet / Week-42 uptime data)',
+            criteria3: 'MTBF < 36 hours in rolling 14 days',
+            exitCriteria: '21 continuous days (3 weeks) with 0 criteria breaches',
+          },
           sites: (rz.redZoneSites || []).map(s => ({
             siteName: s.siteName,
-            status: s.status,
-            isCurrentBreach: s.isCurrentBreach,
-            sev1_7d: s.criteria1?.sev1Count7d || 0,
-            sev2_7d: s.criteria1?.sev2Count7d || 0,
-            mtbfHours: s.criteria3?.mtbfHours,
+            status: s.status, // 'ACTIVE_BREACH' | 'EXIT_PENDING' | 'HEALTHY'
+            isCurrentBreach: Boolean(s.isCurrentBreach),
             reasons: s.reasons || [],
-            recentIncidents: (s.qualifyingIncidents || []).slice(0, 5).map(i => ({
+            criteria1: {
+              breached: Boolean(s.criteria1?.met),
+              sev1Count7d: s.criteria1?.sev1Count7d || 0,
+              sev2Count7d: s.criteria1?.sev2Count7d || 0,
+              threshold: '>=3 Sev-1 OR >=5 Sev-2 in 7d',
+            },
+            criteria2_uptime: {
+              breached: Boolean(s.criteria2?.met),
+              uptimePercentage: s.criteria2?.uptimePercentage !== null && s.criteria2?.uptimePercentage !== undefined ? `${s.criteria2.uptimePercentage}%` : 'N/A',
+              rawVal: s.criteria2?.rawVal || null,
+              threshold: '< 99.0%',
+              source: s.criteria2?.source || 'Week-42 Uptime Sheet',
+            },
+            criteria3_mtbf: {
+              breached: Boolean(s.criteria3?.met),
+              mtbfHours: s.criteria3?.mtbfHours !== null && s.criteria3?.mtbfHours !== undefined ? `${s.criteria3.mtbfHours}h` : 'N/A',
+              incidentCount14d: s.criteria3?.incidentCount14d || 0,
+              threshold: '< 36h in 14d',
+            },
+            exitProbation: {
+              daysSinceBreach: s.daysSinceBreach ?? 21,
+              daysRemainingToExit: s.daysRemainingToExit ?? 0,
+              isExitPending: s.status === 'EXIT_PENDING',
+              exitRule: '21 clean consecutive days required to exit RED zone',
+            },
+            isSheetDesignated: Boolean(s.isSheetDesignated),
+            sheetReason: s.sheetReason || null,
+            recentQualifyingIncidents: (s.qualifyingIncidents || []).slice(0, 8).map(i => ({
               caseNumber: i.caseNumber,
               subject: i.subject,
-              severity: i.severity,
+              severity: formatSevBadge(i.severity),
               status: i.status,
               createdDate: i.createdDate,
+              impactPercentage: i.impactPercentage,
+              durationHours: i.durationHours,
             })),
           })),
         };
@@ -519,13 +559,18 @@ CORE OPERATIONAL MANDATES:
          2) 'Sams Club LAX' (California DC): Salesforce Account ID: '001OX00000qZLaxYAG'. Account Name: 'Sam\'s Club(LAX)-California'. Host aliases: 'samslax', 'samlax'. Site codes: '8799', '9476'.
        - When querying Salesforce SOQL for Sams Club ATL: ALWAYS query with \`(Account_Name__c LIKE '%Sam%ATL%' OR AccountId = '001OX00000qZLbBYAW' OR Subject LIKE '%samsatl%' OR Subject LIKE '%samprod%' OR Subject LIKE '%samatl%')\` so that all open and historical cases are retrieved!
        - If asked about Sams Club ATL cases or status, always invoke get_site_details or execute_salesforce_soql with this exact clause.
-     * Essilor Luxottica, Ashley Furniture, Coupang, and other enterprise fulfillment centers.
+     * Essilor Luxottica, Ashley Furniture, Coupang, DHL Figs, Active Ants, Apotek Hjärtat, and other enterprise fulfillment centers.
    - GreyOrange Product Ecosystem:
      * RA: Ranger Assist (collaborative autonomous mobile picking robots).
      * RMS: Ranger Mobile System / Butler (goods-to-person mobile storage racks and automated bots).
      * RIL: Ranger Intralogistics (high-speed sortation conveyors, cross-belt systems).
      * PPS: Pick-Put Station.
      * TTP: Take-to-Pick station.
+
+   - Two Distinct Telemetry Streams: Cases vs Alerts:
+     * Stream 1 (Salesforce Cases): Support/Incident tickets logged by humans or automated ticketing. STRICT End Time Rule: If End_Time__c or ClosedDate is populated, the case is RESOLVED/CLOSED, not live open.
+     * Stream 2 (Telemetry Alerts): Real-time machine alarms from Opsgenie/Prometheus (DiskUtilHigh, BotsAvailableLow, BotsAvgPowerLow, MemUtilHigh). Auto-resolves when telemetry metrics recover.
+
    - Incident Severity Definitions (STRICT PERCENTAGE LOGIC MANDATE):
      Every incident in Sitepulse is categorized strictly according to its operational impact percentage:
      * 100% Impact: [SEV 1 URGENT]
@@ -546,10 +591,15 @@ CORE OPERATIONAL MANDATES:
      * Below 1% (0% or null Impact / Requests): [SEV 4 SERVICE REQUEST]
        - Service requests, queries, analysis requests, feature requests, or scheduled configuration changes.
        - Label strictly as: [SEV 4 SERVICE REQUEST]
-   - RED Zone Reliability Criteria:
-     * Criteria 1: >= 3 Sev-1 incidents OR >= 5 Sev-2 incidents in a rolling 7-day period.
-     * Criteria 2: Continuous downtime breach (>4 hours continuous Sev-1 or >8 hours continuous Sev-2).
-     * Criteria 3: Mean Time Between Failures (MTBF) < 36 hours in a rolling 14-day window.
+
+   - What Constitutes an Active Breach (3 Categories):
+     * Category 1 (Severity & SLA Breaches): Active [SEV 1 URGENT] (100% impact) and [SEV 2 URGENT] (50-99% impact) cases, or any SLA resolution breach.
+     * Category 2 (RED Zone Reliability Breaches):
+       - Criteria 1: >= 3 Sev-1 incidents OR >= 5 Sev-2 incidents in a rolling 7-day period.
+       - Criteria 2: Audited Uptime drops below 99.0% (< 99.0% threshold tracked in the Cloud Sheet / Week-42 uptime audit).
+       - Criteria 3: Mean Time Between Failures (MTBF) drops below 36 hours in a rolling 14-day window.
+       - Exit Criteria: Site must maintain 21 consecutive clean days (3 weeks) with 0 criteria breaches to exit RED Zone (status: EXIT_PENDING until 21 days pass).
+     * Category 3 (Monitoring Telemetry Alarms): Automated Opsgenie/Prometheus alarms currently firing (DiskUtilHigh, BotsAvailableLow, BotsAvgPowerLow, MemUtilHigh).
 
 3. ZERO LOOSE RAW ASTERISKS:
    - Executive presentation standard: NEVER output messy, unrendered loose asterisks (like *00297229* or *[SEV 1 URGENT]* or *The Ranger 30 collided...*).
@@ -560,22 +610,37 @@ CORE OPERATIONAL MANDATES:
      * For lists, use simple bullet points (- ) without wrapping items in italic asterisks.
 
 4. INTERACTIVE HTML DASHBOARD ARTIFACTS (CRITICAL):
-   - Whenever asked to compare sites (e.g. H&M Canada vs Walmart Mexico), provide an executive incident summary, audit RED zone risks, or deliver a fleet briefing:
+   - Whenever asked to compare sites (e.g. H&M Canada vs Walmart Mexico), provide an alert/breach report, audit RED zone risks, or deliver a fleet briefing:
      YOU MUST GENERATE AN INTERACTIVE EXECUTIVE DASHBOARD ARTIFACT ENCLOSED IN A SINGLE HTML CODE BLOCK (triple-backtick html ... triple-backtick)!
    - The interactive HTML dashboard must match Sitepulse's dark slate (#11141b / #181d27) visual aesthetic:
      * Self-contained, responsive HTML with inline CSS and interactive JavaScript.
      * Top Executive Header: 'SITEPULSE EXECUTIVE BRIEFING', Site Badges, Real-time UTC Timestamp, Live Status Indicator.
-     * KPI Stat Cards: 4 sleek cards with large metrics (Active Sev 1 Urgent, Active Sev 2 Urgent, Active Sev 2 High, Total Cases, Fleet Reliability % or Status).
-     * Side-by-Side Comparison Matrix with comparative visual progress bars or metric deltas.
-     * Interactive Filter Tabs: Buttons for [All Cases], [Sev 1 Urgent], [Sev 2 Urgent], [Sev 2 High], [Active], [Resolved] that instantly filter table rows via JavaScript!
+     * KPI Stat Cards: 4 sleek cards with large metrics (Active Breaches, Active Sev 1 Urgent, Active Sev 2 Urgent, Fleet Reliability % or Uptime).
+     * Side-by-Side Comparison Matrix or RED Zone Breach Matrix with visual progress bars.
+     * Interactive Filter Tabs: Buttons for [All], [Sev 1 Urgent], [Sev 2 Urgent], [Sev 2 High], [Active], [Resolved] that instantly filter table rows via JavaScript!
      * Incident Breakdown Table: Dark zebra styling, hover row highlighting, glowing pill badges (Crimson for Sev 1 Urgent, Bright Orange for Sev 2 Urgent, Amber for Sev 2 High, Blue for Sev 3 Incident, Slate for Sev 4 Service Request, Green for Solved, Cyan for In-Progress), monospace case numbers.
      * Executive Takeaways & SRE Recommendations: 3-4 bulleted strategic insights and recommended engineering actions for C-suite leadership.
    - In addition to the HTML dashboard artifact, provide a crisp executive summary in clean text (without loose asterisks) either before or after the artifact.
 
-5. TOOL RETRIEVAL POLICY:
-   - When asked about fleet incidents, urgent cases, or specific timeframes, ALWAYS invoke get_fleet_incidents.
-   - When comparing specific sites, call get_site_details for each site, or run a safe SELECT SOQL query via execute_salesforce_soql.
-   - Synthesize all retrieved telemetry immediately into the interactive dashboard and executive report.
+5. AGENTIC TOOL ROUTING PLAYBOOK (MANDATORY):
+   - When asked for "Alert report with all active breaches" / "Show all breaches" / "RED Zone audit":
+     1) Step 1: Call get_red_zone_sites to fetch all sites breaching Criteria 1, Criteria 2 (uptime < 99%), or Criteria 3 (MTBF < 36h) and exit probation status.
+     2) Step 2: Call get_fleet_incidents (timeframe="24h" or "7d") to retrieve active [SEV 1 URGENT] and [SEV 2 URGENT] cases across the fleet.
+     3) Step 3: Call get_site_alert_analytics (siteName="all") to fetch telemetry alarm analytics, MTTR, and top failure signatures.
+     4) Synthesize all 3 sources into an executive report with:
+        a) Executive Breach Summary
+        b) Active Severity & SLA Breaches Table
+        c) RED Zone Reliability Breaches Matrix (Site, Criteria 1/2/3 breakdown, audited Uptime %, MTBF hours, exit days remaining)
+        d) Top Telemetry Alarm Signatures (DiskUtilHigh, BotsAvailableLow, etc.)
+        e) Self-contained Interactive HTML Dashboard Artifact
+        f) Actionable SRE Remediation Steps.
+   - When asked to compare specific sites (e.g. Sams ATL vs H&M Canada):
+     1) Call get_site_details for each site.
+     2) Synthesize a side-by-side KPI comparison and an Interactive HTML Dashboard Artifact.
+   - When asked about fleet incidents or recent downtime:
+     Call get_fleet_incidents with the requested timeframe ("today", "24h", "48h", "7d", "all").
+   - When asked to execute a custom SOQL query:
+     Call execute_salesforce_soql. Enforce strict read-only SELECT queries.
 `;
 
 /**
@@ -1006,6 +1071,77 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
       } else {
         fallbackText += `No open cases found for ${betterSite.siteName}.\n`;
       }
+
+    } else if (lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active') || lower.includes('all')))) {
+      // Autonomous Breach & Alert Report Workflow
+      const [rzRes, incRes, alertRes] = await Promise.all([
+        executeToolCall('get_red_zone_sites', {}),
+        executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' }),
+        executeToolCall('get_site_alert_analytics', { siteName: 'all', range: targetRange }),
+      ]);
+      fallbackTools.push({ tool: 'get_red_zone_sites', args: {} });
+      fallbackTools.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
+      fallbackTools.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: targetRange } });
+
+      const activeSev1Cases = incRes.activeFleetOpenSev1Cases || [];
+      const activeSev2UrgentCases = incRes.activeFleetOpenSev2UrgentCases || [];
+      const rzSites = rzRes.sites || [];
+      const activeRzBreaches = rzSites.filter(s => s.isCurrentBreach);
+      const exitPendingSites = rzSites.filter(s => s.status === 'EXIT_PENDING');
+
+      fallbackText = `### Executive Operational Breach & Alert Report (Timeframe: ${targetRange})\n\n`;
+      fallbackText += `> **EXECUTIVE AUDIT SUMMARY**: SRE Fleet Surveillance identified **${activeRzBreaches.length} sites in ACTIVE RED Zone breach**, **${activeSev1Cases.length} active [SEV 1 URGENT] cases (100% impact)**, **${activeSev2UrgentCases.length} active [SEV 2 URGENT] cases (50-99% impact)**, and **${alertRes.totalAlerts || 0} telemetry machine alarms** across 80+ customer fulfillment centers.\n\n`;
+
+      // 1. Severity & SLA Breaches
+      fallbackText += `#### 1. Active Severity Outage & SLA Breaches\n\n`;
+      if (activeSev1Cases.length > 0 || activeSev2UrgentCases.length > 0) {
+        fallbackText += `| Case Number | Severity | Impact % | Site | Status | Subject | Created Date |\n|---|---|---|---|---|---|---|\n`;
+        for (const c of [...activeSev1Cases, ...activeSev2UrgentCases]) {
+          fallbackText += `| ${cleanCaseId(c.caseNumber)} | ${c.severity} | ${c.impactPercentage}% | ${c.siteName} | Status: ${c.status} | ${c.subject} | ${c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A'} |\n`;
+        }
+        fallbackText += `\n`;
+      } else {
+        fallbackText += `Status: Zero active [SEV 1 URGENT] or [SEV 2 URGENT] outages currently active across the fleet.\n\n`;
+      }
+
+      // 2. RED Zone Reliability Breaches Matrix
+      fallbackText += `#### 2. RED Zone Reliability Breaches Matrix\n\n`;
+      fallbackText += `*Criteria Rules*: Criteria 1 (>=3 Sev-1 OR >=5 Sev-2 in 7d), Criteria 2 (Audited Uptime < 99.0%), Criteria 3 (MTBF < 36h in 14d). *Exit Rule*: 21 continuous days with 0 criteria breaches.\n\n`;
+      if (rzSites.length > 0) {
+        fallbackText += `| Site Name | Status | Audited Uptime (Crit 2) | 7d Incidents (Crit 1) | 14d MTBF (Crit 3) | Exit Probation | Primary Breach Reason |\n|---|---|---|---|---|---|---|\n`;
+        for (const s of rzSites) {
+          const statusBadge = s.status === 'ACTIVE_BREACH' ? '🚨 ACTIVE BREACH' : s.status === 'EXIT_PENDING' ? '⏳ EXIT PENDING' : '✅ HEALTHY';
+          const uptimeStr = s.criteria2_uptime?.uptimePercentage || 'N/A';
+          const incStr = `Sev-1: ${s.criteria1?.sev1Count7d || 0}, Sev-2: ${s.criteria1?.sev2Count7d || 0}`;
+          const mtbfStr = s.criteria3_mtbf?.mtbfHours || 'N/A';
+          const exitStr = s.status === 'EXIT_PENDING' ? `${s.exitProbation?.daysRemainingToExit ?? 0} days remaining` : (s.status === 'ACTIVE_BREACH' ? 'Breached (0/21d)' : 'Clean');
+          const reasonStr = (s.reasons || [])[0] || 'Reliability audit qualification';
+          fallbackText += `| ${s.siteName} | ${statusBadge} | ${uptimeStr} | ${incStr} | ${mtbfStr} | ${exitStr} | ${reasonStr} |\n`;
+        }
+        fallbackText += `\n`;
+      } else {
+        fallbackText += `No sites currently qualify for RED Zone reliability breach.\n\n`;
+      }
+
+      // 3. Telemetry Machine Alarms
+      fallbackText += `#### 3. Monitoring Telemetry Alarms & Fleet Stability\n\n`;
+      fallbackText += `- **Total Telemetry Alarms**: ${alertRes.totalAlerts || 0} (${alertRes.openAlerts || 0} open, ${alertRes.closedAlerts || 0} closed)\n`;
+      fallbackText += `- **Mean Time to Resolve (MTTR)**: ${alertRes.mttrFormatted || 'N/A'}\n`;
+      fallbackText += `- **Alert SLA Compliance**: ${alertRes.resolutionSlaMetPercent || 100}%\n`;
+      fallbackText += `- **Auto-Resolution Rate**: ${alertRes.autoResolvedPercent || 0}%\n\n`;
+
+      if ((alertRes.topSignatures || []).length > 0) {
+        fallbackText += `**Top Alarm Failure Signatures**:\n`;
+        for (const sig of alertRes.topSignatures.slice(0, 5)) {
+          fallbackText += `- **${sig.name || sig.signature}**: ${sig.count || sig.totalCount} occurrences (${sig.sitesAffected || 'Fleet-wide'})\n`;
+        }
+        fallbackText += `\n`;
+      }
+
+      fallbackText += `#### 4. Actionable SRE Remediation Steps\n\n`;
+      fallbackText += `- **Immediate Action**: Swarm engineering squads on active RED Zone sites failing audited uptime (< 99.0%) and high incident frequency.\n`;
+      fallbackText += `- **Telemetry Auto-Remediation**: Investigate disk utilization threshold alarms (DiskUtilHigh) on core host platforms.\n`;
+      fallbackText += `- **Exit Probation Verification**: Maintain strict 21-day observation cycles before clearing probation flags.\n`;
 
     } else if (lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('hour') || lower.includes('today')) {
       const incRes = await executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' });
