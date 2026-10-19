@@ -5,6 +5,7 @@ import {
   getOrCreateSession,
   clearSession,
   getSessionMessages,
+  getLastPulseAiStatus,
 } from '../services/pulse-ai.service.js';
 
 const router = Router();
@@ -122,6 +123,17 @@ router.get('/session', (req, res) => {
     success: true,
     active: Boolean(sessionId && messages),
     messagesCount: messages.length,
+  });
+});
+
+/**
+ * GET /api/pulse-ai/status
+ * Returns operational provider status (OpenRouter / Gemini / active model).
+ */
+router.get('/status', (req, res) => {
+  return res.json({
+    success: true,
+    status: getLastPulseAiStatus(),
   });
 });
 

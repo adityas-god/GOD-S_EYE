@@ -923,6 +923,7 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
     mostBreachedSites,
     stableSites,
     topCriticalTickets,
+    incidents,
     subsystemBreakdown,
     reoccurringPatterns,
     timestamp: new Date().toISOString(),

@@ -65,11 +65,17 @@ export function getSessionMessages(sessionId) {
 let _lastPulseAiError = null;
 
 export function getLastPulseAiStatus() {
-  const key = process.env.GEMINI_API_KEY || '';
+  const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
+  const provider = openRouterKey ? 'OpenRouter' : (geminiKey ? 'Google Gemini' : 'None');
+  const activeKey = openRouterKey || geminiKey;
   return {
-    apiKeyConfigured: Boolean(key && key.trim().length > 0),
-    apiKeyMasked: key && key.trim().length > 0 ? `${key.trim().slice(0, 6)}...${key.trim().slice(-4)}` : 'NOT_SET',
-    preferredModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    provider,
+    openRouterConfigured: Boolean(openRouterKey),
+    geminiConfigured: Boolean(geminiKey),
+    apiKeyConfigured: Boolean(activeKey),
+    apiKeyMasked: activeKey ? `${activeKey.slice(0, 7)}...${activeKey.slice(-4)}` : 'NOT_SET',
+    preferredModel: openRouterKey ? (process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free') : (process.env.GEMINI_MODEL || 'gemini-3.8-flash'),
     lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
   };
 }
@@ -155,13 +161,13 @@ const TOOLS_DEFINITIONS = [
   },
   {
     name: 'execute_salesforce_soql',
-    description: 'Executes a direct, safe read-only SELECT query against Salesforce Cases. Valid fields on Case: Id, CaseNumber, Subject, Status, Highest_Severity__c, Account_Name__c, Snow_Sitename__c, CreatedDate, ClosedDate, Description, Owner.Name. For Sev 1 use: Highest_Severity__c IN (\'1 - Urgent\', \'Sev 1\'). For Sev 2 use: Highest_Severity__c IN (\'2 - High\', \'Sev 2\'). For last 24h use: (CreatedDate = LAST_N_DAYS:1 OR CreatedDate = TODAY).',
+    description: 'Executes a direct, safe read-only SELECT query against Salesforce Cases. NOTE: Prefer get_fleet_incidents or get_site_details which apply normalized impact percentages and deduplication. If running SOQL directly, valid fields on Case are: Id, CaseNumber, Subject, Status, Highest_Severity__c, Priority, Impact_Percentage__c, Account_Name__c, Snow_Sitename__c, CreatedDate, ClosedDate, Description, Owner.Name. Avoid strict Highest_Severity__c equality checks since severity is often determined by Impact_Percentage__c or Subject.',
     parameters: {
       type: 'object',
       properties: {
         query: {
           type: 'string',
-          description: 'The SOQL SELECT query. E.g., "SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Account_Name__c, Snow_Sitename__c, CreatedDate FROM Case WHERE Highest_Severity__c IN (\'1 - Urgent\', \'Sev 1\') AND (CreatedDate = LAST_N_DAYS:1 OR CreatedDate = TODAY) ORDER BY CreatedDate DESC LIMIT 50"',
+          description: 'The SOQL SELECT query. E.g., "SELECT Id, CaseNumber, Subject, Status, Highest_Severity__c, Priority, Impact_Percentage__c, Account_Name__c, Snow_Sitename__c, CreatedDate FROM Case WHERE (CreatedDate = LAST_N_DAYS:1 OR CreatedDate = TODAY) AND (Type = null OR (Type != \'Alert\' AND Type != \'Problem\')) ORDER BY CreatedDate DESC LIMIT 50"',
         },
       },
       required: ['query'],
@@ -188,7 +194,7 @@ async function executeToolCall(toolName, args = {}) {
 
         console.log(`[Pulse AI Incidents] Fetching incidents for timeframe=${tf}, severity=${targetSev}, site=${targetSite || 'all'}`);
         const analytics = await getCasesAnalytics({ timeframe: tf, forceRefresh: false });
-        let incidents = analytics.incidents || [];
+        let incidents = analytics.incidents || analytics.topCriticalTickets || [];
 
         if (targetSev !== 'all') {
           if (targetSev === 'sev1') {
@@ -210,15 +216,15 @@ async function executeToolCall(toolName, args = {}) {
           incidents = incidents.filter(i => String(i.siteName || '').toLowerCase().includes(targetSite));
         }
 
-        // Also fetch currently active open cases from fetchAllLiveCasesAndAlerts
-        const { cases: liveOpenCases = [] } = await fetchAllLiveCasesAndAlerts(false);
+        // Also fetch currently active open cases and live alerts from fetchAllLiveCasesAndAlerts
+        const { cases: liveOpenCases = [], alerts: liveOpenAlerts = [] } = await fetchAllLiveCasesAndAlerts(false);
         const activeSev1 = liveOpenCases.filter(c => detectSeverity(c) === 'sev1');
         const activeSev2Urgent = liveOpenCases.filter(c => detectSeverity(c) === 'sev2_urgent');
         const activeSev2High = liveOpenCases.filter(c => detectSeverity(c) === 'sev2_high');
         const activeSev3 = liveOpenCases.filter(c => detectSeverity(c) === 'sev3');
         const activeSev4 = liveOpenCases.filter(c => detectSeverity(c) === 'sev4');
 
-        console.log(`[Pulse AI Incidents] Found ${incidents.length} timeframe incidents, ${activeSev1.length} active Sev1, ${activeSev2Urgent.length} active Sev2 Urgent, ${activeSev2High.length} active Sev2 High`);
+        console.log(`[Pulse AI Incidents] Found ${incidents.length} timeframe incidents, ${activeSev1.length} active Sev1, ${activeSev2Urgent.length} active Sev2 Urgent, ${activeSev2High.length} active Sev2 High, ${liveOpenAlerts.length} live alerts`);
 
         const formatSevBadge = (detailedSev) => {
           if (detailedSev === 'sev1') return '[SEV 1 URGENT]';
@@ -237,6 +243,7 @@ async function executeToolCall(toolName, args = {}) {
           activeFleetOpenSev2HighCount: activeSev2High.length,
           activeFleetOpenSev3Count: activeSev3.length,
           activeFleetOpenSev4Count: activeSev4.length,
+          activeFleetLiveAlertsCount: liveOpenAlerts.length,
           activeFleetOpenSev1Cases: activeSev1.slice(0, 15).map(c => ({
             caseNumber: c.CaseNumber || c.case_number,
             subject: c.Subject,
@@ -263,6 +270,14 @@ async function executeToolCall(toolName, args = {}) {
             impactPercentage: c.Impact_Percentage__c || getImpactPercentage(c) || '1-49%',
             status: c.Status,
             createdDate: c.CreatedDate,
+          })),
+          activeLiveAlertsSample: liveOpenAlerts.slice(0, 10).map(a => ({
+            caseNumber: a.CaseNumber || a.case_number,
+            subject: a.Subject,
+            siteName: a.Snow_Sitename__c || a.Account_Name__c || 'Fleet',
+            priority: a.Alert_Priority__c || a.Priority || 'High',
+            status: a.Status,
+            createdDate: a.CreatedDate,
           })),
           incidents: incidents.slice(0, 40).map(i => ({
             caseNumber: i.caseNumber,
@@ -637,11 +652,297 @@ CORE OPERATIONAL MANDATES:
    - When asked to compare specific sites (e.g. Sams ATL vs H&M Canada):
      1) Call get_site_details for each site.
      2) Synthesize a side-by-side KPI comparison and an Interactive HTML Dashboard Artifact.
+   - When asked for a comprehensive report of "Sev 1 / Sev 2 alerts" or fleet incidents for a timeframe (e.g. 24h, 7d):
+     1) Step 1: Call get_fleet_incidents with timeframe="24h" (or requested timeframe) and severity="all" to retrieve all Sev 1 Urgent, Sev 2 Urgent, and Sev 2 High cases and live alerts.
+     2) Step 2: Call get_site_alert_analytics with siteName="all" and range="24h" (or requested timeframe) to retrieve machine telemetry alarms and MTTR.
+     3) Step 3: Synthesize both streams into an Executive Briefing with an Interactive HTML Dashboard Artifact.
    - When asked about fleet incidents or recent downtime:
      Call get_fleet_incidents with the requested timeframe ("today", "24h", "48h", "7d", "all").
    - When asked to execute a custom SOQL query:
      Call execute_salesforce_soql. Enforce strict read-only SELECT queries.
 `;
+
+/**
+ * Executes a conversation turn with OpenRouter (OpenAI-compatible chat completions API).
+ * Supports both native tool calling and autonomous telemetry pre-fetch injection.
+ */
+async function tryOpenRouterChat({ session, cleanInput }) {
+  const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  const model = process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+  const url = 'https://openrouter.ai/api/v1/chat/completions';
+  const toolsExecuted = [];
+
+  console.log(`[Pulse AI] Invoking OpenRouter model=${model} for prompt: "${cleanInput.slice(0, 60)}..."`);
+
+  const openRouterTools = TOOLS_DEFINITIONS.map(t => ({
+    type: 'function',
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+
+  const recentHistory = session.messages.slice(-8);
+  const baseMessages = [
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    ...recentHistory.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content || '',
+    })),
+  ];
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+    'HTTP-Referer': 'https://godseye.greyorange.com',
+    'X-Title': 'Sitepulse Pulse AI',
+  };
+
+  let supportsTools = true;
+  let currentMessages = [...baseMessages];
+
+  // Try native tool execution loop (up to 4 steps)
+  for (let step = 0; step < 4; step++) {
+    const payload = {
+      model,
+      messages: currentMessages,
+      temperature: 0.2,
+    };
+    if (supportsTools) {
+      payload.tools = openRouterTools;
+      payload.tool_choice = 'auto';
+    }
+
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      });
+    } catch (netErr) {
+      console.warn(`[Pulse AI OpenRouter] Network error calling ${model}:`, netErr.message);
+      throw netErr;
+    }
+
+    // Check if tool calling is rejected/unsupported by this free model
+    if (!res.ok && res.status === 400 && supportsTools) {
+      console.warn(`[Pulse AI OpenRouter] Tools rejected by ${model} (HTTP 400). Switching to telemetry pre-fetch mode.`);
+      supportsTools = false;
+      break;
+    }
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`OpenRouter returned HTTP ${res.status}: ${errBody.slice(0, 200)}`);
+    }
+
+    const data = await res.json();
+    const choice = data.choices?.[0];
+    const message = choice?.message;
+
+    if (!message) {
+      throw new Error('Empty response from OpenRouter');
+    }
+
+    const toolCalls = message.tool_calls || [];
+    if (toolCalls.length === 0) {
+      const replyText = message.content || '';
+      if (replyText.trim()) {
+        session.messages.push({
+          role: 'assistant',
+          content: replyText,
+          toolsUsed: toolsExecuted,
+          timestamp: Date.now(),
+        });
+        return {
+          reply: replyText,
+          toolsUsed: toolsExecuted,
+          sessionId: session.id,
+          orgId: session.orgId,
+        };
+      }
+      break;
+    }
+
+    // Process tool calls
+    currentMessages.push(message);
+
+    for (const call of toolCalls) {
+      const toolName = call.function?.name;
+      let toolArgs = {};
+      try {
+        toolArgs = typeof call.function?.arguments === 'string'
+          ? JSON.parse(call.function.arguments)
+          : (call.function?.arguments || {});
+      } catch {
+        toolArgs = {};
+      }
+
+      console.log(`[Pulse AI OpenRouter Tool Execution] Step ${step}: executing "${toolName}" with args:`, JSON.stringify(toolArgs));
+      toolsExecuted.push({ tool: toolName, args: toolArgs });
+
+      const toolResult = await executeToolCall(toolName, toolArgs);
+      const safeResponse = (typeof toolResult === 'object' && toolResult !== null && !Array.isArray(toolResult))
+        ? toolResult
+        : { result: toolResult };
+
+      currentMessages.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        name: toolName,
+        content: JSON.stringify(safeResponse),
+      });
+    }
+  }
+
+  // If native tool calling loop ran tools, request final synthesis from OpenRouter
+  if (supportsTools && toolsExecuted.length > 0) {
+    const finalPayload = {
+      model,
+      messages: [
+        ...currentMessages,
+        {
+          role: 'user',
+          content: 'Now synthesize all retrieved operations and incident telemetry into an executive briefing for the CEO and Upper Management.\n- Strictly follow percentage classification: 100% = [SEV 1 URGENT], 99-50% = [SEV 2 URGENT], 49-1% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].\n- ZERO loose asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).\n- Provide an interactive Executive Dashboard HTML Artifact inside a standard HTML code block (triple-backtick html ... triple-backtick) matching Sitepulse dark slate theme with KPI cards, comparison matrix, interactive JavaScript filter tabs, and incident table.\n- Include clean companion executive summary and actionable SRE recommendations.',
+        },
+      ],
+      temperature: 0.2,
+    };
+    const finalRes = await fetch(url, { method: 'POST', headers, body: JSON.stringify(finalPayload) });
+    if (finalRes.ok) {
+      const finalData = await finalRes.json();
+      const finalReply = finalData.choices?.[0]?.message?.content;
+      if (finalReply && finalReply.trim()) {
+        session.messages.push({
+          role: 'assistant',
+          content: finalReply,
+          toolsUsed: toolsExecuted,
+          timestamp: Date.now(),
+        });
+        return {
+          reply: finalReply,
+          toolsUsed: toolsExecuted,
+          sessionId: session.id,
+          orgId: session.orgId,
+        };
+      }
+    }
+  }
+
+  // Fallback: Telemetry Pre-fetch and Injected Synthesis mode (for models without native tool-calling support)
+  if (!supportsTools) {
+    console.log(`[Pulse AI OpenRouter] Pre-fetching telemetry for prompt: "${cleanInput.slice(0, 60)}"`);
+    const lower = cleanInput.toLowerCase();
+    const telemetryPayloads = {};
+
+    let tf = '24h';
+    if (lower.includes('48h') || lower.includes('2 day') || lower.includes('48 hour') || lower.includes('2d')) tf = '48h';
+    else if (lower.includes('7d') || lower.includes('7 day') || lower.includes('week')) tf = '7d';
+    else if (lower.includes('15d') || lower.includes('15 day')) tf = '15d';
+    else if (lower.includes('1m') || lower.includes('month') || lower.includes('30d')) tf = '1m';
+    else if (lower.includes('all') || lower.includes('ever') || lower.includes('history')) tf = 'all';
+
+    if (lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || lower.includes('alert report')) {
+      const [rz, inc, alerts] = await Promise.all([
+        executeToolCall('get_red_zone_sites', {}),
+        executeToolCall('get_fleet_incidents', { timeframe: tf, severity: 'all' }),
+        executeToolCall('get_site_alert_analytics', { siteName: 'all', range: tf }),
+      ]);
+      toolsExecuted.push({ tool: 'get_red_zone_sites', args: {} });
+      toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: tf, severity: 'all' } });
+      toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: tf } });
+      telemetryPayloads.redZoneSites = rz;
+      telemetryPayloads.fleetIncidents = inc;
+      telemetryPayloads.alertAnalytics = alerts;
+    } else if (lower.includes('compare') || lower.includes(' vs ') || lower.includes('versus') || lower.includes('worse') || lower.includes('better')) {
+      const sitesToFetch = [];
+      if (lower.includes('h&m') || lower.includes('hnm') || lower.includes('ajax')) sitesToFetch.push('H&M Canada Ajax');
+      if (lower.includes('sams') || lower.includes('4993')) sitesToFetch.push('Sams Club ATL');
+      if (lower.includes('walmart') || lower.includes('mexico')) sitesToFetch.push('Walmart Mexico');
+      if (sitesToFetch.length === 0) sitesToFetch.push('H&M Canada Ajax', 'Sams Club ATL');
+      for (const s of sitesToFetch) {
+        const details = await executeToolCall('get_site_details', { siteName: s, range: tf });
+        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: s, range: tf } });
+        telemetryPayloads[`site_${s.replace(/[^a-zA-Z0-9]/g, '_')}`] = details;
+      }
+    } else if (lower.includes('h&m') || lower.includes('hnm') || lower.includes('sams') || lower.includes('walmart') || lower.includes('gxo')) {
+      let targetSite = 'H&M Canada Ajax';
+      if (lower.includes('sams')) targetSite = 'Sams Club ATL';
+      else if (lower.includes('walmart')) targetSite = 'Walmart Mexico';
+      else if (lower.includes('gxo')) targetSite = 'GXO-H&M Prod';
+      const [details, alerts] = await Promise.all([
+        executeToolCall('get_site_details', { siteName: targetSite, range: tf }),
+        executeToolCall('get_site_alert_analytics', { siteName: targetSite, range: tf }),
+      ]);
+      toolsExecuted.push({ tool: 'get_site_details', args: { siteName: targetSite, range: tf } });
+      toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: targetSite, range: tf } });
+      telemetryPayloads.siteDetails = details;
+      telemetryPayloads.alertAnalytics = alerts;
+    } else if (lower.includes('sev 1') || lower.includes('sev 2') || lower.includes('alert') || lower.includes('incident') || lower.includes('outage') || lower.includes('downtime')) {
+      const [inc, alerts] = await Promise.all([
+        executeToolCall('get_fleet_incidents', { timeframe: tf, severity: 'all' }),
+        executeToolCall('get_site_alert_analytics', { siteName: 'all', range: tf }),
+      ]);
+      toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: tf, severity: 'all' } });
+      toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: tf } });
+      telemetryPayloads.fleetIncidents = inc;
+      telemetryPayloads.alertAnalytics = alerts;
+    } else {
+      const overview = await executeToolCall('get_fleet_overview', {});
+      toolsExecuted.push({ tool: 'get_fleet_overview', args: {} });
+      telemetryPayloads.fleetOverview = overview;
+    }
+
+    const injectedPrompt = `USER REQUEST: "${cleanInput}"\n\nLIVE MONITORED FLEET TELEMETRY RETRIEVED FROM SALESFORCE & SITEPULSE (Strict Ground Truth Data):\n\`\`\`json\n${JSON.stringify(telemetryPayloads, null, 2)}\n\`\`\`\n\nINSTRUCTIONS FOR PULSE AI EXECUTIVE BRIEFING:\n1. Synthesize this real-time telemetry into an executive briefing for the CEO, VP of Operations, and SRE Leadership.\n2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].\n3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).\n4. Provide an Interactive HTML Dashboard Artifact in triple-backtick html matching Sitepulse dark slate theme (#11141b) with KPI stat cards, interactive filter buttons, and incident table.\n5. Include companion executive summary and actionable SRE recommendations.`;
+
+    const injectMessages = [
+      { role: 'system', content: SYSTEM_INSTRUCTION },
+      ...recentHistory.slice(0, -1).map(m => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content || '',
+      })),
+      { role: 'user', content: injectedPrompt },
+    ];
+
+    const injectedRes = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        model,
+        messages: injectMessages,
+        temperature: 0.2,
+      }),
+    });
+
+    if (injectedRes.ok) {
+      const injectedData = await injectedRes.json();
+      const replyText = injectedData.choices?.[0]?.message?.content || '';
+      if (replyText.trim()) {
+        session.messages.push({
+          role: 'assistant',
+          content: replyText,
+          toolsUsed: toolsExecuted,
+          timestamp: Date.now(),
+        });
+        return {
+          reply: replyText,
+          toolsUsed: toolsExecuted,
+          sessionId: session.id,
+          orgId: session.orgId,
+        };
+      }
+    } else {
+      const errTxt = await injectedRes.text();
+      throw new Error(`OpenRouter synthesis returned HTTP ${injectedRes.status}: ${errTxt.slice(0, 200)}`);
+    }
+  }
+
+  return null;
+}
 
 /**
  * Main chat handler for Pulse AI agent with tool-calling capabilities.
@@ -677,6 +978,19 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
       sessionId: session.id,
       orgId: session.orgId,
     };
+  }
+
+  // 1. Try OpenRouter first if OPENROUTER_API_KEY is configured
+  if (process.env.OPENROUTER_API_KEY) {
+    try {
+      const openRouterResult = await tryOpenRouterChat({ session, cleanInput });
+      if (openRouterResult) {
+        return openRouterResult;
+      }
+    } catch (orErr) {
+      console.warn('[Pulse AI] OpenRouter invocation error, falling back to Gemini:', orErr.message);
+      _lastPulseAiError = orErr;
+    }
   }
 
   const apiKeys = [

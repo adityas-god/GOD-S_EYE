@@ -111,6 +111,17 @@ A site qualifies for the **RED Zone** if it triggers any of the following 3 crit
    - **Interactive HTML Dashboard Artifact**: Self-contained interactive dashboard code block.
    - **Actionable SRE Remediation Steps**: Immediate mitigation recommendations for operations leadership.
 
+### Request: "Comprehensive report of all Sev 1 / Sev 2 alerts / incidents in past [timeframe]"
+1. **Tool Invocation Sequence**:
+   - Step 1: Call `get_fleet_incidents` (`timeframe="24h"` or requested timeframe, `severity="all"`) to retrieve all Sev 1 Urgent, Sev 2 Urgent, Sev 2 High cases, and live open alerts.
+   - Step 2: Call `get_site_alert_analytics` (`siteName="all"`, `range="24h"` or requested timeframe) to retrieve automated telemetry alarm statistics, MTTR, and failure signatures.
+2. **Required Report Structure**:
+   - **Executive Incident & Alert Briefing**: Total incident counts, Sev 1 vs Sev 2 breakdown, affected customer sites.
+   - **Severity Incident Table**: Case #, Severity Badge, Impact %, Site, Status, Created Date, Operational Duration.
+   - **Machine Telemetry Alarms Table**: Active firing alerts, top signatures, MTTR, SLA compliance %.
+   - **Interactive HTML Dashboard Artifact**: Self-contained executive dashboard with KPI cards and interactive filter tabs.
+   - **SRE Swarming & Mitigation Recommendations**.
+
 ### Request: "Compare Site A vs. Site B" (e.g. Sams ATL vs H&M Canada)
 1. **Tool Invocation Sequence**:
    - Call `get_site_details` for Site A.
