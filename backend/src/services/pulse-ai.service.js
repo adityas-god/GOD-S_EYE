@@ -1077,6 +1077,23 @@ function generateExecutiveDashboardHtml({
 }
 
 /**
+ * Extracts generated text content from OpenRouter API responses.
+ * Handles standard message.content as well as reasoning/reasoning_content
+ * used by reasoning/MoE models (Nemotron, DeepSeek, Qwen).
+ */
+function extractOpenRouterContent(data) {
+  const choice = data?.choices?.[0];
+  if (!choice) return '';
+  const msg = choice.message;
+  const content = msg?.content || '';
+  if (content && typeof content === 'string' && content.trim()) return content.trim();
+  const reasoning = msg?.reasoning || msg?.reasoning_content || '';
+  if (reasoning && typeof reasoning === 'string' && reasoning.trim()) return reasoning.trim();
+  if (choice.text && typeof choice.text === 'string' && choice.text.trim()) return choice.text.trim();
+  return '';
+}
+
+/**
  * Resilient, fast caller for OpenRouter OpenAI-compatible chat completions API.
  * Automatically handles retries with backoff for 429/503 queue spikes on OpenRouter free tier.
  */
@@ -1264,12 +1281,15 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
         model,
         messages,
         temperature: 0.25,
-        max_tokens: 4096,
+        max_tokens: 8192,
+        reasoning: {
+          exclude: true,
+        },
       },
     });
 
-    const replyText = data.choices?.[0]?.message?.content;
-    if (replyText && replyText.trim()) {
+    const replyText = extractOpenRouterContent(data);
+    if (replyText) {
       console.log(`[Pulse AI Fast-Path] Successfully generated briefing with ${model} in 1 pass!`);
       session.messages.push({
         role: 'assistant',
@@ -1285,6 +1305,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
         modelUsed: model,
       };
     }
+    console.warn(`[Pulse AI Fast-Path] Raw response choices for ${model}:`, JSON.stringify(data?.choices || data).slice(0, 300));
     throw new Error(`Model ${model} returned empty content.`);
   }
 
@@ -1325,7 +1346,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
 
   const toolCalls = message.tool_calls || [];
   if (toolCalls.length === 0) {
-    const replyText = message.content || '';
+    const replyText = extractOpenRouterContent(initialData);
     if (replyText.trim()) {
       session.messages.push({
         role: 'assistant',
@@ -1385,12 +1406,15 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
         },
       ],
       temperature: 0.25,
-      max_tokens: 4096,
+      max_tokens: 8192,
+      reasoning: {
+        exclude: true,
+      },
     },
   });
 
-  const finalReply = synthData.choices?.[0]?.message?.content;
-  if (finalReply && finalReply.trim()) {
+  const finalReply = extractOpenRouterContent(synthData);
+  if (finalReply) {
     session.messages.push({
       role: 'assistant',
       content: finalReply,
