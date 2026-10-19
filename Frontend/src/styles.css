@@ -351,6 +351,7 @@ select option { background: var(--card); }
 .case-priority-badge { padding: 2px 6px; border-radius: 4px; font-size: 9px; font-family: var(--font-mono); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; width: fit-content; white-space: nowrap; }
 .case-priority-badge.p-critical, .case-priority-badge.p-high, .case-priority-badge.p-p1 { background: oklch(0.24 0.18 25 / 0.4); border: 1px solid #ef4444; color: #f87171; }
 .case-priority-badge.p-p2 { background: oklch(0.79 0.15 70 / 0.18); border: 1px solid #f59e0b; color: #fbbf24; }
+.case-priority-badge.p-p2-high { background: rgba(168, 85, 247, 0.18); border: 1px solid #a855f7; color: #c084fc; }
 .case-priority-badge.p-medium, .case-priority-badge.p-p3 { background: oklch(0.73 0.085 232 / 0.18); border: 1px solid #60a5fa; color: #93c5fd; }
 .case-priority-badge.p-low, .case-priority-badge.p-p4 { background: var(--muted); border: 1px solid var(--border); color: var(--muted-foreground); }
 
@@ -369,6 +370,12 @@ select option { background: var(--card); }
   background: #fef3c7;
   border-color: #fcd34d;
   color: #d97706;
+}
+:root.light .case-priority-badge.p-p2-high,
+[data-theme="light"] .case-priority-badge.p-p2-high {
+  background: #f3e8ff;
+  border-color: #d8b4fe;
+  color: #7e22ce;
 }
 :root.light .case-priority-badge.p-medium,
 :root.light .case-priority-badge.p-p3,

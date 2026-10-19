@@ -349,7 +349,7 @@ export function parseUptimeFromSheetRows(rows, allSiteNames = []) {
     }
   }
 
-  if (maxSiteMatches >= 1) {
+  if (maxSiteMatches >= 2) {
     // Wide format confirmed!
     console.log(`[Cloud Sheet] Wide format detected at header row ${bestHeaderRowIdx + 1} with ${maxSiteMatches} matched site columns. Reading last row #${lastUptimeRowIdx + 1} (${dateLabel})`);
     for (const [colIdx, siteName] of colToSiteMap.entries()) {

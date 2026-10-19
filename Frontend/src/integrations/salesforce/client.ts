@@ -536,13 +536,21 @@ export function isImTicket(c: SFCase): boolean {
     return false;
   }
 
-  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  // Root incident guard: Any case without a ParentId that is an Incident or Technical Support is the primary incident, NEVER an automated child IM ticket!
   const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
-  if (parentId !== undefined && parentId !== null) {
-    const pStr = String(parentId).trim().toLowerCase();
-    if (pStr && pStr !== 'null' && pStr !== 'undefined' && pStr !== '0' && pStr !== 'false' && pStr !== '') {
-      return true;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || '').trim().toLowerCase();
+  const isExplicitIncident = /^(incident|technical support|software|hardware)$/i.test(rawType);
+  if (!hasParent && isExplicitIncident) {
+    const isExplicitChildSubject = /(?:^|[\s\[\(_\-])(?:child\s*im|child\s*case|sub[- ]*task|internal\s*maintenance)\b/i.test(sub);
+    if (!isExplicitChildSubject) {
+      return false;
     }
+  }
+
+  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  if (hasParent) {
+    return true;
   }
 
   // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
@@ -782,7 +790,7 @@ export function calculateSiteUrgentCounts(casesForSite: SFCase[] = []): { sev1Co
   const urgentTickets = (casesForSite || []).filter(c => {
     if (!isIncidentTicket(c)) return false;
     const sev = detectSeverity(c);
-    return sev === 'sev1' || sev === 'sev2';
+    return sev === 'sev1' || sev === 'sev2' || sev === 'sev2_urgent';
   });
 
   if (urgentTickets.length === 0) {
@@ -806,7 +814,10 @@ export function calculateSiteUrgentCounts(casesForSite: SFCase[] = []): { sev1Co
 
   for (const cluster of incidentClusters) {
     const hasSev1 = cluster.some(t => detectSeverity(t) === 'sev1');
-    const hasSev2 = cluster.some(t => detectSeverity(t) === 'sev2');
+    const hasSev2 = cluster.some(t => {
+      const s = detectSeverity(t);
+      return s === 'sev2' || s === 'sev2_urgent';
+    });
 
     if (hasSev1) {
       sev1Count++;
@@ -849,7 +860,7 @@ export function deduplicateIncidents(incidents: any[] = []): any[] {
 
     // Highest severity wins
     const hasSev1 = cluster.some(t => t.severity === 'sev1');
-    const hasSev2 = cluster.some(t => t.severity === 'sev2');
+    const hasSev2 = cluster.some(t => t.severity === 'sev2' || t.severity === 'sev2_urgent');
     if (hasSev1) {
       rep.severity = 'sev1';
     } else if (hasSev2) {
@@ -1489,13 +1500,24 @@ export function findBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledS
 function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite[]): string | null {
   const raw = caseRecord as Record<string, unknown>;
   const sub = String(caseRecord.Subject || raw.subject || '').trim();
+  const accIdRaw = String(caseRecord.AccountId || raw.account_id || raw.AccountId || '').trim();
+  const accNameRaw = String(
+    caseRecord.Account_Name__c ||
+    raw.account_name ||
+    (caseRecord as any).Account?.Name ||
+    raw.Account_Name__c ||
+    ''
+  ).trim();
+  const descRaw = String(caseRecord.Description || raw.description || '').trim();
   const combinedContext = [
     caseRecord.Snow_Sitename__c,
     caseRecord.Customer_Location__c,
     caseRecord.Site_Name_Customer_Input__c,
     caseRecord.Impacted_Sites__c,
     sub,
-    caseRecord.Account_Name__c || raw.account_name,
+    accNameRaw,
+    accIdRaw,
+    descRaw.length > 1000 ? descRaw.slice(0, 1000) : descRaw,
   ].filter(Boolean).join(' ').toLowerCase();
 
   // Primary authoritative XPO -> GXO site resolution:
@@ -1553,13 +1575,33 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
   }
 
   // Sams Club multi-site resolution:
-  if (/sam(s)?(\s+club)?|4993|8799|9476/i.test(combinedContext)) {
-    if (/\b(atl|atlanta|4993|samprod|samsprod)\b/i.test(combinedContext)) {
+  const isSamsLaxId = (id: string) =>
+    id === '001OX00000qZLaxYAG' ||
+    id === '001OX00000qZLbCYAW' ||
+    id.startsWith('001OX00000qZLax') ||
+    id.startsWith('001OX00000qZLbC');
+
+  const isSamsAtlId = (id: string) =>
+    id === '001OX00000qZLbBYAW' ||
+    id.startsWith('001OX00000qZLbB');
+
+  if (
+    isSamsAtlId(accIdRaw) ||
+    isSamsLaxId(accIdRaw) ||
+    /sam(s)?(\s*club)?|4993|8799|9476|samsatl|samatl|samprod|samsprod|samslax|samlax/i.test(combinedContext)
+  ) {
+    if (
+      isSamsAtlId(accIdRaw) ||
+      /\b(atl|atlanta|4993|samprod|samsprod|samsatl|samatl)\b/i.test(combinedContext)
+    ) {
       const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
       if (sam) return sam.originalName;
       return 'Sams Club ATL';
     }
-    if (/\b(lax|california|8799|9476|samlax)\b/i.test(combinedContext)) {
+    if (
+      isSamsLaxId(accIdRaw) ||
+      /\b(lax|california|8799|9476|samlax|samslax|samlaxprod)\b/i.test(combinedContext)
+    ) {
       const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
       if (sam) return sam.originalName;
       return 'Sams Club LAX';
@@ -1813,7 +1855,7 @@ export function getImpactPercentage(c: SFCase): number {
  *     - Subject containing Sev 2 / P2 Urgent
  * - Excludes DIR tickets (post-incident documentation).
  */
-export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
+export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev2_high' | 'sev3' {
   if (!c) return 'sev3';
   if (isAlertCase(c)) return 'sev3';
   if (isDirTicket(c)) return 'sev3';
@@ -1831,44 +1873,11 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
     return 'sev1';
   }
 
-  // Explicit low severity guard: if Salesforce explicitly designates Severity 3 or 4, it is not Sev 1/2 Urgent
   const highestSevRaw = String(raw.Highest_Severity__c || '').trim();
-  if (/severity\s*[34]|sev[-_ ]*[34]|low|minor/i.test(highestSevRaw) && impact < 50 && !raw.Is_Site_100_Down__c) {
-    return 'sev3';
-  }
-
-  // Rule 2: 50% - 99% Impact -> Sev 2 Urgent
-  if (impact >= 50 && impact < 100) {
-    return 'sev2';
-  }
-
-  // Explicit Sev 2 High: 1% - 49% Impact is Sev 2 High (NOT Sev 2 Urgent)
-  if (impact >= 1 && impact < 50) {
-    return 'sev3';
-  }
-
-  // Authoritative case severity fields
   const highestSev = highestSevRaw.toUpperCase();
   const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
 
-  // Explicit Standard Sev 2 High (e.g. "2 - High", "Severity 2", "High", "P2" without "Urgent") is NOT Sev 2 Urgent
-  for (const s of [highestSev, prio].filter(Boolean)) {
-    if (
-      s.includes('2 - HIGH') ||
-      s.includes('2 - STANDARD') ||
-      s === 'HIGH' ||
-      s === 'P2' ||
-      s === 'SEV 2' ||
-      s === 'SEVERITY 2' ||
-      s === 'SEV-2'
-    ) {
-      if (!s.includes('URGENT')) {
-        return 'sev3';
-      }
-    }
-  }
-
-  // Rule 3: Explicit Severity 1 Urgent / Critical in authoritative case fields
+  // Rule 2: Explicit Severity 1 Urgent / Critical in authoritative case fields or subject
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 1' ||
@@ -1884,8 +1893,17 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
       return 'sev1';
     }
   }
+  const sub = String(c.Subject || raw.subject || '').trim();
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev1';
+  }
 
-  // Rule 4: Explicit Sev 2 Urgent (Must be explicitly 'Urgent', NOT standard Sev 2 High)
+  // Rule 3: 50% - 99% Impact -> Sev 2 Urgent (User Rule: 99-50 = sve 2 urgnet)
+  if (impact >= 50 && impact < 100) {
+    return 'sev2';
+  }
+
+  // Explicit Sev 2 URGENT in fields or subject (MUST explicitly contain "URGENT", never generic "Severity 2")
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s.includes('2 - URGENT') ||
@@ -1899,16 +1917,36 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev3' {
       return 'sev2';
     }
   }
-
-  // Rule 5: Subject line explicit urgency / severity tags (must be explicit tag, not regular English adjective)
-  const sub = String(c.Subject || raw.subject || '').trim();
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*1(?:[-_ ]*URGENT)?|P1[-_ ]*URGENT|SEVERITY[-_ ]*1|CRITICAL[-_ ]*(?:OUTAGE|INCIDENT|SEV|IMPACT)|\[CRITICAL\])(?:$|[\]\)\s:])/i.test(sub)) {
-    return 'sev1';
-  }
   if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*URGENT|P2[-_ ]*URGENT|SEVERITY[-_ ]*2[-_ ]*URGENT)(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2';
   }
 
+  // Rule 4: 1% - 49% Impact -> Sev 2 High (User Rule: 49-1 = sev 2 high - NOT Sev 2 Urgent!)
+  if (impact >= 1 && impact < 50) {
+    return 'sev2_high';
+  }
+
+  // Explicit Sev 2 High (generic Severity 2 / Sev 2 / P2 / High / 2 - High when impact is not >= 50% and not urgent)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s === 'SEVERITY 2' ||
+      s === 'SEV 2' ||
+      s === 'SEV-2' ||
+      s.includes('SEVERITY 2') ||
+      s.includes('SEV 2') ||
+      s === 'P2' ||
+      s.includes('2 - HIGH') ||
+      s.includes('2 - STANDARD') ||
+      s.includes('HIGH')
+    ) {
+      return 'sev2_high';
+    }
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2|SEVERITY[-_ ]*2|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev2_high';
+  }
+
+  // Rule 5: Below 1% impact -> Sev 3 (User Rule: below 1 = sev 3)
   return 'sev3';
 }
 

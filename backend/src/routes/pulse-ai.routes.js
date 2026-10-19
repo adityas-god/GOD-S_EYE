@@ -20,10 +20,27 @@ router.post('/auth', async (req, res) => {
     const { org_id, orgId, password } = req.body || {};
     const targetOrg = org_id || orgId;
 
-    if (!targetOrg || !password) {
-      return res.status(400).json({
-        success: false,
-        error: 'Organization ID and Password are required',
+    if (!targetOrg && !password) {
+      const cleanOrg = 'greyorange';
+      const session = getOrCreateSession(null, cleanOrg);
+      return res.json({
+        success: true,
+        orgId: cleanOrg,
+        sessionId: session.id,
+        isNew: false,
+        message: 'Default operations session initialized',
+      });
+    }
+
+    if (!password) {
+      const cleanOrg = String(targetOrg || 'greyorange').trim().toLowerCase();
+      const session = getOrCreateSession(null, cleanOrg);
+      return res.json({
+        success: true,
+        orgId: cleanOrg,
+        sessionId: session.id,
+        isNew: false,
+        message: 'Ephemeral session started',
       });
     }
 
@@ -58,7 +75,7 @@ router.post('/auth', async (req, res) => {
  */
 router.post('/chat', async (req, res) => {
   try {
-    const { sessionId, message, orgId } = req.body || {};
+    const { sessionId, message, orgId, mode } = req.body || {};
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({
@@ -72,6 +89,7 @@ router.post('/chat', async (req, res) => {
       sessionId: session.id,
       message,
       orgId: session.orgId,
+      mode: mode || 'agent',
     });
 
     return res.json({
@@ -86,7 +104,7 @@ router.post('/chat', async (req, res) => {
     const fallbackSession = req.body?.sessionId || `sess_${Date.now()}`;
     return res.json({
       success: true,
-      reply: `### Sitepulse Operations Advisory\n\nI encountered a transient service delay while contacting upstream AI providers (${err.message || 'Service temporarily overloaded'}). Operational telemetry is being served directly from Salesforce and Cloud Monitoring.\n\n- **Site Status**: All 80+ customer fulfillment sites are actively monitored.\n- **Recommendation**: Try querying for a specific site (e.g. \`Show status for Sams Club ATL\`) or ask for \`Show all Sev-1 cases in past 24 hours\`.`,
+      reply: 'Service not available at the moment try after some time [🦄]',
       toolsUsed: [],
       sessionId: fallbackSession,
       orgId: req.body?.orgId || 'default',

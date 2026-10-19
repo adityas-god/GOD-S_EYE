@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { useSuspenseQuery, useQuery } from '@tanstack/react-query';
+import { useSuspenseQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft,
@@ -50,6 +50,9 @@ import {
   calculateSiteUrgentCounts,
   type SFCase,
   getAssigneeDisplayName,
+  findBestSiteForCase,
+  compileSiteIndex,
+  areSameSite,
 } from '@/integrations/salesforce/client';
 import { SiteRunbookPanel, type RunbookTabKey } from '@/components/site-runbook-panel';
 import { fetchSiteRunbook, defaultRunbook, type SiteRunbook } from '@/lib/runbook';
@@ -111,13 +114,14 @@ export const Route = createFileRoute('/sites/$siteId')({
     if (site) {
       // Non-blocking prefetch so the page opens instantly without freezing
       void context.queryClient.prefetchQuery({
-        queryKey: ['site-cases', site.id, site.name, site.salesforce_account_id],
+        queryKey: ['site-cases', site.id, site.name, site.salesforce_account_id, 'all', null],
         queryFn: () =>
           sfFetchCasesForSite({
             data: {
               siteName: site.name,
               accountId: site.salesforce_account_id,
             },
+            range: 'all',
           }),
         staleTime: 60_000,
       });
@@ -146,6 +150,7 @@ function SiteDetail() {
   const site = resolveSite(sites, siteId);
   const { admin, user } = useAuth();
 
+  const queryClient = useQueryClient();
   const [connections, setConnections] = useState(false);
   const [editor, setEditor] = useState(false);
   const [login, setLogin] = useState(false);
@@ -181,7 +186,8 @@ function SiteDetail() {
 
   const analyticsEffectiveRange: TimeRangeKey = siteTimeRange;
 
-  // Fetch deep alert analytics & precise alert records for this site
+  // Fetch deep alert analytics & precise alert records for this site only on-demand when analytics tab or historical range is active
+  const isAnalyticsNeeded = activeBucket === 'analytics' || (siteTimeRange !== 'all' && siteTimeRange !== '24h');
   const {
     data: analyticsData,
     isFetching: analyticsFetching,
@@ -194,9 +200,9 @@ function SiteDetail() {
       false,
       analyticsEffectiveRange === 'custom' ? appliedCustomRange : null
     ),
-    enabled: Boolean(site?.name),
-    staleTime: 60_000,
-    refetchInterval: 120_000,
+    enabled: Boolean(site?.name) && isAnalyticsNeeded,
+    staleTime: 120_000,
+    refetchInterval: isAnalyticsNeeded ? 120_000 : false,
     placeholderData: (prev) => prev,
   });
 
@@ -217,7 +223,7 @@ function SiteDetail() {
     }
   }, [runbookData]);
 
-  // Fetch all open cases & alerts (opened + closed today) for this site
+  // Fetch all open cases & alerts (opened + closed today) for this site with instant placeholder seeding
   const {
     data: sfData,
     isFetching: sfFetching,
@@ -242,6 +248,39 @@ function SiteDetail() {
     staleTime: 60_000,
     gcTime: 300_000,
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
+    placeholderData: (prev) => {
+      if (prev) return prev;
+      try {
+        const overview = queryClient.getQueryData<any>(['salesforce-overview']);
+        if (overview && Array.isArray(overview.cases) && site?.name) {
+          const siteLower = site.name.trim().toLowerCase();
+          const compiled = compileSiteIndex(sites || []);
+          const matchesSite = (item: SFCase) => {
+            const best = findBestSiteForCase(item, compiled);
+            if (best && areSameSite(best, site.name)) return true;
+            const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || '').trim().toLowerCase();
+            return loc.includes(siteLower) || siteLower.includes(loc);
+          };
+          const matchedCases = (overview.cases as SFCase[]).filter(matchesSite);
+          const matchedAlerts = Array.isArray(overview.alerts)
+            ? (overview.alerts as SFCase[]).filter(matchesSite)
+            : [];
+          if (matchedCases.length > 0 || matchedAlerts.length > 0) {
+            return {
+              totalSize: matchedCases.length,
+              done: true,
+              records: matchedCases,
+              alerts: matchedAlerts,
+              closed: [],
+              product_lines: (site.product_lines as string[]) || [],
+              product_line: site.product_line || null,
+              site: site,
+            };
+          }
+        }
+      } catch {}
+      return undefined;
+    },
   });
   const sfLoading = !sfData;
 
@@ -588,7 +627,10 @@ function SiteDetail() {
       if (severityFilter === 'SEV 1 URGENT') {
         matchSeverity = detectSeverity(c) === 'sev1';
       } else if (severityFilter === 'SEV 2 URGENT') {
-        matchSeverity = detectSeverity(c) === 'sev2';
+        const s = detectSeverity(c);
+        matchSeverity = s === 'sev2' || (s as string) === 'sev2_urgent';
+      } else if (severityFilter === 'SEV 2 HIGH') {
+        matchSeverity = detectSeverity(c) === 'sev2_high';
       } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
@@ -1482,12 +1524,15 @@ function SiteDetail() {
                           ● SEV 1 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev1').length})
                         </option>
                         <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
-                          ● SEV 2 URGENT ({activeItems.filter(c => detectSeverity(c) === 'sev2').length})
+                          ● SEV 2 URGENT ({activeItems.filter(c => { const s = detectSeverity(c); return s === 'sev2' || (s as string) === 'sev2_urgent'; }).length})
+                        </option>
+                        <option value="SEV 2 HIGH" style={{ background: '#18191e', color: '#c084fc', fontWeight: 700 }}>
+                          ● SEV 2 HIGH ({activeItems.filter(c => detectSeverity(c) === 'sev2_high').length})
                         </option>
                       </>
                     )}
                     {uniqueSeverities
-                      .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
+                      .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT' && sev !== 'SEV 2 HIGH')
                       .map(sev => (
                         <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
                           {sev} ({activeItems.filter(c => (c.Alert_Priority__c === sev || c.Highest_Severity__c === sev || c.Priority === sev)).length})
@@ -1712,13 +1757,16 @@ function SiteDetail() {
                   const isAlert = activeBucket === 'alerts' || activeBucket === 'closed' || activeBucket === 'analytics' || isAlertCase(c);
                   const sevType = isAlert ? 'sev3' : detectSeverity(c);
                   const isSev1Urgent = !isAlert && sevType === 'sev1';
-                  const isSev2Urgent = !isAlert && sevType === 'sev2';
+                  const isSev2Urgent = !isAlert && (sevType === 'sev2' || (sevType as string) === 'sev2_urgent');
+                  const isSev2High = !isAlert && sevType === 'sev2_high';
 
                   const alertPrio = String(c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3').trim();
                   const priorityClass = isSev1Urgent
                     ? 'p-p1'
                     : isSev2Urgent
                     ? 'p-p2'
+                    : isSev2High
+                    ? 'p-p2-high'
                     : isAlert
                     ? (/p1|sev.*1|critical/i.test(alertPrio) ? 'p-p1' : /p2|sev.*2|high/i.test(alertPrio) ? 'p-p2' : 'p-p3')
                     : 'p-p3';
@@ -1729,6 +1777,8 @@ function SiteDetail() {
                     ? 'SEV 1 URGENT'
                     : isSev2Urgent
                     ? 'SEV 2 URGENT'
+                    : isSev2High
+                    ? 'SEV 2 HIGH'
                     : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
 
                   const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType);
@@ -2005,6 +2055,11 @@ function SiteDetail() {
                               {!isAlert && isSev2Urgent && (
                                 <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
                                   SEV 2 URGENT
+                                </span>
+                              )}
+                              {!isAlert && isSev2High && (
+                                <span className="case-down-badge" style={{ background: '#7e22ce', color: '#fff', fontWeight: 800 }}>
+                                  SEV 2 HIGH
                                 </span>
                               )}
                             </div>

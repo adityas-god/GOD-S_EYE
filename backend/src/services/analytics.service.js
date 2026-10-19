@@ -118,10 +118,12 @@ export function classifyDetailedSeverity(c) {
     return 'sev1';
   }
 
-  // Explicit Sev 2 Urgent
+  // Rule 2: 99% - 50% Impact -> Sev 2 Urgent (User Rule: 99-50 = sve 2 urgnet)
   if (impact >= 50 && impact < 100) {
     return 'sev2_urgent';
   }
+
+  // Explicit Sev 2 URGENT in fields or subject (MUST explicitly contain "URGENT", never generic "Severity 2")
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s.includes('2 - URGENT') ||
@@ -139,18 +141,20 @@ export function classifyDetailedSeverity(c) {
     return 'sev2_urgent';
   }
 
-  // Explicit Sev 2 High (standard Sev 2: 1% to 49% impact)
+  // Rule 3: 49% - 1% Impact -> Sev 2 High (User Rule: 49-1 = sev 2 high - NOT Sev 2 Urgent!)
   if (impact >= 1 && impact < 50) {
     return 'sev2_high';
   }
+
+  // Explicit Sev 2 High (generic Severity 2 / Sev 2 / P2 / High / 2 - High when impact is not >= 50% and not urgent)
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 2' ||
       s === 'SEV 2' ||
       s === 'SEV-2' ||
-      s === 'SEV2' ||
+      s.includes('SEVERITY 2') ||
+      s.includes('SEV 2') ||
       s === 'P2' ||
-      s === '2' ||
       s.includes('2 - HIGH') ||
       s.includes('2 - STANDARD') ||
       s.includes('HIGH') ||
@@ -159,7 +163,7 @@ export function classifyDetailedSeverity(c) {
       return 'sev2_high';
     }
   }
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2(?![-_ ]*URGENT)|P2(?![-_ ]*URGENT)|SEVERITY[-_ ]*2(?![-_ ]*URGENT)|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2|SEVERITY[-_ ]*2|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2_high';
   }
 

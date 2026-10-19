@@ -267,29 +267,57 @@ router.get('/site/:siteName', async (req, res) => {
  */
 router.get('/debug-inspect', async (req, res) => {
   try {
-    const { fetchAllLiveCasesAndAlerts, compileSiteIndex, findBestSiteForCase, DEFAULT_ALL_SITE_NAMES } = await import('../services/salesforce.service.js');
+    const {
+      fetchAllLiveCasesAndAlerts,
+      compileSiteIndex,
+      findBestSiteForCase,
+      areSameSite,
+      isLiveOpenCase,
+      isAlertCase,
+      isDirTicket,
+      isImTicket,
+      isPmTicket,
+      detectSeverity,
+      executeSOQL,
+      DEFAULT_ALL_SITE_NAMES
+    } = await import('../services/salesforce.service.js');
     const { SiteRepository } = await import('../models/Site.js');
     const allSites = await SiteRepository.findAll().catch(() => []);
     const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
     const { cases, alerts, openAlerts, closedAlerts } = await fetchAllLiveCasesAndAlerts(true);
+
+    const targetCaseInCases = cases.find(c => c.CaseNumber === '00297690');
     
+    // Also fetch raw record directly from SOQL
+    const rawSoqlRes = await executeSOQL("SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Snow_Category__c, Category__c, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, AccountId, Account.Name, Account_Name__c, Snow_id__c FROM Case WHERE CaseNumber = '00297690'");
+    const rawRecord = rawSoqlRes.records?.[0] || null;
+
+    let rawDiagnostics = null;
+    if (rawRecord) {
+      rawDiagnostics = {
+        isLiveOpenCase: isLiveOpenCase(rawRecord),
+        isAlertCase: isAlertCase(rawRecord),
+        isDirTicket: isDirTicket(rawRecord),
+        isImTicket: isImTicket(rawRecord),
+        isPmTicket: isPmTicket(rawRecord),
+        bestSite: findBestSiteForCase(rawRecord, compiledSites),
+        areSameSiteWithSamsLAX: areSameSite(findBestSiteForCase(rawRecord, compiledSites), "Sams Club LAX", compiledSites),
+        detectedSeverity: detectSeverity(rawRecord),
+      };
+    }
+
     res.json({
       success: true,
+      targetCaseInCases: targetCaseInCases || null,
+      rawDiagnostics,
+      rawRecord,
       totalLiveCases: cases.length,
-      totalLiveOpenAlerts: (openAlerts || alerts).length,
-      totalClosedAlerts: (closedAlerts || []).length,
-      openAlerts: (openAlerts || alerts).map(a => {
-        const bestSite = findBestSiteForCase(a, compiledSites);
-        return {
-          caseNumber: a.CaseNumber,
-          site: bestSite,
-          subject: a.Subject,
-          status: a.Status,
-          severity: a.Highest_Severity__c,
-          alertPriority: a.Alert_Priority__c,
-          createdDate: a.CreatedDate
-        };
-      })
+      casesNumbers: cases.filter(c => findBestSiteForCase(c, compiledSites) === 'Sams Club LAX').map(c => ({
+        num: c.CaseNumber,
+        sub: c.Subject,
+        sev: c.Highest_Severity__c,
+        site: findBestSiteForCase(c, compiledSites)
+      }))
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message, stack: err.stack });

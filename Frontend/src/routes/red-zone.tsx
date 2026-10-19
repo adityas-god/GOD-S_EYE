@@ -681,7 +681,7 @@ function RedZonePage() {
       });
 
       const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
-      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
+      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent').length;
       const resolvedOnDay = incidents.filter(i => {
         const eStr = i.endTime || i.closedDate;
         if (!eStr) return false;
@@ -692,7 +692,7 @@ function RedZonePage() {
       // Calculate true non-overlapping outage duration for Sev 1 & Sev 2 urgent incidents on this day
       const daySev12 = dayIncidents.filter(i => {
         const sev = String(i.severity || '').toLowerCase();
-        return (sev === 'sev1' || sev === 'sev2') && (i.endTime || i.closedDate);
+        return (sev === 'sev1' || sev === 'sev2' || sev === 'sev2_urgent') && (i.endTime || i.closedDate);
       });
       const dayIntervals: Array<[number, number]> = [];
       for (const inc of daySev12) {
@@ -840,7 +840,7 @@ function RedZonePage() {
     );
 
     const sev1UrgentCases = qualifyingSev12.filter(i => i.severity === 'sev1');
-    const sev2UrgentCases = qualifyingSev12.filter(i => i.severity === 'sev2');
+    const sev2UrgentCases = qualifyingSev12.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent');
 
     let longestOutageIncident: (RedZoneQualifyingIncident & { durationHours: number }) | null = null;
     let maxDuration = 0;
@@ -913,7 +913,7 @@ function RedZonePage() {
     } else if (ticketFilter === 'sev1') {
       list = list.filter(i => i.severity === 'sev1');
     } else if (ticketFilter === 'sev2') {
-      list = list.filter(i => i.severity === 'sev2');
+      list = list.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent');
     } else if (ticketFilter === 'down') {
       list = list.filter(i => Boolean(i.isSiteDown));
     } else if (ticketFilter === 'active') {
@@ -949,7 +949,7 @@ function RedZonePage() {
     }).length;
   }, [allSiteIncidents, timeframe]);
   const sev1Count = allSiteIncidents.filter(i => i.severity === 'sev1').length;
-  const sev2Count = allSiteIncidents.filter(i => i.severity === 'sev2').length;
+  const sev2Count = allSiteIncidents.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent').length;
   const downCount = allSiteIncidents.filter(i => Boolean(i.isSiteDown)).length;
   const activeCount = allSiteIncidents.filter(
     i =>
@@ -1610,7 +1610,7 @@ function RedZonePage() {
                   filteredIncidents.map(inc => {
                     const isExpanded = expandedTicketId === inc.id;
                     const isSev1 = inc.severity === 'sev1';
-                    const isSev2 = inc.severity === 'sev2';
+                    const isSev2 = inc.severity === 'sev2' || inc.severity === 'sev2_urgent';
                     const isClosed =
                       inc.status?.toLowerCase().includes('closed') ||
                       inc.status?.toLowerCase().includes('resolved') ||

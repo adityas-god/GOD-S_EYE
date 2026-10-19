@@ -167,28 +167,29 @@ export function PulseAIPage() {
   const chatThreadRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Initialize or resume session (ephemeral check - refresh automatically resets chat memory)
+  // Initialize or resume session - seamless zero-friction access
   useEffect(() => {
-    const savedOrg = sessionStorage.getItem('sitepulse_ai_org');
-    const savedSess = sessionStorage.getItem('sitepulse_ai_session');
+    let savedOrg = sessionStorage.getItem('sitepulse_ai_org') || 'greyorange';
+    let savedSess = sessionStorage.getItem('sitepulse_ai_session');
 
-    if (savedOrg && savedSess) {
+    if (savedSess) {
       // Tell server to delete any prior in-memory chat session data
       fetch('/api/pulse-ai/clear', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: savedSess }),
       }).catch(() => {});
-
-      // Allocate a fresh isolated session ID for this session
-      const freshSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      sessionStorage.setItem('sitepulse_ai_session', freshSessionId);
-
-      setAuthOrgId(savedOrg);
-      setSessionId(freshSessionId);
-      setIsAuthenticated(true);
-      setMessages([]); // Fresh start on refresh
     }
+
+    // Allocate a fresh isolated session ID for this session
+    const freshSessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    sessionStorage.setItem('sitepulse_ai_session', freshSessionId);
+    sessionStorage.setItem('sitepulse_ai_org', savedOrg);
+
+    setAuthOrgId(savedOrg);
+    setSessionId(freshSessionId);
+    setIsAuthenticated(true);
+    setMessages([]); // Fresh start on page arrival
   }, []);
 
   // Purge server session on tab close or page refresh
@@ -308,6 +309,7 @@ export function PulseAIPage() {
           sessionId,
           orgId: authOrgId,
           message: textToSend.trim(),
+          mode: aiMode === 'query' ? 'ask' : 'agent',
         }),
       });
 
@@ -340,7 +342,7 @@ export function PulseAIPage() {
       const errorMsg: ChatMessage = {
         id: `msg_${Date.now()}_err`,
         role: 'assistant',
-        content: `⚠️ **Pulse AI Notice**: ${(err as Error).message || 'Unable to complete operational query. Please try again.'}`,
+        content: `Service not available at the moment try after some time [🦄]`,
         timestamp: Date.now(),
       };
       setMessages(prev => [...prev, errorMsg]);
@@ -1402,6 +1404,30 @@ export function PulseAIPage() {
                   }}
                 >
                   {isAuthenticating ? 'Authenticating…' : 'Authenticate & Enter'}
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const org = authOrgId.trim() || 'greyorange';
+                    const sess = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                    sessionStorage.setItem('sitepulse_ai_org', org);
+                    sessionStorage.setItem('sitepulse_ai_session', sess);
+                    setAuthOrgId(org);
+                    setSessionId(sess);
+                    setIsAuthenticated(true);
+                    setMessages([]);
+                  }}
+                  style={{
+                    height: 38,
+                    fontSize: 13,
+                    borderColor: 'var(--border)',
+                    background: 'var(--muted)',
+                    color: 'var(--foreground)',
+                  }}
+                >
+                  ⚡ Instant Access (Operations Workspace)
                 </Button>
               </form>
 

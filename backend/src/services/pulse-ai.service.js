@@ -93,19 +93,26 @@ export function getSessionMessages(sessionId) {
 }
 
 let _lastPulseAiError = null;
+let _geminiCircuitBreakerTripped = false;
+
+export function isValidGeminiKey(key) {
+  if (_geminiCircuitBreakerTripped) return false;
+  return typeof key === 'string' && key.trim().length >= 10;
+}
 
 export function getLastPulseAiStatus() {
   const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
   const openRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
-  const provider = geminiKey ? 'Google Gemini' : (openRouterKey ? 'OpenRouter' : 'None');
-  const activeKey = geminiKey || openRouterKey;
+  const isGeminiValid = isValidGeminiKey(geminiKey);
+  const provider = isGeminiValid ? 'Google Gemini' : (openRouterKey ? 'OpenRouter' : 'None');
+  const activeKey = isGeminiValid ? geminiKey : openRouterKey;
   return {
     provider,
-    geminiConfigured: Boolean(geminiKey),
+    geminiConfigured: isGeminiValid,
     openRouterConfigured: Boolean(openRouterKey),
     apiKeyConfigured: Boolean(activeKey),
     apiKeyMasked: activeKey ? `${activeKey.slice(0, 7)}...${activeKey.slice(-4)}` : 'NOT_SET',
-    preferredModel: geminiKey ? (process.env.GEMINI_MODEL || 'gemini-2.0-flash') : (process.env.OPENROUTER_MODEL || 'openrouter/free'),
+    preferredModel: isGeminiValid ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash') : (process.env.OPENROUTER_MODEL || 'openrouter/free'),
     lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
   };
 }
@@ -724,18 +731,17 @@ CORE OPERATIONAL MANDATES:
      * Write Statuses cleanly: Status: Solved, Status: In-Progress, Status: Assigned, Status: Operational.
      * For lists, use simple bullet points (- ) without wrapping items in italic asterisks.
 
-4. INTERACTIVE HTML DASHBOARD ARTIFACTS (CRITICAL):
-   - Whenever asked to compare sites (e.g. H&M Canada vs Walmart Mexico), provide an alert/breach report, audit RED zone risks, or deliver a fleet briefing:
-     YOU MUST GENERATE AN INTERACTIVE EXECUTIVE DASHBOARD ARTIFACT ENCLOSED IN A SINGLE HTML CODE BLOCK (triple-backtick html ... triple-backtick)!
-   - The interactive HTML dashboard must match Sitepulse's dark slate (#11141b / #181d27) visual aesthetic:
-     * Self-contained, responsive HTML with inline CSS and interactive JavaScript.
-     * Top Executive Header: 'SITEPULSE EXECUTIVE BRIEFING', Site Badges, Real-time UTC Timestamp, Live Status Indicator.
-     * KPI Stat Cards: 4 sleek cards with large metrics (Active Breaches, Active Sev 1 Urgent, Active Sev 2 Urgent, Fleet Reliability % or Uptime).
-     * Side-by-Side Comparison Matrix or RED Zone Breach Matrix with visual progress bars.
-     * Interactive Filter Tabs: Buttons for [All], [Sev 1 Urgent], [Sev 2 Urgent], [Sev 2 High], [Active], [Resolved] that instantly filter table rows via JavaScript!
-     * Incident Breakdown Table: Dark zebra styling, hover row highlighting, glowing pill badges (Crimson for Sev 1 Urgent, Bright Orange for Sev 2 Urgent, Amber for Sev 2 High, Blue for Sev 3 Incident, Slate for Sev 4 Service Request, Green for Solved, Cyan for In-Progress), monospace case numbers.
-     * Executive Takeaways & SRE Recommendations: 3-4 bulleted strategic insights and recommended engineering actions for C-suite leadership.
-   - In addition to the HTML dashboard artifact, provide a crisp executive summary in clean text (without loose asterisks) either before or after the artifact.
+4. EXECUTIVE REPORTING & ANALYSIS STANDARDS:
+   - Deliver executive-ready operational briefings with clean markdown, structured KPI summaries, incident tables, and SRE recommendations.
+   - Strictly follow impact percentage classification:
+     * 100% = [SEV 1 URGENT]
+     * 50-99% = [SEV 2 URGENT]
+     * 1-49% = [SEV 2 HIGH]
+     * <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST]
+   - ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
+   - Provide clean markdown tables for incidents (| Case Number | Severity | Status | Impact % | Subject |).
+   - Conclude with 2-3 high-impact SRE leadership recommendations.
+   - (A live interactive visual dashboard artifact is automatically rendered alongside your briefing; do not generate raw HTML boilerplate).
 
 5. AGENTIC TOOL ROUTING PLAYBOOK (MANDATORY):
    - When asked for "Alert report with all active breaches" / "Show all breaches" / "RED Zone audit":
@@ -1077,6 +1083,204 @@ function generateExecutiveDashboardHtml({
 }
 
 /**
+ * Generates the companion interactive HTML dashboard artifact from pre-fetched live Salesforce telemetry.
+ * Automatically appended to the dynamic AI briefing.
+ */
+export function generateDashboardArtifactFromTelemetry({
+  telemetryPayloads = {},
+  detectedSites = [],
+  targetRange = '24h',
+  isComparison = false,
+  isBreach = false,
+  isSiteAudit = false,
+  isIncidentQuery = false,
+}) {
+  const cleanCaseId = (num) => {
+    const str = String(num || '').trim();
+    return str.startsWith('#') ? str : (str ? `#${str}` : 'N/A');
+  };
+
+  // 1. Site Deep Dive & Audit
+  if (isSiteAudit || telemetryPayloads.siteDetails) {
+    const siteRes = telemetryPayloads.siteDetails || {};
+    const alertRes = telemetryPayloads.alertAnalytics || {};
+    const targetSite = siteRes.siteName || detectedSites[0] || 'Site';
+    const openCases = siteRes.openCases || [];
+
+    return generateExecutiveDashboardHtml({
+      title: `SITEPULSE OPERATIONAL DASHBOARD: ${targetSite.toUpperCase()}`,
+      timeframe: targetRange,
+      kpis: [
+        { label: 'Site Status', value: siteRes.isDown ? 'CRITICAL DOWN' : 'OPERATIONAL', sub: 'Audited Status', color: siteRes.isDown ? 'var(--red)' : 'var(--green)' },
+        { label: 'Total Open Cases', value: siteRes.totalOpenCases || openCases.length, sub: 'Active Tickets', color: (siteRes.totalOpenCases || openCases.length) > 5 ? 'var(--red)' : 'var(--text)' },
+        { label: 'SEV 1 Urgent', value: siteRes.activeSev1Count || 0, sub: '100% Impact Disruption', color: (siteRes.activeSev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+        { label: 'SEV 2 Urgent / High', value: (siteRes.activeSev2UrgentCount || 0) + (siteRes.activeSev2HighCount || 0), sub: 'Throughput Risk', color: ((siteRes.activeSev2UrgentCount || 0) + (siteRes.activeSev2HighCount || 0)) > 0 ? 'var(--amber)' : 'var(--green)' },
+      ],
+      tableTitle: `Live Incident Cases: ${targetSite}`,
+      tabs: [
+        { key: 'all', label: 'All Cases' },
+        { key: 'sev1', label: 'SEV 1' },
+        { key: 'sev2', label: 'SEV 2' },
+      ],
+      tableHeaders: ['Case #', 'Severity', 'Status', 'Subject', 'Created Date'],
+      tableRows: openCases.slice(0, 20).map(c => {
+        const sev = String(c.severity || '').toLowerCase();
+        const isSev1 = sev.includes('1');
+        const isSev2 = sev.includes('2');
+        return {
+          category: isSev1 ? 'sev1' : isSev2 ? 'sev2' : 'other',
+          cells: [
+            `<b>${cleanCaseId(c.caseNumber)}</b>`,
+            `<span class="badge ${isSev1 ? 'badge-red' : isSev2 ? 'badge-amber' : 'badge-blue'}">${String(c.severity || 'N/A').toUpperCase()}</span>`,
+            `Status: ${c.status || 'Open'}`,
+            c.subject || 'Case ticket',
+            c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A',
+          ],
+        };
+      }),
+      recommendations: [
+        `Prioritize engineering swarming on open Sev-1 / Sev-2 tickets at ${targetSite}.`,
+        `Inspect Opsgenie hardware & controller telemetry signals to prevent downtime escalation.`,
+        `Maintain 24/7 reliability monitoring across ${targetSite} automated material handling systems.`,
+      ],
+    });
+  }
+
+  // 2. Comparison Workflow
+  if (isComparison && detectedSites.length >= 2) {
+    const siteA = detectedSites[0];
+    const siteB = detectedSites[1];
+    const resA = telemetryPayloads[siteA] || {};
+    const resB = telemetryPayloads[siteB] || {};
+    const scoreA = (resA.isDown ? 100 : 0) + ((resA.activeSev1Count || 0) * 50) + ((resA.totalOpenCases || 0) * 2);
+    const scoreB = (resB.isDown ? 100 : 0) + ((resB.activeSev1Count || 0) * 50) + ((resB.totalOpenCases || 0) * 2);
+    const worseSite = scoreA >= scoreB ? resA : resB;
+
+    return generateExecutiveDashboardHtml({
+      title: `SITEPULSE RELIABILITY COMPARISON: ${(resA.siteName || siteA).toUpperCase()} VS ${(resB.siteName || siteB).toUpperCase()}`,
+      timeframe: targetRange,
+      kpis: [
+        { label: `${resA.siteName || siteA} Open Cases`, value: resA.totalOpenCases || 0, sub: `${resA.activeSev1Count || 0} Sev 1`, color: resA.activeSev1Count > 0 ? 'var(--red)' : 'var(--text)' },
+        { label: `${resB.siteName || siteB} Open Cases`, value: resB.totalOpenCases || 0, sub: `${resB.activeSev1Count || 0} Sev 1`, color: resB.activeSev1Count > 0 ? 'var(--red)' : 'var(--text)' },
+        { label: 'Higher Risk Facility', value: worseSite.siteName || 'Site A', sub: 'Priority Attention', color: 'var(--red)' },
+        { label: 'Fleet Status', value: (resA.isDown || resB.isDown) ? 'DEGRADED' : 'OPERATIONAL', sub: 'Audited Telemetry', color: (resA.isDown || resB.isDown) ? 'var(--red)' : 'var(--green)' },
+      ],
+      tableTitle: `Active Incident Tickets: ${worseSite.siteName || 'Higher Risk Site'}`,
+      tableHeaders: ['Case #', 'Severity', 'Status', 'Subject'],
+      tableRows: (worseSite.openCases || []).slice(0, 10).map(c => ({
+        category: String(c.severity || '').includes('1') ? 'sev1' : 'sev2',
+        cells: [`<b>${cleanCaseId(c.caseNumber)}</b>`, c.severity || 'N/A', `Status: ${c.status || 'Open'}`, c.subject || 'Investigation'],
+      })),
+      recommendations: [
+        `Direct immediate on-call SRE resources to ${worseSite.siteName || 'the higher risk site'}.`,
+        `Address aging ticket backlogs and resolve hardware telemetry exceptions.`,
+      ],
+    });
+  }
+
+  // 3. RED Zone Breaches Workflow
+  if (isBreach || telemetryPayloads.redZone) {
+    const rz = telemetryPayloads.redZone || {};
+    const breachedSites = (rz.sites || []).filter(s => s.status === 'ACTIVE_BREACH' || s.isCurrentBreach);
+    const exitSites = (rz.sites || []).filter(s => s.status === 'EXIT_PENDING');
+
+    return generateExecutiveDashboardHtml({
+      title: 'SITEPULSE RED ZONE RELIABILITY AUDIT',
+      timeframe: targetRange,
+      kpis: [
+        { label: 'Active Breaches', value: rz.activeBreachesCount || breachedSites.length, sub: 'Immediate Risk', color: 'var(--red)' },
+        { label: 'Exit Probation', value: rz.exitPendingCount || exitSites.length, sub: '21-day monitor', color: 'var(--amber)' },
+        { label: 'Total Tracked', value: rz.totalRedZoneSites || (rz.sites || []).length, sub: 'RED Zone registry', color: 'var(--blue)' },
+        { label: 'SRE SLA Compliance', value: breachedSites.length === 0 ? 'NOMINAL' : 'NON-COMPLIANT', sub: 'Target: 0 Breaches', color: breachedSites.length === 0 ? 'var(--green)' : 'var(--red)' },
+      ],
+      tableTitle: 'RED Zone Facilities Roster',
+      tabs: [
+        { key: 'all', label: 'All Sites' },
+        { key: 'breach', label: 'Active Breaches' },
+        { key: 'exit', label: 'Exit Pending' },
+      ],
+      tableHeaders: ['Site Name', 'Status', 'Uptime', 'MTBF', 'Qualifying Incidents'],
+      tableRows: (rz.sites || []).slice(0, 20).map(s => {
+        const isBr = s.status === 'ACTIVE_BREACH' || s.isCurrentBreach;
+        return {
+          category: isBr ? 'breach' : 'exit',
+          cells: [
+            `<b>${s.siteName}</b>`,
+            `<span class="badge ${isBr ? 'badge-red' : 'badge-amber'}">${isBr ? 'ACTIVE BREACH' : 'EXIT PENDING'}</span>`,
+            `Uptime: ${s.criteria2_uptime?.uptimePercentage || 'N/A'}`,
+            `MTBF: ${s.criteria3_mtbf?.mtbfHours || 'N/A'}`,
+            `${(s.recentQualifyingIncidents || []).length} incidents`,
+          ],
+        };
+      }),
+      recommendations: [
+        'Mandate war-room protocol for facilities in ACTIVE BREACH.',
+        'Review Root Cause Analysis (RCA) on all qualifying Sev-1/Sev-2 incidents.',
+        'Enforce 21 continuous incident-free days before clearing sites from probation.',
+      ],
+    });
+  }
+
+  // 4. Fleet Incidents Workflow
+  if (isIncidentQuery || telemetryPayloads.fleetIncidents) {
+    const incData = telemetryPayloads.fleetIncidents || {};
+    const incidents = incData.incidents || [];
+    return generateExecutiveDashboardHtml({
+      title: 'SITEPULSE ACTIVE FLEET INCIDENTS',
+      timeframe: targetRange,
+      kpis: [
+        { label: 'Total Incidents', value: incData.totalIncidents || incidents.length, sub: 'Filtered Timeframe', color: 'var(--blue)' },
+        { label: 'SEV 1 Urgent', value: incData.sev1Count || 0, sub: '100% Disruption', color: (incData.sev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+        { label: 'SEV 2 High', value: incData.sev2Count || 0, sub: 'Throughput Impact', color: (incData.sev2Count || 0) > 0 ? 'var(--amber)' : 'var(--green)' },
+        { label: 'Health Status', value: (incData.sev1Count || 0) > 0 ? 'CRITICAL' : 'STABLE', sub: 'Fleet SLA', color: (incData.sev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+      ],
+      tableTitle: 'Active Incident Tickets',
+      tableHeaders: ['Case #', 'Severity', 'Site', 'Status', 'Subject'],
+      tableRows: incidents.slice(0, 20).map(i => {
+        const isS1 = String(i.severity || '').includes('1');
+        return {
+          category: isS1 ? 'sev1' : 'sev2',
+          cells: [
+            `<b>${cleanCaseId(i.caseNumber)}</b>`,
+            `<span class="badge ${isS1 ? 'badge-red' : 'badge-amber'}">${i.severity || 'N/A'}</span>`,
+            i.siteName || 'Fleet',
+            `Status: ${i.status || 'Open'}`,
+            i.subject || 'Incident Ticket',
+          ],
+        };
+      }),
+      recommendations: [
+        'Engage engineering teams immediately on any open Sev-1 or Sev-2 incidents.',
+        'Track incident resolution SLA against the 2-hour target.',
+      ],
+    });
+  }
+
+  const ov = telemetryPayloads.fleetOverview || {};
+  return generateExecutiveDashboardHtml({
+    title: 'SITEPULSE FLEET OPERATIONS OVERVIEW',
+    timeframe: targetRange,
+    kpis: [
+      { label: 'Monitored Sites', value: `${ov.totalSites || 80}+`, sub: 'Enterprise Centers', color: 'var(--blue)' },
+      { label: 'Active Sev-1 Outages', value: ov.sev1Count || 0, sub: '100% Impact', color: (ov.sev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
+      { label: 'Active Sev-2 Outages', value: ov.sev2Count || 0, sub: 'Throughput Impact', color: (ov.sev2Count || 0) > 0 ? 'var(--amber)' : 'var(--green)' },
+      { label: 'Total Open Cases', value: ov.totalOpenCases || 0, sub: 'Fleet-wide', color: 'var(--text)' },
+    ],
+    tableTitle: 'Fleet Reliability Overview',
+    tableHeaders: ['Metric', 'Current State', 'SRE Target', 'Status'],
+    tableRows: [
+      { category: 'all', cells: ['SEV 1 Urgent Outages', `${ov.sev1Count || 0}`, '0', (ov.sev1Count || 0) === 0 ? 'NOMINAL' : 'BREACH'] },
+      { category: 'all', cells: ['SEV 2 High Outages', `${ov.sev2Count || 0}`, '< 3', (ov.sev2Count || 0) < 3 ? 'NOMINAL' : 'ATTENTION'] },
+      { category: 'all', cells: ['Sites in Critical Down', `${ov.downSitesCount || 0}`, '0', (ov.downSitesCount || 0) === 0 ? 'NOMINAL' : 'CRITICAL'] },
+    ],
+    recommendations: [
+      'Maintain active monitoring across all 80+ customer fulfillment centers.',
+      'Ensure swift resolution on any SEV 1 / SEV 2 incidents to avoid SLA breaches.',
+    ],
+  });
+}
+
+/**
  * Synthesizes an executive operational briefing directly from pre-fetched live Salesforce telemetry.
  * Serves as a rock-solid, zero-latency safety net if OpenRouter model runs out of token length or returns empty content.
  */
@@ -1376,23 +1580,35 @@ function extractOpenRouterContent(data) {
  * to high-capacity free models (llama-3.3-70b, llama-3.1-8b, qwen-2.5) without hanging or crashing.
  */
 async function callOpenRouterWithRetry({ url, headers, payload }) {
-  const requestedModel = payload.model || 'openrouter/free';
+  const requestedModel = payload.model || (process.env.OPENROUTER_MODEL || 'openrouter/free').trim();
   const candidateModels = [
-    requestedModel,
     'openrouter/free',
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+    requestedModel,
+    'minimax/minimax-m3.1-flash:free',
+    'meta-llama/llama-3.2-3b-instruct:free',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('nemotron') && !m.includes('3.8'));
+
+  // Free models often reject or 404 when OpenAI 'tools' / function-calling schema is passed.
+  // Strip 'tools' and 'tool_choice' to ensure universal compatibility across free endpoints!
+  const cleanPayload = { ...payload };
+  if (cleanPayload.tools && (!cleanPayload.model || cleanPayload.model.includes(':free') || cleanPayload.model === 'openrouter/free')) {
+    delete cleanPayload.tools;
+    delete cleanPayload.tool_choice;
+  }
 
   let lastErr = null;
   for (let i = 0; i < candidateModels.length; i++) {
     const activeModel = candidateModels[i];
     try {
       console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (attempt ${i + 1}/${candidateModels.length})...`);
-      const currentPayload = { ...payload, model: activeModel };
+      const currentPayload = { ...cleanPayload, model: activeModel };
+      // Snappy timeout per candidate so user never waits >15s total across failovers
+      const timeoutMs = i === 0 ? 7000 : 5000;
       const res = await fetch(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(currentPayload),
-        signal: AbortSignal.timeout(8000), // 8s crisp timeout - zero 60s waits!
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
       if (res.ok) {
@@ -1510,7 +1726,7 @@ export function detectSitesFromQuery(input) {
  * - Zero-Crash Resilience: If OpenRouter returns finish_reason="length" or empty content, formats live Salesforce telemetry directly.
  * - Always returns HTTP 200 with rich operational briefing and interactive HTML dashboard.
  */
-async function tryOpenRouterChat({ session, cleanInput }) {
+async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
   const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
   if (!apiKey) return null;
 
@@ -1537,21 +1753,26 @@ async function tryOpenRouterChat({ session, cleanInput }) {
   // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
   const detectedSites = detectSitesFromQuery(cleanInput);
 
+  const isGreeting = /^(hi+|hello+|hey+|heya|hiya|greetings|good\s*(morning|afternoon|evening)|who are you|help|sup)[!.\s]*$/i.test(cleanInput);
+  const opsRegex = /\b(sev\s*[-]?\s*[1-4]|p[1-4]|severity|incident|incidents|ticket|tickets|case|cases|outage|outages|downtime|uptime|red\s*zone|redzone|breach|breaches|sla|slas|mtbf|probation|fleet|site|sites|fulfillment|warehouse|greyorange|butler|sorter|opsgenie|alert|alerts|salesforce|soql|overview|audit|status|health)\b/i;
+  const hasOpsKeywords = opsRegex.test(cleanInput) || detectedSites.length > 0;
+  const isGeneralQuestion = !hasOpsKeywords && !isGreeting;
+  const effectiveMode = (mode === 'ask' || mode === 'query') ? 'ask' : 'agent';
+
   const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
   const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
-  const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage');
+  const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage') || lower.includes('case') || lower.includes('down');
   const isSiteAudit = detectedSites.length > 0;
-  const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report');
+  const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report') || lower.includes('solution') || lower.includes('check');
 
-  const isOperationalTelemetryQuery = isComparison || isBreach || isIncidentQuery || isSiteAudit || isFleetOverview;
+  // Fast-Path: single inference pass cutting 300s tool loops down to 2-6s!
+  console.log(`[Pulse AI Fast-Path] Intent: greeting=${isGreeting}, generalQuestion=${isGeneralQuestion}, hasOpsKeywords=${hasOpsKeywords}, effectiveMode=${effectiveMode} for "${cleanInput.slice(0, 50)}"`);
 
-  // 1-SHOT FAST-PATH: Proactively pre-fetch all telemetry in parallel (<200ms)
-  // Sends a single inference pass to openrouter/free, cutting 300s tool loops down to 3-8s!
-  if (isOperationalTelemetryQuery) {
-    console.log(`[Pulse AI Fast-Path] Pre-fetching telemetry for 1-shot execution: "${cleanInput.slice(0, 60)}"`);
-    const toolsExecuted = [];
-    const telemetryPayloads = {};
+  const toolsExecuted = [];
+  const telemetryPayloads = {};
 
+  // ONLY pre-fetch telemetry if this is an operational inquiry (never for general questions or simple greetings)
+  if (hasOpsKeywords && !isGreeting) {
     try {
       if (isComparison) {
         const siteA = detectedSites[0] || 'H&M Canada Ajax';
@@ -1598,65 +1819,108 @@ async function tryOpenRouterChat({ session, cleanInput }) {
     } catch (fetchErr) {
       console.warn('[Pulse AI Fast-Path] Telemetry pre-fetch warning:', fetchErr.message);
     }
+  }
 
-    const compactJson = JSON.stringify(telemetryPayloads);
-    const fastPrompt = `USER REQUEST: "${cleanInput}"
+  const compactJson = JSON.stringify(telemetryPayloads);
+
+  let fastPrompt = '';
+  if (isGreeting) {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+You are Pulse AI, the Principal SRE and Autonomous Operations Intelligence Agent for GreyOrange's fleet monitoring platform (Sitepulse).
+Respond dynamically, warmly, concisely, and professionally to the user's greeting. Introduce yourself as Pulse AI, mention that you monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and RED Zone reliability risks across all 80+ customer fulfillment sites, and ask how you can assist the user today.
+CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else if (isGeneralQuestion) {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+You are Pulse AI, an intelligent AI assistant. Provide a clear, helpful, accurate, and concise answer to the user's question or request.
+CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else if (effectiveMode === 'ask') {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
 
 VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
 \`\`\`json
 ${compactJson}
 \`\`\`
 
-INSTRUCTIONS FOR EXECUTIVE BRIEFING:
-1. Synthesize this operational telemetry into an executive briefing for upper management.
+INSTRUCTIONS FOR DIRECT ANALYSIS (ASK MODE):
+1. Analyze the retrieved operational telemetry above and provide a direct, concise, factual, and helpful answer answering the user's specific question.
+2. Directly reference relevant sites, incident case numbers, severity levels, downtime, or alerts from the data as appropriate.
+3. Keep the format clean, conversational, and focused on directly answering the user's inquiry in clean markdown. Do NOT force a massive multi-section corporate report template.
+4. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
+5. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
+6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else {
+    // effectiveMode === 'agent'
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
+\`\`\`json
+${compactJson}
+\`\`\`
+
+INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
+1. Synthesize this operational telemetry into a comprehensive, high-impact executive textual analysis for upper management.
 2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
 3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-4. Provide an Interactive HTML Dashboard Artifact inside a standard HTML code block (\`\`\`html ... \`\`\`) matching Sitepulse dark slate theme (#0f1217 / #161a23) with KPI stat cards, interactive filter buttons, and incident table.
-5. Include companion executive summary and actionable SRE recommendations.
-6. CRITICAL: Output markdown report and HTML dashboard directly. Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+4. Include:
+   - Executive Summary & Situation Report
+   - Operational Status & Key Telemetry Metrics
+   - Active Incidents Table (| Case Number | Severity | Status | Impact % | Subject |)
+   - 2-3 Actionable SRE Leadership Recommendations
+5. Output clean markdown directly. Do NOT output raw HTML code blocks (an interactive visual dashboard is automatically rendered alongside your briefing).
+6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  }
 
-    const recentHistory = session.messages.slice(-4);
-    const messages = [
-      { role: 'system', content: SYSTEM_INSTRUCTION },
-      ...recentHistory.map(m => ({
-        role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: m.content || '',
-      })),
-      { role: 'user', content: fastPrompt },
-    ];
+  const fastHistory = session.messages.slice(-4);
+  const fastMessages = [
+    { role: 'system', content: SYSTEM_INSTRUCTION },
+    ...fastHistory.map(m => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: m.content || '',
+    })),
+    { role: 'user', content: fastPrompt },
+  ];
 
-    let data = null;
-    try {
-      data = await callOpenRouterWithRetry({
-        url,
-        headers,
-        payload: {
-          model,
-          messages,
-          temperature: 0.25,
-          max_tokens: 4096,
-        },
-        maxRetries: 1,
-      });
-    } catch (orApiErr) {
-      console.warn(`[Pulse AI Fast-Path] OpenRouter API notice: ${orApiErr.message}. Utilizing direct live telemetry synthesis.`);
-    }
+  let data = null;
+  try {
+    data = await callOpenRouterWithRetry({
+      url,
+      headers,
+      payload: {
+        model,
+        messages: fastMessages,
+        temperature: 0.25,
+        max_tokens: 4096,
+      },
+      maxRetries: 1,
+    });
+  } catch (orApiErr) {
+    console.warn(`[Pulse AI Fast-Path] OpenRouter API notice: ${orApiErr.message}.`);
+  }
 
-    let replyText = data ? extractOpenRouterContent(data) : '';
-    if (!replyText || !replyText.trim()) {
-      console.log(`[Pulse AI Fast-Path] Delivering executive briefing synthesized from live Salesforce telemetry.`);
-      replyText = formatExecutiveBriefingFromTelemetry({
-        cleanInput,
-        telemetryPayloads,
-        detectedSites,
-        targetRange,
-        isComparison,
-        isBreach,
-        isSiteAudit,
-        isIncidentQuery,
-      });
-    } else {
-      console.log(`[Pulse AI Fast-Path] Successfully generated briefing with ${data?._modelUsed || model} in 1 pass!`);
+  let replyText = data ? extractOpenRouterContent(data) : '';
+  if (replyText && replyText.trim()) {
+    console.log(`[Pulse AI Fast-Path] Successfully generated reply with ${data?._modelUsed || model} in 1 pass!`);
+
+    // Attach interactive HTML dashboard artifact ONLY in agent mode for operational queries
+    if (effectiveMode === 'agent' && hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+      try {
+        const artifactHtml = generateDashboardArtifactFromTelemetry({
+          telemetryPayloads,
+          detectedSites,
+          targetRange,
+          isComparison,
+          isBreach,
+          isSiteAudit,
+          isIncidentQuery,
+        });
+        if (artifactHtml && !replyText.includes('```html')) {
+          replyText += '\n\n' + artifactHtml;
+        }
+      } catch (artErr) {
+        console.warn('[Pulse AI Fast-Path] Dashboard artifact notice:', artErr.message);
+      }
     }
 
     session.messages.push({
@@ -1684,15 +1948,15 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
     },
   }));
 
-  const recentHistory = session.messages.slice(-6);
+  const toolHistory = session.messages.slice(-6);
   const currentMessages = [
     { role: 'system', content: SYSTEM_INSTRUCTION },
-    ...recentHistory.map(m => ({
+    ...toolHistory.map(m => ({
       role: m.role === 'assistant' ? 'assistant' : 'user',
       content: m.content || '',
     })),
   ];
-  const toolsExecuted = [];
+  const fallbackToolsExecuted = [];
 
   let initialData = null;
   try {
@@ -1719,24 +1983,17 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
   if (!message || toolCalls.length === 0) {
     let replyText = initialData ? extractOpenRouterContent(initialData) : '';
     if (!replyText || !replyText.trim()) {
-      const ov = await executeToolCall('get_fleet_overview', {});
-      replyText = formatExecutiveBriefingFromTelemetry({
-        cleanInput,
-        telemetryPayloads: { fleetOverview: ov },
-        detectedSites,
-        targetRange,
-        isSiteAudit: false,
-      });
+      return null;
     }
     session.messages.push({
       role: 'assistant',
       content: replyText,
-      toolsUsed: toolsExecuted,
+      toolsUsed: fallbackToolsExecuted,
       timestamp: Date.now(),
     });
     return {
       reply: replyText,
-      toolsUsed: toolsExecuted,
+      toolsUsed: fallbackToolsExecuted,
       sessionId: session.id,
       orgId: session.orgId,
       modelUsed: model,
@@ -1757,7 +2014,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
       toolArgs = {};
     }
     console.log(`[Pulse AI OpenRouter Tool Execution] Executing "${toolName}" with args:`, JSON.stringify(toolArgs));
-    toolsExecuted.push({ tool: toolName, args: toolArgs });
+    fallbackToolsExecuted.push({ tool: toolName, args: toolArgs });
 
     const toolResult = await executeToolCall(toolName, toolArgs);
     toolPayloads[toolName] = toolResult;
@@ -1799,34 +2056,18 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
 
   let finalReply = synthData ? extractOpenRouterContent(synthData) : '';
   if (!finalReply || !finalReply.trim()) {
-    console.log(`[Pulse AI Synth] Delivering live telemetry synthesis from executed tool data.`);
-    const siteDetails = toolPayloads.get_site_details;
-    finalReply = formatExecutiveBriefingFromTelemetry({
-      cleanInput,
-      telemetryPayloads: {
-        siteDetails,
-        alertAnalytics: toolPayloads.get_site_alert_analytics,
-        redZone: toolPayloads.get_red_zone_sites,
-        fleetIncidents: toolPayloads.get_fleet_incidents,
-        fleetOverview: toolPayloads.get_fleet_overview,
-      },
-      detectedSites,
-      targetRange,
-      isSiteAudit: Boolean(siteDetails),
-      isBreach: Boolean(toolPayloads.get_red_zone_sites),
-      isIncidentQuery: Boolean(toolPayloads.get_fleet_incidents),
-    });
+    return null;
   }
 
   session.messages.push({
     role: 'assistant',
     content: finalReply,
-    toolsUsed: toolsExecuted,
+    toolsUsed: fallbackToolsExecuted,
     timestamp: Date.now(),
   });
   return {
     reply: finalReply,
-    toolsUsed: toolsExecuted,
+    toolsUsed: fallbackToolsExecuted,
     sessionId: session.id,
     orgId: session.orgId,
     modelUsed: model,
@@ -1854,21 +2095,21 @@ function extractGeminiContent(data) {
  * - Provides full function-calling support for custom/ad-hoc SOQL queries.
  * - Zero-crash fallback ensuring 100% operational uptime.
  */
-async function tryGeminiChat({ session, cleanInput }) {
+async function tryGeminiChat({ session, cleanInput, mode = 'agent' }) {
   const apiKeys = [
     process.env.GEMINI_API_KEY,
     process.env.GEMINI_BACKUP_API_KEY,
   ].filter(Boolean);
-  const uniqueApiKeys = [...new Set(apiKeys.map(k => (k || '').trim()))].filter(Boolean);
+  const uniqueApiKeys = [...new Set(apiKeys.map(k => (k || '').trim()))].filter(isValidGeminiKey);
   if (uniqueApiKeys.length === 0) return null;
 
   const configuredModel = (process.env.GEMINI_MODEL || 'gemini-2.0-flash').trim();
   const modelsToTry = [
     configuredModel,
     'gemini-2.0-flash',
-    'gemini-2.5-flash',
     'gemini-1.5-flash',
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+    'gemini-2.5-flash',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('3.8'));
 
   const lower = cleanInput.toLowerCase();
 
@@ -1883,20 +2124,26 @@ async function tryGeminiChat({ session, cleanInput }) {
   // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
   const detectedSites = detectSitesFromQuery(cleanInput);
 
+  const isGreeting = /^(hi+|hello+|hey+|heya|hiya|greetings|good\s*(morning|afternoon|evening)|who are you|help|sup)[!.\s]*$/i.test(cleanInput);
+  const opsRegex = /\b(sev\s*[-]?\s*[1-4]|p[1-4]|severity|incident|incidents|ticket|tickets|case|cases|outage|outages|downtime|uptime|red\s*zone|redzone|breach|breaches|sla|slas|mtbf|probation|fleet|site|sites|fulfillment|warehouse|greyorange|butler|sorter|opsgenie|alert|alerts|salesforce|soql|overview|audit|status|health)\b/i;
+  const hasOpsKeywords = opsRegex.test(cleanInput) || detectedSites.length > 0;
+  const isGeneralQuestion = !hasOpsKeywords && !isGreeting;
+  const effectiveMode = (mode === 'ask' || mode === 'query') ? 'ask' : 'agent';
+
   const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
   const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
   const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage');
   const isSiteAudit = detectedSites.length > 0;
   const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report');
 
-  const isOperationalTelemetryQuery = isComparison || isBreach || isIncidentQuery || isSiteAudit || isFleetOverview;
+  // Fast-Path: single inference pass cutting latency down to < 2s
+  console.log(`[Pulse AI Gemini Fast-Path] Intent: greeting=${isGreeting}, generalQuestion=${isGeneralQuestion}, hasOpsKeywords=${hasOpsKeywords}, effectiveMode=${effectiveMode} for "${cleanInput.slice(0, 50)}"`);
 
-  // 1-SHOT FAST-PATH FOR GEMINI: Pre-fetch telemetry in parallel (<300ms) for ultra-fast 1-pass execution
-  if (isOperationalTelemetryQuery) {
-    console.log(`[Pulse AI Gemini Fast-Path] Pre-fetching telemetry for 1-shot execution: "${cleanInput.slice(0, 60)}"`);
-    const toolsExecuted = [];
-    const telemetryPayloads = {};
+  const toolsExecuted = [];
+  const telemetryPayloads = {};
 
+  // ONLY pre-fetch telemetry if this is an operational inquiry (never for general questions or simple greetings)
+  if (hasOpsKeywords && !isGreeting) {
     try {
       if (isComparison) {
         const siteA = detectedSites[0] || 'H&M Canada Ajax';
@@ -1943,131 +2190,188 @@ async function tryGeminiChat({ session, cleanInput }) {
     } catch (fetchErr) {
       console.warn('[Pulse AI Gemini Fast-Path] Telemetry pre-fetch warning:', fetchErr.message);
     }
+  }
 
-    const compactJson = JSON.stringify(telemetryPayloads);
-    const fastPrompt = `USER REQUEST: "${cleanInput}"
+  const compactJson = JSON.stringify(telemetryPayloads);
+
+  let fastPrompt = '';
+  if (isGreeting) {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+You are Pulse AI, the Principal SRE and Autonomous Operations Intelligence Agent for GreyOrange's fleet monitoring platform (Sitepulse).
+Respond dynamically, warmly, concisely, and professionally to the user's greeting. Introduce yourself as Pulse AI, mention that you monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and RED Zone reliability risks across all 80+ customer fulfillment sites, and ask how you can assist the user today.
+CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else if (isGeneralQuestion) {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+You are Pulse AI, an intelligent AI assistant. Provide a clear, helpful, accurate, and concise answer to the user's question or request.
+CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else if (effectiveMode === 'ask') {
+    fastPrompt = `USER REQUEST: "${cleanInput}"
 
 VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
 \`\`\`json
 ${compactJson}
 \`\`\`
 
-INSTRUCTIONS FOR EXECUTIVE BRIEFING:
-1. Synthesize this operational telemetry into an executive briefing for upper management.
+INSTRUCTIONS FOR DIRECT ANALYSIS (ASK MODE):
+1. Analyze the retrieved operational telemetry above and provide a direct, concise, factual, and helpful answer answering the user's specific question.
+2. Directly reference relevant sites, incident case numbers, severity levels, downtime, or alerts from the data as appropriate.
+3. Keep the format clean, conversational, and focused on directly answering the user's inquiry in clean markdown. Do NOT force a massive multi-section corporate report template.
+4. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
+5. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
+6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  } else {
+    // effectiveMode === 'agent'
+    fastPrompt = `USER REQUEST: "${cleanInput}"
+
+VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
+\`\`\`json
+${compactJson}
+\`\`\`
+
+INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
+1. Synthesize this operational telemetry into a comprehensive, high-impact executive textual analysis for upper management.
 2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
 3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-4. Provide an Interactive HTML Dashboard Artifact inside a standard HTML code block (\`\`\`html ... \`\`\`) matching Sitepulse dark slate theme (#0f1217 / #161a23) with KPI stat cards, interactive filter buttons, and incident table.
-5. Include companion executive summary and actionable SRE recommendations.
-6. CRITICAL: Output markdown report and HTML dashboard directly. Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+4. Include:
+   - Executive Summary & Situation Report
+   - Operational Status & Key Telemetry Metrics
+   - Active Incidents Table (| Case Number | Severity | Status | Impact % | Subject |)
+   - 2-3 Actionable SRE Leadership Recommendations
+5. Output clean markdown directly. Do NOT output raw HTML code blocks (an interactive visual dashboard is automatically rendered alongside your briefing).
+6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  }
 
-    const recentHistory = session.messages.slice(-4);
-    const contents = [
-      ...recentHistory.map(m => ({
-        role: m.role === 'user' ? 'user' : 'model',
-        parts: [{ text: m.content || '' }],
-      })),
-      {
-        role: 'user',
-        parts: [{ text: fastPrompt }],
-      },
-    ];
+  const fastHistory = session.messages.slice(-4);
+  const fastContents = [
+    ...fastHistory.map(m => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: m.content || '' }],
+    })),
+    {
+      role: 'user',
+      parts: [{ text: fastPrompt }],
+    },
+  ];
 
-    for (const apiKey of uniqueApiKeys) {
-      for (const model of modelsToTry) {
-        try {
-          const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-          console.log(`[Pulse AI Gemini Fast-Path] Invoking Gemini model=${model}...`);
+  for (const apiKey of uniqueApiKeys) {
+    for (const model of modelsToTry) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+        console.log(`[Pulse AI Gemini Fast-Path] Invoking Gemini model=${model}...`);
 
-          let res = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey,
+        const isBearer = apiKey.startsWith('AQ.') || apiKey.startsWith('ya29.');
+        const baseHeaders = {
+          'Content-Type': 'application/json',
+        };
+        if (isBearer) {
+          baseHeaders['Authorization'] = `Bearer ${apiKey}`;
+        } else {
+          baseHeaders['x-goog-api-key'] = apiKey;
+        }
+
+        let res = await fetch(url, {
+          method: 'POST',
+          headers: baseHeaders,
+          body: JSON.stringify({
+            contents: fastContents,
+            systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
+            generationConfig: {
+              temperature: 0.2,
+              maxOutputTokens: 8192,
             },
+          }),
+          signal: AbortSignal.timeout(12000),
+        });
+
+        // If 401 or 403, immediately trip circuit breaker and failover in <200ms without retrying
+        if (!res.ok && (res.status === 401 || res.status === 403)) {
+          const errText = await res.text().catch(() => '');
+          console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} returned HTTP ${res.status}:`, errText.slice(0, 160));
+          console.warn('[Pulse AI Gemini Fast-Path] API key rejected (invalid credentials). Tripping circuit breaker and failing over immediately.');
+          _geminiCircuitBreakerTripped = true;
+          return null;
+        }
+
+        // If 400, retry once with query parameter ?key=
+        if (!res.ok && res.status === 400) {
+          const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
+          const altHeaders = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+            ...(isBearer ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+          };
+          const queryRes = await fetch(queryUrl, {
+            method: 'POST',
+            headers: altHeaders,
             body: JSON.stringify({
-              contents,
+              contents: fastContents,
               systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
               generationConfig: {
                 temperature: 0.2,
                 maxOutputTokens: 8192,
               },
             }),
-            signal: AbortSignal.timeout(12000),
-          });
-
-          // If 401 or 403, retry with query parameter ?key=
-          if (!res.ok && (res.status === 401 || res.status === 403)) {
-            const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
-            const queryRes = await fetch(queryUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents,
-                systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
-                generationConfig: {
-                  temperature: 0.2,
-                  maxOutputTokens: 8192,
-                },
-              }),
-              signal: AbortSignal.timeout(12000),
-            });
-            if (queryRes.ok) res = queryRes;
-          }
-
-          if (res.ok) {
-            const data = await res.json();
-            const replyText = extractGeminiContent(data);
-            if (replyText && replyText.trim()) {
-              console.log(`[Pulse AI Gemini Fast-Path] Successfully generated briefing with ${model} in 1 pass!`);
-              session.messages.push({
-                role: 'assistant',
-                content: replyText,
-                toolsUsed: toolsExecuted,
-                timestamp: Date.now(),
-              });
-              return {
-                reply: replyText,
-                toolsUsed: toolsExecuted,
-                sessionId: session.id,
-                orgId: session.orgId,
-                modelUsed: model,
-              };
-            }
-          } else {
-            const errText = await res.text().catch(() => '');
-            console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} returned HTTP ${res.status}:`, errText.slice(0, 160));
-          }
-        } catch (callErr) {
-          console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} notice:`, callErr.message);
+            signal: AbortSignal.timeout(6000),
+          }).catch(() => null);
+          if (queryRes && queryRes.ok) res = queryRes;
         }
+
+        if (res.ok) {
+          const data = await res.json();
+          let replyText = extractGeminiContent(data);
+          if (replyText && replyText.trim()) {
+            console.log(`[Pulse AI Gemini Fast-Path] Successfully generated reply with ${model} in 1 pass!`);
+
+            // Attach interactive HTML dashboard artifact ONLY in agent mode for operational queries
+            if (effectiveMode === 'agent' && hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+              try {
+                const artifactHtml = generateDashboardArtifactFromTelemetry({
+                  telemetryPayloads,
+                  detectedSites,
+                  targetRange,
+                  isComparison,
+                  isBreach,
+                  isSiteAudit,
+                  isIncidentQuery,
+                });
+                if (artifactHtml && !replyText.includes('```html')) {
+                  replyText += '\n\n' + artifactHtml;
+                }
+              } catch (artErr) {
+                console.warn('[Pulse AI Gemini Fast-Path] Dashboard artifact notice:', artErr.message);
+              }
+            }
+
+            session.messages.push({
+              role: 'assistant',
+              content: replyText,
+              toolsUsed: toolsExecuted,
+              timestamp: Date.now(),
+            });
+            return {
+              reply: replyText,
+              toolsUsed: toolsExecuted,
+              sessionId: session.id,
+              orgId: session.orgId,
+              modelUsed: model,
+            };
+          }
+        } else {
+          const errText = await res.text().catch(() => '');
+          console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} returned HTTP ${res.status}:`, errText.slice(0, 160));
+          _lastPulseAiError = new Error(`Gemini HTTP ${res.status} (${model}): ${errText.slice(0, 200)}`);
+          if (res.status === 401 || res.status === 403 || (res.status === 400 && (errText.includes('API key not valid') || errText.includes('API_KEY_INVALID') || errText.includes('invalid authentication credentials')))) {
+            console.warn('[Pulse AI Gemini Fast-Path] API key rejected (invalid credentials). Failing over immediately to secondary engine.');
+            return null; // Immediately exit Gemini to avoid hanging on secondary retries
+          }
+        }
+      } catch (callErr) {
+        console.warn(`[Pulse AI Gemini Fast-Path] Model ${model} notice:`, callErr.message);
+        _lastPulseAiError = callErr;
       }
     }
-
-    // Direct synthesized briefing fallback if Gemini API call hit network issue
-    console.log(`[Pulse AI Gemini Fast-Path] Delivering executive briefing synthesized from live Salesforce telemetry.`);
-    const replyText = formatExecutiveBriefingFromTelemetry({
-      cleanInput,
-      telemetryPayloads,
-      detectedSites,
-      targetRange,
-      isComparison,
-      isBreach,
-      isSiteAudit,
-      isIncidentQuery,
-    });
-    session.messages.push({
-      role: 'assistant',
-      content: replyText,
-      toolsUsed: toolsExecuted,
-      timestamp: Date.now(),
-    });
-    return {
-      reply: replyText,
-      toolsUsed: toolsExecuted,
-      sessionId: session.id,
-      orgId: session.orgId,
-      modelUsed: `${modelsToTry[0] || 'gemini-2.0-flash'}-telemetry-synthesis`,
-    };
   }
 
   // STANDARD TOOL-CALLING PATH (for ad-hoc, custom, or direct SOQL queries)
@@ -2081,8 +2385,8 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
     },
   ];
 
-  const recentHistory = session.messages.slice(-8);
-  const contents = recentHistory.map(m => ({
+  const toolHistory = session.messages.slice(-8);
+  const initialToolContents = toolHistory.map(m => ({
     role: m.role === 'user' ? 'user' : 'model',
     parts: [{ text: m.content || '' }],
   }));
@@ -2095,8 +2399,8 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
         console.log(`[Pulse AI Gemini] Invoking model=${model} for prompt: "${cleanInput.slice(0, 60)}..."`);
 
-        let currentContents = [...contents];
-        const toolsExecuted = [];
+        let currentContents = [...initialToolContents];
+        const fallbackToolsExecuted = [];
 
         for (let step = 0; step < 5; step++) {
           let body = {
@@ -2109,25 +2413,37 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
             },
           };
 
+          const isBearer = apiKey.startsWith('AQ.') || apiKey.startsWith('ya29.');
+          const stepHeaders = {
+            'Content-Type': 'application/json',
+          };
+          if (isBearer) {
+            stepHeaders['Authorization'] = `Bearer ${apiKey}`;
+          } else {
+            stepHeaders['x-goog-api-key'] = apiKey;
+          }
+
           let res = await fetch(url, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-goog-api-key': apiKey,
-            },
+            headers: stepHeaders,
             body: JSON.stringify(body),
             signal: AbortSignal.timeout(12000),
           });
 
-          if (!res.ok && (res.status === 401 || res.status === 403)) {
+          if (!res.ok && (res.status === 400 || res.status === 401 || res.status === 403)) {
             const queryUrl = `${url}?key=${encodeURIComponent(apiKey)}`;
+            const altHeaders = {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKey,
+              ...(isBearer ? { 'Authorization': `Bearer ${apiKey}` } : {}),
+            };
             const queryRes = await fetch(queryUrl, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: altHeaders,
               body: JSON.stringify(body),
               signal: AbortSignal.timeout(12000),
-            });
-            if (queryRes.ok) res = queryRes;
+            }).catch(() => null);
+            if (queryRes && queryRes.ok) res = queryRes;
           }
 
           if (!res.ok) {
@@ -2145,16 +2461,17 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
           const functionCallPart = parts.find(p => p.functionCall);
 
           if (!functionCallPart) {
-            const replyText = extractGeminiContent(data) || 'I have analyzed the operational data.';
+            const replyText = extractGeminiContent(data);
+            if (!replyText || !replyText.trim()) return null;
             session.messages.push({
               role: 'assistant',
               content: replyText,
-              toolsUsed: toolsExecuted,
+              toolsUsed: fallbackToolsExecuted,
               timestamp: Date.now(),
             });
             return {
               reply: replyText,
-              toolsUsed: toolsExecuted,
+              toolsUsed: fallbackToolsExecuted,
               sessionId: session.id,
               orgId: session.orgId,
               modelUsed: model,
@@ -2163,7 +2480,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
 
           const { name: toolName, args: toolArgs } = functionCallPart.functionCall;
           console.log(`[Pulse AI Gemini Tool Execution] Step ${step}: executing "${toolName}" with args:`, JSON.stringify(toolArgs));
-          toolsExecuted.push({ tool: toolName, args: toolArgs });
+          fallbackToolsExecuted.push({ tool: toolName, args: toolArgs });
 
           const toolResult = await executeToolCall(toolName, toolArgs);
           const safeResponse = (typeof toolResult === 'object' && toolResult !== null && !Array.isArray(toolResult))
@@ -2182,7 +2499,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
           });
         }
 
-        if (toolsExecuted.length > 0) {
+        if (fallbackToolsExecuted.length > 0) {
           try {
             const synthBody = {
               contents: currentContents,
@@ -2191,9 +2508,18 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
               },
               generationConfig: { temperature: 0.2, maxOutputTokens: 8192 },
             };
+            const isBearer = apiKey.startsWith('AQ.') || apiKey.startsWith('ya29.');
+            const synthHeaders = {
+              'Content-Type': 'application/json',
+            };
+            if (isBearer) {
+              synthHeaders['Authorization'] = `Bearer ${apiKey}`;
+            } else {
+              synthHeaders['x-goog-api-key'] = apiKey;
+            }
             const synthRes = await fetch(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+              headers: synthHeaders,
               body: JSON.stringify(synthBody),
               signal: AbortSignal.timeout(12000),
             });
@@ -2204,12 +2530,12 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
                 session.messages.push({
                   role: 'assistant',
                   content: synthReply,
-                  toolsUsed: toolsExecuted,
+                  toolsUsed: fallbackToolsExecuted,
                   timestamp: Date.now(),
                 });
                 return {
                   reply: synthReply,
-                  toolsUsed: toolsExecuted,
+                  toolsUsed: fallbackToolsExecuted,
                   sessionId: session.id,
                   orgId: session.orgId,
                   modelUsed: model,
@@ -2232,7 +2558,7 @@ INSTRUCTIONS FOR EXECUTIVE BRIEFING:
 /**
  * Main chat handler for Pulse AI agent with tool-calling capabilities.
  */
-export async function chatWithPulseAI({ sessionId, message, orgId = 'default' }) {
+export async function chatWithPulseAI({ sessionId, message, orgId = 'default', mode = 'agent' }) {
   if (!message || typeof message !== 'string' || !message.trim()) {
     throw new Error('Message is required');
   }
@@ -2247,28 +2573,12 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
     timestamp: Date.now(),
   });
 
-  // Fast conversational greeting interceptor: provides zero-latency response for greetings
-  if (/^(hi|hello|hey|heya|hiya|greetings|good\s*(morning|afternoon|evening)|who are you|help)[!.]*$/i.test(cleanInput)) {
-    const welcomeReply = `Hello! I am **Pulse AI**, your Principal SRE & Autonomous Operations Intelligence Agent for GreyOrange's fleet monitoring platform (**Sitepulse**).\n\nI monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and RED Zone reliability risks across all 80+ customer fulfillment sites.\n\n### How can I assist you?\n- **Incident Intelligence**: "Show all Sev-1 cases in past 24 hours" or "List Sev-2 high cases for today"\n- **Site Deep Dive & Audit**: "Show status for H&M Ajax" or "Audit Walmart Mexico"\n- **Comparative Benchmarking**: "Compare H&M Canada vs Walmart Mexico"\n- **Direct Salesforce SOQL**: "Run SOQL: SELECT CaseNumber, Subject, Status FROM Case WHERE CreatedDate = TODAY"`;
-    
-    session.messages.push({
-      role: 'assistant',
-      content: welcomeReply,
-      toolsUsed: [],
-      timestamp: Date.now(),
-    });
-    return {
-      reply: welcomeReply,
-      toolsUsed: [],
-      sessionId: session.id,
-      orgId: session.orgId,
-    };
-  }
+  // User message is routed directly to the AI engine (no hardcoded responses even for greetings)
 
-  // 1. Try Google Gemini first if GEMINI_API_KEY is configured (Primary Engine: ~1-2s latency, 1,500 free requests/day)
-  if (process.env.GEMINI_API_KEY) {
+  // 1. Try Google Gemini first if GEMINI_API_KEY is configured with a valid AI Studio key (Primary Engine: ~1-2s latency, 1,500 free requests/day)
+  if (process.env.GEMINI_API_KEY && isValidGeminiKey(process.env.GEMINI_API_KEY)) {
     try {
-      const geminiResult = await tryGeminiChat({ session, cleanInput });
+      const geminiResult = await tryGeminiChat({ session, cleanInput, mode });
       if (geminiResult) {
         return geminiResult;
       }
@@ -2281,7 +2591,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
   // 2. Try OpenRouter if OPENROUTER_API_KEY is configured (Secondary Engine)
   if (process.env.OPENROUTER_API_KEY) {
     try {
-      const openRouterResult = await tryOpenRouterChat({ session, cleanInput });
+      const openRouterResult = await tryOpenRouterChat({ session, cleanInput, mode });
       if (openRouterResult) {
         return openRouterResult;
       }
@@ -2291,436 +2601,17 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default' })
     }
   }
 
-  // 3. Resilient Zero-Crash Safety Net: deliver live executive briefing synthesized directly from live Salesforce telemetry
-  console.warn('[Pulse AI] All AI engines (Gemini & OpenRouter) failed or unavailable. Engaging resilient operations fallback.');
-  try {
-    let fallbackText = '';
-    const fallbackTools = [];
-    const lower = cleanInput.toLowerCase();
-
-    const cleanCaseId = (num) => {
-      const str = String(num || '').trim();
-      return str.startsWith('#') ? str : `#${str}`;
-    };
-
-    // Detect requested time range
-    let targetRange = '24h';
-    if (lower.includes('2 day') || lower.includes('2day') || lower.includes('48h') || lower.includes('48 hour') || lower.includes('2d')) {
-      targetRange = '48h';
-    } else if (lower.includes('7 day') || lower.includes('7day') || lower.includes('week') || lower.includes('7d')) {
-      targetRange = '7d';
-    } else if (lower.includes('all') || lower.includes('ever') || lower.includes('history')) {
-      targetRange = 'all';
-    }
-
-    // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
-    const detectedSites = detectSitesFromQuery(cleanInput);
-
-    const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('both')));
-
-    if (isComparison && detectedSites.length >= 2) {
-      // Multi-site comparison workflow
-      const siteA = detectedSites[0];
-      const siteB = detectedSites[1];
-      const [resA, resB] = await Promise.all([
-        executeToolCall('get_site_details', { siteName: siteA, range: targetRange }),
-        executeToolCall('get_site_details', { siteName: siteB, range: targetRange }),
-      ]);
-      fallbackTools.push({ tool: 'get_site_details', args: { siteName: siteA, range: targetRange } });
-      fallbackTools.push({ tool: 'get_site_details', args: { siteName: siteB, range: targetRange } });
-
-      const score = (res) => {
-        return (res.isDown ? 100 : 0) +
-          ((res.activeSev1Count || 0) * 50) +
-          ((res.activeSev2UrgentCount || 0) * 30) +
-          ((res.activeSev2HighCount || 0) * 10) +
-          ((res.totalOpenCases || 0) * 2) +
-          ((res.totalAlerts || 0) * 3);
-      };
-
-      const scoreA = score(resA);
-      const scoreB = score(resB);
-      const isAWorse = scoreA >= scoreB;
-      const worseSite = isAWorse ? resA : resB;
-      const betterSite = isAWorse ? resB : resA;
-
-      fallbackText = `### Operational Reliability Comparison: ${resA.siteName || siteA} vs ${resB.siteName || siteB} (Timeframe: ${targetRange})\n\n`;
-      fallbackText += `> **EXECUTIVE VERDICT**: **${worseSite.siteName} is doing significantly worse** over the requested timeframe (${targetRange}).\n`;
-      fallbackText += `> - **${worseSite.siteName}** has **${worseSite.totalOpenCases} open operational cases**, ${worseSite.activeSev1Count} Sev-1 Urgent, and ${worseSite.activeSev2UrgentCount || 0} Sev-2 Urgent incidents.\n`;
-      fallbackText += `> - In contrast, **${betterSite.siteName}** maintains a much lower incident surface with **${betterSite.totalOpenCases} total open cases** and 0 Sev-1 cases.\n\n`;
-
-      fallbackText += `#### Cross-Site Operations Metric Matrix\n\n`;
-      fallbackText += `| Telemetry Metric | ${resA.siteName || siteA} | ${resB.siteName || siteB} | Risk Delta & SRE Assessment |\n`;
-      fallbackText += `|---|---|---|---|\n`;
-      fallbackText += `| **Site Status** | ${resA.isDown ? '🚨 Critical Down' : '✅ Operational'} | ${resB.isDown ? '🚨 Critical Down' : '✅ Operational'} | ${resA.isDown || resB.isDown ? 'Site outage flagged' : 'Both sites structurally online'} |\n`;
-      fallbackText += `| **SEV 1 URGENT** | ${resA.activeSev1Count || 0} | ${resB.activeSev2UrgentCount || 0} | Critical downtime impact |\n`;
-      fallbackText += `| **SEV 2 URGENT (50-99%)** | ${resA.activeSev2UrgentCount || 0} | ${resB.activeSev2UrgentCount || 0} | High operational impairment |\n`;
-      fallbackText += `| **SEV 2 HIGH (1-49%)** | ${resA.activeSev2HighCount || 0} | ${resB.activeSev2HighCount || 0} | Moderate throughput risk |\n`;
-      fallbackText += `| **SEV 3 Incidents** | ${resA.activeSev3Count || 0} | ${resB.activeSev3Count || 0} | Subsystem/station level issues |\n`;
-      fallbackText += `| **SEV 4 Requests** | ${resA.activeSev4Count || 0} | ${resB.activeSev4Count || 0} | Standard requests/enhancements |\n`;
-      fallbackText += `| **Total Open Cases** | **${resA.totalOpenCases || 0}** | **${resB.totalOpenCases || 0}** | ${isAWorse ? resA.siteName : resB.siteName} has ${(Math.abs(resA.totalOpenCases - resB.totalOpenCases))} more open cases |\n`;
-      fallbackText += `| **Opsgenie Telemetry Alerts** | ${resA.totalAlerts || 0} | ${resB.totalAlerts || 0} | Active infrastructure monitors |\n`;
-      fallbackText += `| **Product Lines Monitored** | ${(resA.productLines || []).join(', ') || 'RMS, RIL'} | ${(resB.productLines || []).join(', ') || 'RMS, RIL'} | Fleet equipment footprint |\n\n`;
-
-      // Open cases breakdown for worse site
-      fallbackText += `#### Top Active Cases: ${worseSite.siteName} (Higher Risk)\n\n`;
-      if ((worseSite.openCases || []).length > 0) {
-        fallbackText += `| Case Number | Severity | Status | Subject | Created Date |\n|---|---|---|---|---|\n`;
-        for (const c of worseSite.openCases.slice(0, 8)) {
-          fallbackText += `| ${cleanCaseId(c.caseNumber)} | [${String(c.severity || 'N/A').toUpperCase()}] | Status: ${c.status} | ${c.subject} | ${c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A'} |\n`;
-        }
-        fallbackText += `\n`;
-      } else {
-        fallbackText += `No open cases found for ${worseSite.siteName}.\n\n`;
-      }
-
-      // Open cases breakdown for better site
-      fallbackText += `#### Top Active Cases: ${betterSite.siteName}\n\n`;
-      if ((betterSite.openCases || []).length > 0) {
-        fallbackText += `| Case Number | Severity | Status | Subject | Created Date |\n|---|---|---|---|---|\n`;
-        for (const c of betterSite.openCases.slice(0, 8)) {
-          fallbackText += `| ${cleanCaseId(c.caseNumber)} | [${String(c.severity || 'N/A').toUpperCase()}] | Status: ${c.status} | ${c.subject} | ${c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A'} |\n`;
-        }
-      } else {
-        fallbackText += `No open cases found for ${betterSite.siteName}.\n`;
-      }
-
-      const comparisonHtml = generateExecutiveDashboardHtml({
-        title: `SITEPULSE RELIABILITY COMPARISON: ${resA.siteName || siteA} VS ${resB.siteName || siteB}`,
-        timeframe: targetRange,
-        kpis: [
-          { label: `${resA.siteName || siteA} Open Cases`, value: resA.totalOpenCases || 0, sub: `${resA.activeSev1Count || 0} Sev 1 | ${resA.activeSev2UrgentCount || 0} Sev 2`, color: (resA.totalOpenCases > 5 || resA.activeSev1Count > 0) ? 'var(--red)' : 'var(--text)' },
-          { label: `${resB.siteName || siteB} Open Cases`, value: resB.totalOpenCases || 0, sub: `${resB.activeSev1Count || 0} Sev 1 | ${resB.activeSev2UrgentCount || 0} Sev 2`, color: (resB.totalOpenCases > 5 || resB.activeSev1Count > 0) ? 'var(--red)' : 'var(--text)' },
-          { label: 'Highest Risk Site', value: worseSite.siteName, sub: `Delta: +${Math.abs((resA.totalOpenCases || 0) - (resB.totalOpenCases || 0))} open cases`, color: 'var(--red)' },
-          { label: 'Fleet Status', value: (resA.isDown || resB.isDown) ? 'DEGRADED' : 'OPERATIONAL', sub: 'Audited Telemetry', color: (resA.isDown || resB.isDown) ? 'var(--red)' : 'var(--green)' },
-        ],
-        matrixTitle: 'Cross-Site Operational Telemetry Matrix',
-        matrixHeaders: ['Telemetry Metric', resA.siteName || siteA, resB.siteName || siteB, 'Risk Assessment'],
-        matrixRows: [
-          ['Operational State', resA.isDown ? '<span class="badge badge-red">CRITICAL DOWN</span>' : '<span class="badge badge-green">OPERATIONAL</span>', resB.isDown ? '<span class="badge badge-red">CRITICAL DOWN</span>' : '<span class="badge badge-green">OPERATIONAL</span>', resA.isDown || resB.isDown ? 'Active site downtime' : 'Nominal footprint'],
-          ['SEV 1 Urgent (100%)', `<span class="badge ${resA.activeSev1Count > 0 ? 'badge-red' : 'badge-gray'}">${resA.activeSev1Count || 0}</span>`, `<span class="badge ${resB.activeSev1Count > 0 ? 'badge-red' : 'badge-gray'}">${resB.activeSev1Count || 0}</span>`, 'Critical business disruption'],
-          ['SEV 2 Urgent (50-99%)', `<span class="badge ${resA.activeSev2UrgentCount > 0 ? 'badge-red' : 'badge-gray'}">${resA.activeSev2UrgentCount || 0}</span>`, `<span class="badge ${resB.activeSev2UrgentCount > 0 ? 'badge-red' : 'badge-gray'}">${resB.activeSev2UrgentCount || 0}</span>`, 'High operational impairment'],
-          ['SEV 2 High (1-49%)', `<span class="badge ${resA.activeSev2HighCount > 0 ? 'badge-amber' : 'badge-gray'}">${resA.activeSev2HighCount || 0}</span>`, `<span class="badge ${resB.activeSev2HighCount > 0 ? 'badge-amber' : 'badge-gray'}">${resB.activeSev2HighCount || 0}</span>`, 'Moderate throughput risk'],
-          ['Total Open Cases', `<b>${resA.totalOpenCases || 0}</b>`, `<b>${resB.totalOpenCases || 0}</b>`, `${worseSite.siteName} has higher case volume`],
-          ['Telemetry Alerts', `${resA.totalAlerts || 0}`, `${resB.totalAlerts || 0}`, 'Opsgenie hardware/system signals'],
-        ],
-        tableTitle: `Active Incident Tickets: ${worseSite.siteName}`,
-        tabs: [
-          { key: 'all', label: 'All Incidents' },
-          { key: 'sev1', label: 'SEV 1' },
-          { key: 'sev2', label: 'SEV 2' },
-        ],
-        tableHeaders: ['Case #', 'Site', 'Severity', 'Status', 'Subject', 'Created Date'],
-        tableRows: [
-          ...(worseSite.openCases || []).slice(0, 10).map(c => {
-            const sev = String(c.severity || 'sev3').toLowerCase();
-            const cat = sev.includes('1') ? 'sev1' : sev.includes('2') ? 'sev2' : 'other';
-            const badgeClass = cat === 'sev1' ? 'badge-red' : cat === 'sev2' ? 'badge-amber' : 'badge-blue';
-            return {
-              category: cat,
-              cells: [
-                `<b>${cleanCaseId(c.caseNumber)}</b>`,
-                worseSite.siteName,
-                `<span class="badge ${badgeClass}">${String(c.severity || 'N/A').toUpperCase()}</span>`,
-                `Status: ${c.status}`,
-                c.subject || 'Incident investigation',
-                c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A',
-              ],
-            };
-          }),
-        ],
-        recommendations: [
-          `Direct SRE on-call priority to ${worseSite.siteName} to triage active open cases.`,
-          `Review system logs for root cause analysis on recurring hardware/software alarms.`,
-          `Enforce standard resolution runbooks to clear aged open support tickets.`,
-        ],
-      });
-      fallbackText += `\n\n` + comparisonHtml;
-
-    } else if (lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active') || lower.includes('all')))) {
-      // Autonomous Breach & Alert Report Workflow
-      const [rzRes, incRes, alertRes] = await Promise.all([
-        executeToolCall('get_red_zone_sites', {}),
-        executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' }),
-        executeToolCall('get_site_alert_analytics', { siteName: 'all', range: targetRange }),
-      ]);
-      fallbackTools.push({ tool: 'get_red_zone_sites', args: {} });
-      fallbackTools.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
-      fallbackTools.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: targetRange } });
-
-      const activeSev1Cases = incRes.activeFleetOpenSev1Cases || [];
-      const activeSev2UrgentCases = incRes.activeFleetOpenSev2UrgentCases || [];
-      const rzSites = rzRes.sites || [];
-      const activeRzBreaches = rzSites.filter(s => s.isCurrentBreach);
-      const exitPendingSites = rzSites.filter(s => s.status === 'EXIT_PENDING');
-
-      fallbackText = `### Executive Operational Breach & Alert Report (Timeframe: ${targetRange})\n\n`;
-      fallbackText += `> **EXECUTIVE AUDIT SUMMARY**: SRE Fleet Surveillance identified **${activeRzBreaches.length} sites in ACTIVE RED Zone breach**, **${activeSev1Cases.length} active [SEV 1 URGENT] cases (100% impact)**, **${activeSev2UrgentCases.length} active [SEV 2 URGENT] cases (50-99% impact)**, and **${alertRes.totalAlerts || 0} telemetry machine alarms** across 80+ customer fulfillment centers.\n\n`;
-
-      // 1. Severity & SLA Breaches
-      fallbackText += `#### 1. Active Severity Outage & SLA Breaches\n\n`;
-      if (activeSev1Cases.length > 0 || activeSev2UrgentCases.length > 0) {
-        fallbackText += `| Case Number | Severity | Impact % | Site | Status | Subject | Created Date |\n|---|---|---|---|---|---|---|\n`;
-        for (const c of [...activeSev1Cases, ...activeSev2UrgentCases]) {
-          fallbackText += `| ${cleanCaseId(c.caseNumber)} | ${c.severity} | ${c.impactPercentage}% | ${c.siteName} | Status: ${c.status} | ${c.subject} | ${c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A'} |\n`;
-        }
-        fallbackText += `\n`;
-      } else {
-        fallbackText += `Status: Zero active [SEV 1 URGENT] or [SEV 2 URGENT] outages currently active across the fleet.\n\n`;
-      }
-
-      // 2. RED Zone Reliability Breaches Matrix
-      fallbackText += `#### 2. RED Zone Reliability Breaches Matrix\n\n`;
-      fallbackText += `*Criteria Rules*: Criteria 1 (>=3 Sev-1 OR >=5 Sev-2 in 7d), Criteria 2 (Audited Uptime < 99.0%), Criteria 3 (MTBF < 36h in 14d). *Exit Rule*: 21 continuous days with 0 criteria breaches.\n\n`;
-      if (rzSites.length > 0) {
-        fallbackText += `| Site Name | Status | Audited Uptime (Crit 2) | 7d Incidents (Crit 1) | 14d MTBF (Crit 3) | Exit Probation | Primary Breach Reason |\n|---|---|---|---|---|---|---|\n`;
-        for (const s of rzSites) {
-          const statusBadge = s.status === 'ACTIVE_BREACH' ? '🚨 ACTIVE BREACH' : s.status === 'EXIT_PENDING' ? '⏳ EXIT PENDING' : '✅ HEALTHY';
-          const uptimeStr = s.criteria2_uptime?.uptimePercentage || 'N/A';
-          const incStr = `Sev-1: ${s.criteria1?.sev1Count7d || 0}, Sev-2: ${s.criteria1?.sev2Count7d || 0}`;
-          const mtbfStr = s.criteria3_mtbf?.mtbfHours || 'N/A';
-          const exitStr = s.status === 'EXIT_PENDING' ? `${s.exitProbation?.daysRemainingToExit ?? 0} days remaining` : (s.status === 'ACTIVE_BREACH' ? 'Breached (0/21d)' : 'Clean');
-          const reasonStr = (s.reasons || [])[0] || 'Reliability audit qualification';
-          fallbackText += `| ${s.siteName} | ${statusBadge} | ${uptimeStr} | ${incStr} | ${mtbfStr} | ${exitStr} | ${reasonStr} |\n`;
-        }
-        fallbackText += `\n`;
-      } else {
-        fallbackText += `No sites currently qualify for RED Zone reliability breach.\n\n`;
-      }
-
-      // 3. Telemetry Machine Alarms
-      fallbackText += `#### 3. Monitoring Telemetry Alarms & Fleet Stability\n\n`;
-      fallbackText += `- **Total Telemetry Alarms**: ${alertRes.totalAlerts || 0} (${alertRes.openAlerts || 0} open, ${alertRes.closedAlerts || 0} closed)\n`;
-      fallbackText += `- **Mean Time to Resolve (MTTR)**: ${alertRes.mttrFormatted || 'N/A'}\n`;
-      fallbackText += `- **Alert SLA Compliance**: ${alertRes.resolutionSlaMetPercent || 100}%\n`;
-      fallbackText += `- **Auto-Resolution Rate**: ${alertRes.autoResolvedPercent || 0}%\n\n`;
-
-      if ((alertRes.topSignatures || []).length > 0) {
-        fallbackText += `**Top Alarm Failure Signatures**:\n`;
-        for (const sig of alertRes.topSignatures.slice(0, 5)) {
-          fallbackText += `- **${sig.name || sig.signature}**: ${sig.count || sig.totalCount} occurrences (${sig.sitesAffected || 'Fleet-wide'})\n`;
-        }
-        fallbackText += `\n`;
-      }
-
-      fallbackText += `#### 4. Actionable SRE Remediation Steps\n\n`;
-      fallbackText += `- **Immediate Action**: Swarm engineering squads on active RED Zone sites failing audited uptime (< 99.0%) and high incident frequency.\n`;
-      fallbackText += `- **Telemetry Auto-Remediation**: Investigate disk utilization threshold alarms (DiskUtilHigh) on core host platforms.\n`;
-      fallbackText += `- **Exit Probation Verification**: Maintain strict 21-day observation cycles before clearing probation flags.\n`;
-
-      const breachHtml = generateExecutiveDashboardHtml({
-        title: 'SITEPULSE FLEET RELIABILITY & RED ZONE AUDIT',
-        timeframe: targetRange,
-        kpis: [
-          { label: 'Active RED Zone Sites', value: activeRzBreaches.length, sub: 'Failing Criteria', color: activeRzBreaches.length > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'Exit Probation Sites', value: exitPendingSites.length, sub: 'Observation Cycle', color: exitPendingSites.length > 0 ? 'var(--amber)' : 'var(--text-muted)' },
-          { label: 'Active SEV 1 Outages', value: activeSev1Cases.length, sub: '100% Impact', color: activeSev1Cases.length > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'Telemetry Machine Alarms', value: alertRes.totalAlerts || 0, sub: `${alertRes.openAlerts || 0} open | ${alertRes.resolutionSlaMetPercent || 100}% SLA`, color: 'var(--blue)' },
-        ],
-        matrixTitle: 'RED Zone Reliability Compliance Matrix',
-        matrixHeaders: ['Site Name', 'Compliance State', 'Audited Uptime (Crit 2)', '7d Incidents (Crit 1)', '14d MTBF (Crit 3)', 'Exit Status'],
-        matrixRows: (rzSites.length > 0 ? rzSites : [{ siteName: 'Fleet-wide Nominal', status: 'HEALTHY', criteria2_uptime: { uptimePercentage: '99.9%' }, criteria1: { sev1Count7d: 0, sev2Count7d: 0 }, criteria3_mtbf: { mtbfHours: '120h' }, exitProbation: {} }]).map(s => {
-          const badge = s.status === 'ACTIVE_BREACH' ? '<span class="badge badge-red">ACTIVE BREACH</span>' : s.status === 'EXIT_PENDING' ? '<span class="badge badge-amber">EXIT PENDING</span>' : '<span class="badge badge-green">HEALTHY</span>';
-          return [
-            `<b>${s.siteName}</b>`,
-            badge,
-            s.criteria2_uptime?.uptimePercentage || 'N/A',
-            `Sev 1: ${s.criteria1?.sev1Count7d || 0} | Sev 2: ${s.criteria1?.sev2Count7d || 0}`,
-            s.criteria3_mtbf?.mtbfHours ? `${s.criteria3_mtbf.mtbfHours}h` : 'N/A',
-            s.status === 'EXIT_PENDING' ? `${s.exitProbation?.daysRemainingToExit ?? 0}d remaining` : (s.status === 'ACTIVE_BREACH' ? 'Breached' : 'Compliant'),
-          ];
-        }),
-        tableTitle: 'Active Severity Incidents & SLA Breaches',
-        tabs: [
-          { key: 'all', label: 'All Incidents' },
-          { key: 'sev1', label: 'SEV 1 URGENT' },
-          { key: 'sev2', label: 'SEV 2 URGENT' },
-        ],
-        tableHeaders: ['Case #', 'Site', 'Severity', 'Impact %', 'Status', 'Subject', 'Created Date'],
-        tableRows: [...activeSev1Cases, ...activeSev2UrgentCases].map(c => {
-          const isSev1 = String(c.severity || '').includes('1');
-          return {
-            category: isSev1 ? 'sev1' : 'sev2',
-            cells: [
-              `<b>${cleanCaseId(c.caseNumber)}</b>`,
-              c.siteName || 'Fleet',
-              `<span class="badge ${isSev1 ? 'badge-red' : 'badge-amber'}">${c.severity}</span>`,
-              `${c.impactPercentage}%`,
-              `Status: ${c.status}`,
-              c.subject || 'Outage Investigation',
-              c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A',
-            ],
-          };
-        }),
-        recommendations: [
-          'Deploy specialized SRE task forces to active RED Zone facilities failing uptime SLA (<99.0%).',
-          'Enforce rigorous 21-day observation cycles before permitting sites to exit RED Zone probation.',
-          'Automate telemetry alerting runbooks for high frequency DiskUtilHigh and MemoryThreshold alarms.',
-        ],
-      });
-      fallbackText += `\n\n` + breachHtml;
-
-    } else if (lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('hour') || lower.includes('today')) {
-      const incRes = await executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' });
-      fallbackTools.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
-      const sev1Count = incRes.summary?.sev1_count || 0;
-      const sev2Count = incRes.summary?.sev2_count || 0;
-      const totalCount = incRes.totalIncidents || 0;
-
-      fallbackText = `### Fleet Incident Report (Past ${targetRange})\n\n**Summary Overview**\n- **Total Monitored Incidents**: ${totalCount}\n- **Sev-1 Urgent Cases**: ${sev1Count}\n- **Sev-2 High / Urgent Cases**: ${sev2Count}\n\n`;
-      if (totalCount === 0) {
-        fallbackText += `Status: No urgent Sev-1 or Sev-2 incidents were recorded across the fleet in the past ${targetRange}.\nAll customer sites (RMS, Ranger Assist, RIL) are currently operating within nominal parameters.`;
-      } else {
-        fallbackText += `| Case Number | Site | Severity | Status | Subject |\n|---|---|---|---|---|\n`;
-        for (const c of (incRes.incidents || []).slice(0, 15)) {
-          fallbackText += `| ${cleanCaseId(c.caseNumber)} | ${c.siteName} | [${c.severity.toUpperCase()}] | Status: ${c.status} | ${c.subject} |\n`;
-        }
-      }
-
-      const incidentHtml = generateExecutiveDashboardHtml({
-        title: `SITEPULSE FLEET INCIDENTS OVERVIEW (${targetRange.toUpperCase()})`,
-        timeframe: targetRange,
-        kpis: [
-          { label: 'Total Monitored Incidents', value: totalCount, sub: 'Fleet-wide', color: totalCount > 0 ? 'var(--primary)' : 'var(--green)' },
-          { label: 'SEV 1 Urgent Cases', value: sev1Count, sub: '100% Impact Disruption', color: sev1Count > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'SEV 2 Urgent / High Cases', value: sev2Count, sub: 'Impacting Throughput', color: sev2Count > 0 ? 'var(--amber)' : 'var(--green)' },
-          { label: 'Nominal Operations Sites', value: '80+', sub: 'Active Monitoring', color: 'var(--blue)' },
-        ],
-        tableTitle: `Operational Incidents: Past ${targetRange}`,
-        tabs: [
-          { key: 'all', label: 'All Incidents' },
-          { key: 'sev1', label: 'SEV 1' },
-          { key: 'sev2', label: 'SEV 2' },
-        ],
-        tableHeaders: ['Case #', 'Site', 'Severity', 'Status', 'Subject'],
-        tableRows: (incRes.incidents || []).slice(0, 20).map(c => {
-          const sev = String(c.severity || '').toLowerCase();
-          const isSev1 = sev.includes('1');
-          const isSev2 = sev.includes('2');
-          return {
-            category: isSev1 ? 'sev1' : isSev2 ? 'sev2' : 'other',
-            cells: [
-              `<b>${cleanCaseId(c.caseNumber)}</b>`,
-              c.siteName || 'Fleet',
-              `<span class="badge ${isSev1 ? 'badge-red' : isSev2 ? 'badge-amber' : 'badge-blue'}">${String(c.severity).toUpperCase()}</span>`,
-              `Status: ${c.status}`,
-              c.subject || 'Incident ticket',
-            ],
-          };
-        }),
-        recommendations: [
-          'Expedite resolution of all SEV 1 / SEV 2 tickets to avoid operational SLA breach.',
-          'Perform root-cause analysis on multi-case clusters across high-volume distribution centers.',
-        ],
-      });
-      fallbackText += `\n\n` + incidentHtml;
-
-    } else if (detectedSites.length > 0) {
-      const siteMatch = detectedSites[0];
-      const siteRes = await executeToolCall('get_site_details', { siteName: siteMatch, range: targetRange });
-      fallbackTools.push({ tool: 'get_site_details', args: { siteName: siteMatch, range: targetRange } });
-      const openCases = siteRes.openCases || [];
-      fallbackText = `### Operational Status: ${siteRes.siteName || siteMatch}\n\n` +
-        `- **Site Operational Status**: Status: ${siteRes.isDown ? 'Site Down' : 'Operational'}\n` +
-        `- **Product Lines**: ${(siteRes.productLines || []).join(', ') || 'RMS, RIL'}\n` +
-        `- **Total Open Cases**: ${siteRes.totalOpenCases || openCases.length}\n` +
-        `- **Sev-1 Urgent Cases**: ${siteRes.activeSev1Count || 0}\n` +
-        `- **Sev-2 Urgent Cases**: ${siteRes.activeSev2UrgentCount || 0}\n` +
-        `- **Sev-2 High Cases**: ${siteRes.activeSev2HighCount || 0}\n\n`;
-
-      if (openCases.length > 0) {
-        fallbackText += `| Case Number | Severity | Status | Subject | Created Date |\n|---|---|---|---|---|\n`;
-        for (const c of openCases.slice(0, 15)) {
-          fallbackText += `| ${cleanCaseId(c.caseNumber)} | [${String(c.severity || 'N/A').toUpperCase()}] | Status: ${c.status} | ${c.subject} | ${c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A'} |\n`;
-        }
-      }
-
-      const siteHtml = generateExecutiveDashboardHtml({
-        title: `SITEPULSE SITE OPERATIONS: ${(siteRes.siteName || siteMatch).toUpperCase()}`,
-        timeframe: targetRange,
-        kpis: [
-          { label: 'Site Status', value: siteRes.isDown ? 'CRITICAL DOWN' : 'OPERATIONAL', sub: 'Audited Status', color: siteRes.isDown ? 'var(--red)' : 'var(--green)' },
-          { label: 'Total Open Cases', value: siteRes.totalOpenCases || openCases.length, sub: 'Active Tickets', color: (siteRes.totalOpenCases || openCases.length) > 5 ? 'var(--red)' : 'var(--text)' },
-          { label: 'SEV 1 Urgent', value: siteRes.activeSev1Count || 0, sub: '100% Impact', color: (siteRes.activeSev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'SEV 2 Urgent / High', value: (siteRes.activeSev2UrgentCount || 0) + (siteRes.activeSev2HighCount || 0), sub: 'Throughput Impact', color: ((siteRes.activeSev2UrgentCount || 0) + (siteRes.activeSev2HighCount || 0)) > 0 ? 'var(--amber)' : 'var(--green)' },
-        ],
-        tableTitle: `Active Incident Cases: ${siteRes.siteName || siteMatch}`,
-        tabs: [
-          { key: 'all', label: 'All Cases' },
-          { key: 'sev1', label: 'SEV 1' },
-          { key: 'sev2', label: 'SEV 2' },
-        ],
-        tableHeaders: ['Case #', 'Severity', 'Status', 'Subject', 'Created Date'],
-        tableRows: openCases.slice(0, 15).map(c => {
-          const sev = String(c.severity || '').toLowerCase();
-          const isSev1 = sev.includes('1');
-          const isSev2 = sev.includes('2');
-          return {
-            category: isSev1 ? 'sev1' : isSev2 ? 'sev2' : 'other',
-            cells: [
-              `<b>${cleanCaseId(c.caseNumber)}</b>`,
-              `<span class="badge ${isSev1 ? 'badge-red' : isSev2 ? 'badge-amber' : 'badge-blue'}">${String(c.severity || 'N/A').toUpperCase()}</span>`,
-              `Status: ${c.status}`,
-              c.subject || 'Case ticket',
-              c.createdDate ? new Date(c.createdDate).toLocaleDateString() : 'N/A',
-            ],
-          };
-        }),
-        recommendations: [
-          `Maintain continuous monitoring on hardware and software services at ${siteRes.siteName || siteMatch}.`,
-          `Triage high-priority open cases with Site Operations team to prevent downtime escalation.`,
-        ],
-      });
-      fallbackText += `\n\n` + siteHtml;
-
-    } else {
-      const ovRes = await executeToolCall('get_fleet_overview', {});
-      fallbackTools.push({ tool: 'get_fleet_overview', args: {} });
-      fallbackText = `### Live Fleet Operations Telemetry\n\n- **Total Monitored Sites**: ${ovRes.monitoredSitesCount || 80}\n- **Critical Down Sites**: ${ovRes.criticalDownSitesCount || 0}\n- **Active Sev-1 Cases**: ${ovRes.activeSev1Count || 0}\n- **Active Sev-2 Cases**: ${ovRes.activeSev2Count || 0}\n\nFleet telemetry is continuously monitored. Ask for a specific site or incident breakdown for detailed telemetry.`;
-
-      const fleetHtml = generateExecutiveDashboardHtml({
-        title: 'SITEPULSE LIVE FLEET OPERATIONS OVERVIEW',
-        timeframe: '24h',
-        kpis: [
-          { label: 'Total Monitored Sites', value: ovRes.monitoredSitesCount || 80, sub: 'Active Facilities', color: 'var(--blue)' },
-          { label: 'Critical Down Sites', value: ovRes.criticalDownSitesCount || 0, sub: '100% Outage', color: (ovRes.criticalDownSitesCount || 0) > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'Active SEV 1 Cases', value: ovRes.activeSev1Count || 0, sub: 'Disruption Tickets', color: (ovRes.activeSev1Count || 0) > 0 ? 'var(--red)' : 'var(--green)' },
-          { label: 'Active SEV 2 Cases', value: ovRes.activeSev2Count || 0, sub: 'High Priority', color: (ovRes.activeSev2Count || 0) > 0 ? 'var(--amber)' : 'var(--green)' },
-        ],
-        recommendations: [
-          'All customer fulfillment sites are monitored by Sitepulse SRE automation.',
-          'Ask for a specific site or incident breakdown to drill into deep telemetry.',
-        ],
-      });
-      fallbackText += `\n\n` + fleetHtml;
-    }
-
-    session.messages.push({
-      role: 'assistant',
-      content: fallbackText,
-      toolsUsed: fallbackTools,
-      timestamp: Date.now(),
-    });
-    return {
-      reply: fallbackText,
-      toolsUsed: fallbackTools,
-      sessionId: session.id,
-      orgId: session.orgId,
-    };
-  } catch (fbErr) {
-    console.error('[Pulse AI] Resilient fallback error:', fbErr);
-  }
-
-  // Guaranteed resilient response: NEVER throw 500 or 503 from backend!
-  const emergencyFallback = "Sitepulse autonomous operations intelligence has verified fleet telemetry across all customer fulfillment centers. Operations, Salesforce tickets, and Opsgenie alerts are actively tracked and nominal. Please query a specific site or timeframe for detailed metrics.";
+  // 3. When AI quota is reached or all engines are unavailable, return exact service unavailable message
+  console.warn('[Pulse AI] AI quota reached or engines unavailable. Returning service unavailable notification.');
+  const unavailableMsg = 'Service not available at the moment try after some time [🦄]';
   session.messages.push({
     role: 'assistant',
-    content: emergencyFallback,
+    content: unavailableMsg,
     toolsUsed: [],
     timestamp: Date.now(),
   });
   return {
-    reply: emergencyFallback,
+    reply: unavailableMsg,
     toolsUsed: [],
     sessionId: session.id,
     orgId: session.orgId,

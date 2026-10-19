@@ -458,7 +458,14 @@ function Index() {
   }, [currentBucketItems]);
 
   const sev2CountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => detectSeverity(c) === 'sev2').length;
+    return currentBucketItems.filter(c => {
+      const s = detectSeverity(c);
+      return s === 'sev2' || (s as string) === 'sev2_urgent';
+    }).length;
+  }, [currentBucketItems]);
+
+  const sev2HighCountInBucket = useMemo(() => {
+    return currentBucketItems.filter(c => detectSeverity(c) === 'sev2_high').length;
   }, [currentBucketItems]);
 
   const severityCountsMap = useMemo(() => {
@@ -529,7 +536,10 @@ function Index() {
       if (severityFilter === 'SEV 1 URGENT') {
         if (detectSeverity(c) !== 'sev1') return false;
       } else if (severityFilter === 'SEV 2 URGENT') {
-        if (detectSeverity(c) !== 'sev2') return false;
+        const s = detectSeverity(c);
+        if (s !== 'sev2' && (s as string) !== 'sev2_urgent') return false;
+      } else if (severityFilter === 'SEV 2 HIGH') {
+        if (detectSeverity(c) !== 'sev2_high') return false;
       } else if (severityFilter !== 'All') {
         const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
         const p2 = (c.Priority || '').trim().toLowerCase();
@@ -610,13 +620,16 @@ function Index() {
       const isAlert = activeBucket === 'alerts' || isAlertCase(c);
       const sevType = isAlert ? 'sev3' : detectSeverity(c);
       const isSev1Urgent = !isAlert && sevType === 'sev1';
-      const isSev2Urgent = !isAlert && sevType === 'sev2';
+      const isSev2Urgent = !isAlert && (sevType === 'sev2' || (sevType as string) === 'sev2_urgent');
+      const isSev2High = !isAlert && sevType === 'sev2_high';
 
       const alertPrio = String(c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || 'P3').trim();
       const priorityClass = isSev1Urgent
         ? 'p-p1'
         : isSev2Urgent
         ? 'p-p2'
+        : isSev2High
+        ? 'p-p2-high'
         : isAlert
         ? (/p1|sev.*1|critical/i.test(alertPrio) ? 'p-p1' : /p2|sev.*2|high/i.test(alertPrio) ? 'p-p2' : 'p-p3')
         : 'p-p3';
@@ -627,6 +640,8 @@ function Index() {
         ? 'SEV 1 URGENT'
         : isSev2Urgent
         ? 'SEV 2 URGENT'
+        : isSev2High
+        ? 'SEV 2 HIGH'
         : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
 
       const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
@@ -662,6 +677,7 @@ function Index() {
         sevType,
         isSev1Urgent,
         isSev2Urgent,
+        isSev2High,
         priorityClass,
         priorityDisplay,
         productDisplay,
@@ -1430,10 +1446,13 @@ function Index() {
                         <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
                           ● SEV 2 URGENT ({sev2CountInBucket})
                         </option>
+                        <option value="SEV 2 HIGH" style={{ background: '#18191e', color: '#c084fc', fontWeight: 700 }}>
+                          ● SEV 2 HIGH ({sev2HighCountInBucket})
+                        </option>
                       </>
                     )}
                     {uniqueSeverities
-                      .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT')
+                      .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT' && sev !== 'SEV 2 HIGH')
                       .map(sev => {
                         const count = severityCountsMap.get(sev) ?? 0;
                         return (
@@ -1635,6 +1654,7 @@ function Index() {
                         statusClass,
                         isSev1Urgent,
                         isSev2Urgent,
+                        isSev2High,
                         priorityClass,
                         priorityDisplay,
                         productDisplay,
@@ -1685,6 +1705,11 @@ function Index() {
                               {!isAlert && isSev2Urgent && (
                                 <span className="case-down-badge" style={{ background: '#d97706', color: '#fff', fontWeight: 800 }}>
                                   SEV 2 URGENT
+                                </span>
+                              )}
+                              {!isAlert && isSev2High && (
+                                <span className="case-down-badge" style={{ background: '#7e22ce', color: '#fff', fontWeight: 800 }}>
+                                  SEV 2 HIGH
                                 </span>
                               )}
                               {fromToday && (

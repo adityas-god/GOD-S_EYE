@@ -42,6 +42,24 @@ export const DEFAULT_ALL_SITE_NAMES = defaultSites.map(s => s.name);
 
 let tokenCache = null;
 let _overviewCache = { data: null, cachedAt: 0 };
+const _siteCasesCache = new Map();
+const _inFlightSiteCasesPromises = new Map();
+const _historicalAlertsCache = new Map();
+const _inFlightHistoricalAlertsPromises = new Map();
+const _inFlightAlertAnalyticsPromises = new Map();
+
+export function invalidateSiteCasesCache(siteName = '') {
+  if (!siteName) {
+    _siteCasesCache.clear();
+  } else {
+    const prefix = siteName.toLowerCase().trim();
+    for (const key of _siteCasesCache.keys()) {
+      if (key.startsWith(prefix)) {
+        _siteCasesCache.delete(key);
+      }
+    }
+  }
+}
 let _lastSalesforceError = null;
 
 export function getLastSalesforceError() {
@@ -386,13 +404,21 @@ export function isImTicket(c) {
     return false;
   }
 
-  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  // Root incident guard: Any case without a ParentId that is an Incident or Technical Support is the primary incident, NEVER an automated child IM ticket!
   const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
-  if (parentId !== undefined && parentId !== null) {
-    const pStr = String(parentId).trim().toLowerCase();
-    if (pStr && pStr !== 'null' && pStr !== 'undefined' && pStr !== '0' && pStr !== 'false' && pStr !== '') {
-      return true;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || '').trim().toLowerCase();
+  const isExplicitIncident = /^(incident|technical support|software|hardware)$/i.test(rawType);
+  if (!hasParent && isExplicitIncident) {
+    const isExplicitChildSubject = /(?:^|[\s\[\(_\-])(?:child\s*im|child\s*case|sub[- ]*task|internal\s*maintenance)\b/i.test(sub);
+    if (!isExplicitChildSubject) {
+      return false;
     }
+  }
+
+  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
+  if (hasParent) {
+    return true;
   }
 
   // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
@@ -801,11 +827,11 @@ export function deduplicateIncidents(incidents = []) {
 
     // Highest severity wins
     const hasSev1 = cluster.some(t => t.severity === 'sev1');
-    const hasSev2 = cluster.some(t => t.severity === 'sev2');
+    const hasSev2 = cluster.some(t => t.severity === 'sev2' || t.severity === 'sev2_urgent');
     if (hasSev1) {
       rep.severity = 'sev1';
     } else if (hasSev2) {
-      rep.severity = 'sev2';
+      rep.severity = 'sev2_urgent';
     }
 
     // Earliest created date/time
@@ -1035,6 +1061,8 @@ export function setSiteObservedProducts(siteIdentifier, productList) {
 
 export function invalidateOverviewCache() {
   _overviewCache = { data: null, cachedAt: 0 };
+  _backendCasesCache = { cases: [], alerts: [], openAlerts: [], closedAlerts: [], allAlerts: [], closed: [], fetchedAt: 0 };
+  _siteCasesCache.clear();
 }
 
 export function inferProductLine(name) {
@@ -1554,14 +1582,23 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
   // Level 0: Primary authoritative Subject line & location fields check
   const sub = String(caseRecord.Subject || caseRecord.subject || '').trim();
   const accIdRaw = String(caseRecord.AccountId || caseRecord.account_id || '').trim();
+  const accNameRaw = String(
+    caseRecord.Account_Name__c ||
+    caseRecord.account_name ||
+    caseRecord.Account?.Name ||
+    caseRecord.Account_name_Reporting__c ||
+    ''
+  ).trim();
+  const descRaw = String(caseRecord.Description || caseRecord.description || '').trim();
   const combinedContext = [
     caseRecord.Snow_Sitename__c,
     caseRecord.Customer_Location__c,
     caseRecord.Site_Name_Customer_Input__c,
     caseRecord.Impacted_Sites__c,
     sub,
-    caseRecord.Account_Name__c || caseRecord.account_name,
+    accNameRaw,
     accIdRaw,
+    descRaw.length > 1000 ? descRaw.slice(0, 1000) : descRaw,
   ].filter(Boolean).join(' ').toLowerCase();
 
   // Primary authoritative XPO -> GXO site resolution:
@@ -1595,22 +1632,32 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
   }
 
   // Sams Club multi-site resolution (evaluate before generic city matching):
+  const isSamsLaxId = (id) =>
+    id === '001OX00000qZLaxYAG' ||
+    id === '001OX00000qZLbCYAW' ||
+    id.startsWith('001OX00000qZLax') ||
+    id.startsWith('001OX00000qZLbC');
+
+  const isSamsAtlId = (id) =>
+    id === '001OX00000qZLbBYAW' ||
+    id.startsWith('001OX00000qZLbB');
+
   if (
-    accIdRaw === '001OX00000qZLbBYAW' ||
-    accIdRaw === '001OX00000qZLaxYAG' ||
+    isSamsAtlId(accIdRaw) ||
+    isSamsLaxId(accIdRaw) ||
     /sam(s)?(\s*club)?|4993|8799|9476|samsatl|samatl|samprod|samsprod|samslax|samlax/i.test(combinedContext)
   ) {
     if (
-      accIdRaw === '001OX00000qZLbBYAW' ||
-      /atl|atlanta|4993|samsatl|samatl|samprod|samsprod/i.test(combinedContext)
+      isSamsAtlId(accIdRaw) ||
+      /\b(atl|atlanta|4993|samsatl|samatl|samprod|samsprod)\b/i.test(combinedContext)
     ) {
       const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
       if (sam) return sam.originalName;
       return 'Sams Club ATL';
     }
     if (
-      accIdRaw === '001OX00000qZLaxYAG' ||
-      /lax|california|8799|9476|samslax|samlax|samlaxprod/i.test(combinedContext)
+      isSamsLaxId(accIdRaw) ||
+      /\b(lax|california|8799|9476|samslax|samlax|samlaxprod)\b/i.test(combinedContext)
     ) {
       const sam = compiledSites.find(x => /sam.*lax/i.test(x.originalName));
       if (sam) return sam.originalName;
@@ -1918,15 +1965,8 @@ export function detectSeverity(c) {
   if (Boolean(raw.Is_Site_100_Down__c) || Boolean(raw.is_site_down) || Boolean(raw.isSiteDown) || impact >= 100) {
     return 'sev1';
   }
-  if (impact >= 50 && impact < 100) {
-    return 'sev2_urgent';
-  }
-  if (impact >= 1 && impact < 50) {
-    return 'sev2_high';
-  }
 
-  // 2. Field-based classification (when percentage is 0 or null):
-  // Explicit Sev 1
+  // Explicit Sev 1 in case fields or subject
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 1' ||
@@ -1946,7 +1986,12 @@ export function detectSeverity(c) {
     return 'sev1';
   }
 
-  // Explicit Sev 2 Urgent
+  // Rule 2: 99% - 50% -> Sev 2 Urgent (User Rule: 99-50 = sve 2 urgnet)
+  if (impact >= 50 && impact < 100) {
+    return 'sev2_urgent';
+  }
+
+  // Explicit Sev 2 URGENT in fields or subject (MUST explicitly contain "URGENT", never generic "Severity 2")
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s.includes('2 - URGENT') ||
@@ -1964,12 +2009,19 @@ export function detectSeverity(c) {
     return 'sev2_urgent';
   }
 
-  // Explicit Sev 2 High (Standard Sev 2)
+  // Rule 3: 49% - 1% -> Sev 2 High (User Rule: 49-1 = sev 2 high - NOT Sev 2 Urgent!)
+  if (impact >= 1 && impact < 50) {
+    return 'sev2_high';
+  }
+
+  // Explicit Sev 2 High (generic Severity 2 / Sev 2 / P2 / High / 2 - High when impact is not >= 50% and not urgent)
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 2' ||
       s === 'SEV 2' ||
       s === 'SEV-2' ||
+      s.includes('SEVERITY 2') ||
+      s.includes('SEV 2') ||
       s === 'P2' ||
       s.includes('2 - HIGH') ||
       s.includes('2 - STANDARD') ||
@@ -1978,7 +2030,7 @@ export function detectSeverity(c) {
       return 'sev2_high';
     }
   }
-  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2(?![-_ ]*URGENT)|P2(?![-_ ]*URGENT)|SEVERITY[-_ ]*2(?![-_ ]*URGENT)|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2|SEVERITY[-_ ]*2|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
     return 'sev2_high';
   }
 
@@ -2293,6 +2345,108 @@ export async function syncSitesFromSalesforce({ authoritative = true } = {}) {
   return saved;
 }
 
+export function mapRecord(c) {
+  if (!c) return null;
+  const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
+  const rawType = c.Type || c.type || '';
+  const rawCat = c.Snow_Category__c || c.Category__c || c.Category || '';
+  const actualType = rawType || rawCat || 'Technical Support';
+  const cat = rawCat || rawType || 'Technical Support';
+  const rawProd = (c.Product_Type__c || c.Parent_Product_Type__c || '').trim();
+  const normProd = normalizeProductType(rawProd);
+  const prod = normProd || inferProductLine(
+    c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
+  );
+  const rawAssignee = (c.Dev_Case_Assignee__c || c.Owner?.Name || '').trim();
+  const isGreyOrangeQueue = !rawAssignee || /^greyorange(\s*queue)?$/i.test(rawAssignee);
+  const assignee = isGreyOrangeQueue ? 'Unassigned' : rawAssignee;
+  const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
+  const endTime = getTicketEndTime(c);
+  const isAlert = isAlertCase(c);
+  const isClosedByEndTime = Boolean(endTime) && !isAlert;
+  let finalStatus = c.Status;
+  if (isClosedByEndTime && !CLOSED_STATUS_PATTERNS.some(p => String(c.Status || '').toLowerCase().includes(p))) {
+    finalStatus = 'Closed';
+  }
+
+  return {
+    Id: c.Id,
+    case_id: c.Id,
+    CaseNumber: c.CaseNumber,
+    case_number: c.CaseNumber,
+    ParentId: c.ParentId || null,
+    parent_id: c.ParentId || null,
+    Subject: c.Subject || 'No Subject',
+    subject: c.Subject || 'No Subject',
+    Status: finalStatus,
+    status: finalStatus,
+    Priority: prio,
+    priority: prio,
+    Highest_Severity__c: c.Highest_Severity__c || null,
+    Severity__c: c.Severity__c || null,
+    Alert_Priority__c: c.Alert_Priority__c || null,
+    Snow_Priority__c: c.Snow_Priority__c || null,
+    Jira_Priority__c: c.Jira_Priority__c || null,
+    Impact_Percentage__c: c.Impact_Percentage__c || c.Impact_Percent__c || null,
+    Impact_Percent__c: c.Impact_Percent__c || null,
+    Type: actualType,
+    type: actualType,
+    raw_type: rawType,
+    rawType: rawType,
+    Category: cat,
+    category: cat,
+    Category__c: cat,
+    Product_Type__c: normProd || prod,
+    Parent_Product_Type__c: normalizeProductType(c.Parent_Product_Type__c) || null,
+    product_line: normProd || prod,
+    Product_Line: normProd || prod,
+    Dev_Case_Assignee__c: assignee,
+    assignee: assignee,
+    assigned_to: assignee,
+    Owner: c.Owner || { Name: assignee },
+    owner: c.Owner || { Name: assignee },
+    Description: desc,
+    description: desc,
+    AccountId: c.AccountId || null,
+    account_id: c.AccountId || null,
+    Account_Name__c: c.Account_Name__c || (c.Account && c.Account.Name) || null,
+    account_name: c.Account_Name__c || (c.Account && c.Account.Name) || null,
+    Customer_Location__c: c.Customer_Location__c || null,
+    customer_location: c.Customer_Location__c || null,
+    Is_Site_100_Down__c: Boolean(c.Is_Site_100_Down__c),
+    is_site_down: Boolean(c.Is_Site_100_Down__c),
+    CreatedDate: c.CreatedDate,
+    created_date: c.CreatedDate ? new Date(c.CreatedDate) : null,
+    LastModifiedDate: c.LastModifiedDate,
+    last_modified_date: c.LastModifiedDate ? new Date(c.LastModifiedDate) : null,
+    ClosedDate: endTime || c.ClosedDate || null,
+    closed_date: endTime ? new Date(endTime) : (c.ClosedDate ? new Date(c.ClosedDate) : null),
+    End_Time__c: endTime || null,
+    end_time: endTime ? new Date(endTime) : null,
+    End_Time_of_Incident__c: c.End_Time_of_Incident__c || null,
+    end_time_of_incident: c.End_Time_of_Incident__c ? new Date(c.End_Time_of_Incident__c) : null,
+    Actual_End_Time__c: c.Actual_End_Time__c || null,
+    actual_end_time: c.Actual_End_Time__c ? new Date(c.Actual_End_Time__c) : null,
+    Downtime__c: c.Downtime__c !== undefined ? c.Downtime__c : null,
+    downtime: c.Downtime__c !== undefined ? c.Downtime__c : null,
+    Snow_Sitename__c: c.Snow_Sitename__c || null,
+    Snow_id__c: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+    snow_id: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
+    Snow_Category__c: c.Snow_Category__c || null,
+    Snow_Urgency__c: c.Snow_Urgency__c || null,
+    Site_Name_Customer_Input__c: c.Site_Name_Customer_Input__c || null,
+    Impacted_Sites__c: c.Impacted_Sites__c || null,
+    DIR_Approval__c: c.DIR_Approval__c || null,
+    dir_approval: c.DIR_Approval__c || null,
+    Approval_status__c: c.Approval_status__c || null,
+    approval_status: c.Approval_status__c || null,
+    Current_RCA_Status__c: c.Current_RCA_Status__c || null,
+    current_rca_status: c.Current_RCA_Status__c || null,
+    RCA_Approval__c: c.RCA_Approval__c || null,
+    Default_Ticket_For_Problem__c: c.Default_Ticket_For_Problem__c || null,
+  };
+}
+
 let _backendCasesCache = { cases: [], alerts: [], openAlerts: [], closedAlerts: [], allAlerts: [], closed: [], fetchedAt: 0 };
 let _inFlightFetch = null;
 
@@ -2317,7 +2471,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     const alertsPrimarySoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
+      'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%')",
@@ -2328,7 +2482,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     const casesPrimarySoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
+      'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))) OR ClosedDate = TODAY)",
@@ -2338,7 +2492,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     const fallbackSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
       'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
+      'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
@@ -2347,7 +2501,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const safeSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
+      'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 600',
@@ -2355,7 +2509,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const ultraSafeSoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
-      'AccountId, Account_Name__c, Snow_Sitename__c, Owner.Name',
+      'AccountId, Account.Name, Account_Name__c, Snow_Sitename__c, Owner.Name',
       'FROM Case',
       "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
@@ -2406,107 +2560,6 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       }
     }
 
-    const mapRecord = (c) => {
-      const prio = c.Highest_Severity__c || c.Alert_Priority__c || c.Snow_Priority__c || c.Snow_Urgency__c || c.Jira_Priority__c || 'P3 - Medium';
-      const rawType = c.Type || c.type || '';
-      const rawCat = c.Snow_Category__c || c.Category__c || c.Category || '';
-      const actualType = rawType || rawCat || 'Technical Support';
-      const cat = rawCat || rawType || 'Technical Support';
-      const rawProd = (c.Product_Type__c || c.Parent_Product_Type__c || '').trim();
-      const normProd = normalizeProductType(rawProd);
-      const prod = normProd || inferProductLine(
-        c.Snow_Sitename__c || c.Customer_Location__c || c.Site_Name_Customer_Input__c || c.Account_Name__c || ''
-      );
-      const rawAssignee = (c.Dev_Case_Assignee__c || c.Owner?.Name || '').trim();
-      const isGreyOrangeQueue = !rawAssignee || /^greyorange(\s*queue)?$/i.test(rawAssignee);
-      const assignee = isGreyOrangeQueue ? 'Unassigned' : rawAssignee;
-      const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
-      const endTime = getTicketEndTime(c);
-      const isAlert = isAlertCase(c);
-      const isClosedByEndTime = Boolean(endTime) && !isAlert;
-      let finalStatus = c.Status;
-      if (isClosedByEndTime && !CLOSED_STATUS_PATTERNS.some(p => String(c.Status || '').toLowerCase().includes(p))) {
-        finalStatus = 'Closed';
-      }
-
-      return {
-        Id: c.Id,
-        case_id: c.Id,
-        CaseNumber: c.CaseNumber,
-        case_number: c.CaseNumber,
-        ParentId: c.ParentId || null,
-        parent_id: c.ParentId || null,
-        Subject: c.Subject || 'No Subject',
-        subject: c.Subject || 'No Subject',
-        Status: finalStatus,
-        status: finalStatus,
-        Priority: prio,
-        priority: prio,
-        Highest_Severity__c: c.Highest_Severity__c || null,
-        Severity__c: c.Severity__c || null,
-        Alert_Priority__c: c.Alert_Priority__c || null,
-        Snow_Priority__c: c.Snow_Priority__c || null,
-        Jira_Priority__c: c.Jira_Priority__c || null,
-        Impact_Percentage__c: c.Impact_Percentage__c || c.Impact_Percent__c || null,
-        Impact_Percent__c: c.Impact_Percent__c || null,
-        Type: actualType,
-        type: actualType,
-        raw_type: rawType,
-        rawType: rawType,
-        Category: cat,
-        category: cat,
-        Category__c: cat,
-        Product_Type__c: normProd || prod,
-        Parent_Product_Type__c: normalizeProductType(c.Parent_Product_Type__c) || null,
-        product_line: normProd || prod,
-        Product_Line: normProd || prod,
-        Dev_Case_Assignee__c: assignee,
-        assignee: assignee,
-        assigned_to: assignee,
-        Owner: c.Owner || { Name: assignee },
-        owner: c.Owner || { Name: assignee },
-        Description: desc,
-        description: desc,
-        AccountId: c.AccountId || null,
-        account_id: c.AccountId || null,
-        Account_Name__c: c.Account_Name__c || null,
-        account_name: c.Account_Name__c || (c.Account && c.Account.Name) || null,
-        Customer_Location__c: c.Customer_Location__c || null,
-        customer_location: c.Customer_Location__c || null,
-        Is_Site_100_Down__c: Boolean(c.Is_Site_100_Down__c),
-        is_site_down: Boolean(c.Is_Site_100_Down__c),
-        CreatedDate: c.CreatedDate,
-        created_date: c.CreatedDate ? new Date(c.CreatedDate) : null,
-        LastModifiedDate: c.LastModifiedDate,
-        last_modified_date: c.LastModifiedDate ? new Date(c.LastModifiedDate) : null,
-        ClosedDate: endTime || c.ClosedDate || null,
-        closed_date: endTime ? new Date(endTime) : (c.ClosedDate ? new Date(c.ClosedDate) : null),
-        End_Time__c: endTime || null,
-        end_time: endTime ? new Date(endTime) : null,
-        End_Time_of_Incident__c: c.End_Time_of_Incident__c || null,
-        end_time_of_incident: c.End_Time_of_Incident__c ? new Date(c.End_Time_of_Incident__c) : null,
-        Actual_End_Time__c: c.Actual_End_Time__c || null,
-        actual_end_time: c.Actual_End_Time__c ? new Date(c.Actual_End_Time__c) : null,
-        Downtime__c: c.Downtime__c !== undefined ? c.Downtime__c : null,
-        downtime: c.Downtime__c !== undefined ? c.Downtime__c : null,
-        Snow_Sitename__c: c.Snow_Sitename__c || null,
-        Snow_id__c: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
-        snow_id: c.Snow_id__c || c.snow_id || c.Snow_Id__c || c.Snow_ID__c || c.SnowId || null,
-        Snow_Category__c: c.Snow_Category__c || null,
-        Snow_Urgency__c: c.Snow_Urgency__c || null,
-        Site_Name_Customer_Input__c: c.Site_Name_Customer_Input__c || null,
-        Impacted_Sites__c: c.Impacted_Sites__c || null,
-        DIR_Approval__c: c.DIR_Approval__c || null,
-        dir_approval: c.DIR_Approval__c || null,
-        Approval_status__c: c.Approval_status__c || null,
-        approval_status: c.Approval_status__c || null,
-        Current_RCA_Status__c: c.Current_RCA_Status__c || null,
-        current_rca_status: c.Current_RCA_Status__c || null,
-        RCA_Approval__c: c.RCA_Approval__c || null,
-        Default_Ticket_For_Problem__c: c.Default_Ticket_For_Problem__c || null,
-      };
-    };
-
     const isClosedTicket = (c) => {
       const endTime = getTicketEndTime(c);
       const status = String(c.Status || c.status || '').toLowerCase();
@@ -2555,59 +2608,86 @@ export async function fetchAllLiveCases(forceRefresh = false) {
  * Returns ONLY cases mapped to this site, or [] if none exist.
  */
 export async function fetchOpenCasesForSite({ siteId, siteName, accountId, forceRefresh = false, range = null, startDate = null, endDate = null }) {
-  console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'} (forceRefresh: ${forceRefresh}, range: ${range || 'default'})`);
+  const normRange = (range || 'default').toLowerCase().trim();
+  const rawLookupKey = (siteName || siteId || '').toLowerCase().trim();
+  const cacheKey = `${rawLookupKey}::${normRange}::${startDate || ''}::${endDate || ''}`;
+  const now = Date.now();
 
-  let allSites = [];
-  try {
-    allSites = await SiteRepository.findAll();
-  } catch {
-    allSites = [];
+  const isHistorical = Boolean(
+    normRange &&
+    normRange !== 'default' &&
+    normRange !== 'live' &&
+    normRange !== 'today' &&
+    normRange !== '24h' &&
+    normRange !== 'all'
+  );
+
+  const ttl = isHistorical ? 180_000 : 30_000;
+
+  if (!forceRefresh && _siteCasesCache.has(cacheKey)) {
+    const cached = _siteCasesCache.get(cacheKey);
+    if (now - cached.cachedAt < ttl) {
+      return cached.data;
+    }
   }
 
-  let targetSite = null;
-  if (siteId) {
-    try { targetSite = await SiteRepository.findById(siteId); } catch {}
-  }
-  if (!targetSite && siteName) {
-    try { targetSite = await SiteRepository.findByName(siteName); } catch {}
+  if (!forceRefresh && _inFlightSiteCasesPromises.has(cacheKey)) {
+    return _inFlightSiteCasesPromises.get(cacheKey);
   }
 
-  const effectiveSiteName = targetSite?.name || siteName || '';
-  const effectiveAccountId = targetSite?.salesforce_account_id || accountId || null;
+  const fetchPromise = (async () => {
+    console.log(`[Salesforce] Fetching live cases & alerts for: ${siteName || siteId || 'site'} (forceRefresh: ${forceRefresh}, range: ${normRange})`);
 
-  const { cases: liveCases, alerts: liveAlerts, closed: liveClosed = [] } = await fetchAllLiveCasesAndAlerts(forceRefresh);
+    let allSites = [];
+    try {
+      allSites = await SiteRepository.findAll();
+    } catch {
+      allSites = [];
+    }
 
-  const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
-  const targetLower = cleanText(effectiveSiteName);
+    let targetSite = null;
+    if (siteId) {
+      try { targetSite = await SiteRepository.findById(siteId); } catch {}
+    }
+    if (!targetSite && siteName) {
+      try { targetSite = await SiteRepository.findByName(siteName); } catch {}
+    }
 
-  let matched = liveCases.filter(c => {
-    const best = findBestSiteForCase(c, compiledSites);
-    return best && areSameSite(best, effectiveSiteName, compiledSites);
-  });
-  let matchedAlerts = liveAlerts.filter(a => {
-    const best = findBestSiteForCase(a, compiledSites);
-    return best && areSameSite(best, effectiveSiteName, compiledSites);
-  });
-  let matchedClosed = liveClosed.filter(c => {
-    const best = findBestSiteForCase(c, compiledSites);
-    return best && areSameSite(best, effectiveSiteName, compiledSites);
-  });
+    const effectiveSiteName = targetSite?.name || siteName || '';
+    const effectiveAccountId = targetSite?.salesforce_account_id || accountId || null;
 
-  // If user requests a specific historical range, or if 0 cases were matched from the global 800 cache,
-  // query Salesforce directly for site-specific cases using siteWhere:
-  if (effectiveSiteName && (matched.length === 0 || (range && range !== 'today' && range !== 'all' && range !== 'default' && range !== '24h'))) {
+    const { cases: liveCases, alerts: liveAlerts, closed: liveClosed = [] } = await fetchAllLiveCasesAndAlerts(forceRefresh);
+
+    const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
+    const targetLower = cleanText(effectiveSiteName);
+
+    let matched = liveCases.filter(c => {
+      const best = findBestSiteForCase(c, compiledSites);
+      return best && areSameSite(best, effectiveSiteName, compiledSites);
+    });
+    let matchedAlerts = liveAlerts.filter(a => {
+      const best = findBestSiteForCase(a, compiledSites);
+      return best && areSameSite(best, effectiveSiteName, compiledSites);
+    });
+    let matchedClosed = liveClosed.filter(c => {
+      const best = findBestSiteForCase(c, compiledSites);
+      return best && areSameSite(best, effectiveSiteName, compiledSites);
+    });
+
+    // Query Salesforce for site-specific cases to guarantee complete live accuracy (e.g. newly created cases, specific accounts)
+    if (effectiveSiteName) {
     try {
       const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
       if (siteWhere) {
         let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled')";
-        if (range === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1)";
-        else if (range === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2)";
-        else if (range === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7)";
-        else if (range === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15)";
-        else if (range === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30)";
-        else if (range === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60)";
-        else if (range === '3m' || range === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90)";
-        else if (range === 'custom' && startDate && endDate) {
+        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1)";
+        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2)";
+        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7)";
+        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15)";
+        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30)";
+        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60)";
+        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90)";
+        else if (normRange === 'custom' && startDate && endDate) {
           const sIso = new Date(startDate).toISOString();
           const eIso = new Date(endDate).toISOString();
           dateCondition = `CreatedDate >= ${sIso} AND CreatedDate <= ${eIso}`;
@@ -2616,7 +2696,7 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
           'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
           'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
           'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
-          'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
+          'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
           'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
           'FROM Case',
           `WHERE ${dateCondition} AND (Type = null OR (Type != 'Alert' AND Type != 'Problem'))`,
@@ -2629,7 +2709,7 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
         for (const ec of extraCases) {
           if (ec && ec.Id && !seenIds.has(ec.Id)) {
             seenIds.add(ec.Id);
-            matched.push(ec);
+            matched.push(mapRecord(ec));
           }
         }
       }
@@ -2637,8 +2717,9 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       console.warn('[fetchOpenCasesForSite] Historical cases query notice:', err.message);
     }
 
-    try {
-      const historicalAlertsResult = await fetchHistoricalAlerts(false, effectiveSiteName);
+    if (isHistorical) {
+      try {
+        const historicalAlertsResult = await fetchHistoricalAlerts(false, effectiveSiteName);
       if (Array.isArray(historicalAlertsResult) && historicalAlertsResult.length > 0) {
         const seenAlertIds = new Set(matchedAlerts.map(a => a.Id));
         const seenClosedIds = new Set(matchedClosed.map(c => c.Id));
@@ -2657,8 +2738,9 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
           }
         }
       }
-    } catch (err) {
-      console.warn('[fetchOpenCasesForSite] Historical alerts query notice:', err.message);
+      } catch (err) {
+        console.warn('[fetchOpenCasesForSite] Historical alerts query notice:', err.message);
+      }
     }
   }
 
@@ -2803,16 +2885,32 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     } catch {}
   }
 
-  return {
-    siteName: effectiveSiteName,
-    accountId: effectiveAccountId,
-    product_line: siteProductLine,
-    product_lines: siteProductLines,
-    totalOpenCases: casesToStore.length,
-    cases: casesToStore,
-    alerts: matchedAlerts,
-    closed: allMatchedClosed,
-  };
+    const result = {
+      siteName: effectiveSiteName,
+      accountId: effectiveAccountId,
+      product_line: siteProductLine,
+      product_lines: siteProductLines,
+      totalOpenCases: casesToStore.length,
+      cases: casesToStore,
+      alerts: matchedAlerts,
+      closed: allMatchedClosed,
+      site: targetSite,
+    };
+
+    _siteCasesCache.set(cacheKey, {
+      data: result,
+      cachedAt: Date.now(),
+    });
+
+    return result;
+  })();
+
+  _inFlightSiteCasesPromises.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    _inFlightSiteCasesPromises.delete(cacheKey);
+  }
 }
 
 /**
@@ -2945,10 +3043,6 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
   return result;
 }
 
-let _historicalAlertsCache = {
-  data: null,
-  fetchedAt: 0,
-};
 
 /**
  * Extracts a normalized alert title/signature from Subject or Description,
@@ -3064,7 +3158,20 @@ export function getSiteMatchSOQLParts(siteName) {
       "Snow_Sitename__c LIKE '%4993%'"
     );
   } else if ((clean.includes('sam') || clean.includes('8799') || clean.includes('9476')) && (clean.includes('lax') || clean.includes('california') || clean.includes('8799') || clean.includes('9476'))) {
-    parts.push("Subject LIKE '%samslax%'", "Subject LIKE '%samlax%'", "Account_Name__c LIKE '%8799%'", "Account_Name__c LIKE '%Sam%Club(LAX)%'", "Account_Name__c LIKE '%Sam%LAX%'");
+    parts.push(
+      "AccountId = '001OX00000qZLaxYAG'",
+      "AccountId = '001OX00000qZLbCYAW'",
+      "Account.Name LIKE '%Sam%Club(LAX)%'",
+      "Account.Name LIKE '%Sam%LAX%'",
+      "Account_Name__c LIKE '%Sam%Club(LAX)%'",
+      "Account_Name__c LIKE '%Sam%LAX%'",
+      "Account_Name__c LIKE '%8799%'",
+      "Account_Name__c LIKE '%9476%'",
+      "Subject LIKE '%samslax%'",
+      "Subject LIKE '%samlax%'",
+      "Customer_Location__c LIKE '%LAX%'",
+      "Customer_Location__c LIKE '%9476%'"
+    );
   } else if (clean.includes('ajax') || (clean.includes('canada') && !clean.includes('walmart') && !clean.includes('aritzia') && !clean.includes('apple express'))) {
     parts.push(
       "Subject LIKE '%flexo-hnm%'",
@@ -3272,63 +3379,94 @@ export function buildSiteSOQLWhereClause(siteName) {
 }
 
 export async function fetchHistoricalAlerts(forceRefresh = false, siteName = '') {
-  const whereClause = buildSiteSOQLWhereClause(siteName);
-  const soql = [
-    'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c,',
-    'Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
-    'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Owner.Name',
-    'FROM Case',
-    'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
-    `AND ${whereClause}`,
-    'ORDER BY CreatedDate DESC LIMIT 2000',
-  ].join(' ');
+  const normSite = (siteName || '').toLowerCase().trim();
+  const cacheKey = normSite || '__all__';
+  const now = Date.now();
 
-  let raw = [];
-  try {
-    const res = await executeSOQL(soql);
-    raw = res.records || [];
-  } catch (err) {
-    console.warn('[Salesforce] Site-specific alert SOQL notice, executing fallback:', err.message);
-    try {
-      const fallbackSoql = [
-        'SELECT Id, CaseNumber, Subject, Status, CreatedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, Account_Name__c, Snow_Sitename__c',
-        'FROM Case',
-        'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
-        `AND ${whereClause}`,
-        'ORDER BY CreatedDate DESC LIMIT 1500',
-      ].join(' ');
-      const res = await executeSOQL(fallbackSoql);
-      raw = res.records || [];
-    } catch {
-      const loaded = await fetchAllLiveCasesAndAlerts();
-      raw = [...(loaded.cases || []), ...(loaded.alerts || []), ...(loaded.closed || [])];
+  if (!forceRefresh && _historicalAlertsCache.has(cacheKey)) {
+    const entry = _historicalAlertsCache.get(cacheKey);
+    if (now - entry.cachedAt < 300_000) { // 5 minutes cache
+      return entry.data;
     }
   }
 
-  return raw.filter(isAlertCase).map(c => {
-    const endTime = getTicketEndTime(c);
-    const createdTime = c.CreatedDate ? new Date(c.CreatedDate).toISOString() : null;
-    const closedTime = endTime || c.ClosedDate || (isClosedAlert(c) ? c.LastModifiedDate : null);
+  if (!forceRefresh && _inFlightHistoricalAlertsPromises.has(cacheKey)) {
+    return _inFlightHistoricalAlertsPromises.get(cacheKey);
+  }
 
-    let durationMinutes = null;
-    if (createdTime && closedTime) {
-      const diffMs = new Date(closedTime).getTime() - new Date(createdTime).getTime();
-      if (diffMs > 0) {
-        durationMinutes = Math.round(diffMs / 60000);
+  const fetchPromise = (async () => {
+    const whereClause = buildSiteSOQLWhereClause(siteName);
+    const soql = [
+      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c,',
+      'Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
+      'AccountId, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Impacted_Sites__c, Is_Site_100_Down__c, Owner.Name',
+      'FROM Case',
+      'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
+      `AND ${whereClause}`,
+      'ORDER BY CreatedDate DESC LIMIT 2000',
+    ].join(' ');
+
+    let raw = [];
+    try {
+      const res = await executeSOQL(soql);
+      raw = res.records || [];
+    } catch (err) {
+      console.warn('[Salesforce] Site-specific alert SOQL notice, executing fallback:', err.message);
+      try {
+        const fallbackSoql = [
+          'SELECT Id, CaseNumber, Subject, Status, CreatedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description, Account_Name__c, Snow_Sitename__c',
+          'FROM Case',
+          'WHERE (CreatedDate = LAST_N_DAYS:90 OR CreatedDate = TODAY)',
+          `AND ${whereClause}`,
+          'ORDER BY CreatedDate DESC LIMIT 1500',
+        ].join(' ');
+        const res = await executeSOQL(fallbackSoql);
+        raw = res.records || [];
+      } catch {
+        const loaded = await fetchAllLiveCasesAndAlerts();
+        raw = [...(loaded.cases || []), ...(loaded.alerts || []), ...(loaded.closed || [])];
       }
     }
 
-    return {
-      ...c,
-      End_Time__c: endTime,
-      ClosedDate: c.ClosedDate || endTime,
-      created_at: createdTime,
-      ended_at: closedTime,
-      duration_minutes: durationMinutes,
-      is_open: isOpenAlert(c),
-      is_closed: isClosedAlert(c),
-    };
-  });
+    const mappedAlerts = raw.filter(isAlertCase).map(c => {
+      const endTime = getTicketEndTime(c);
+      const createdTime = c.CreatedDate ? new Date(c.CreatedDate).toISOString() : null;
+      const closedTime = endTime || c.ClosedDate || (isClosedAlert(c) ? c.LastModifiedDate : null);
+
+      let durationMinutes = null;
+      if (createdTime && closedTime) {
+        const diffMs = new Date(closedTime).getTime() - new Date(createdTime).getTime();
+        if (diffMs > 0) {
+          durationMinutes = Math.round(diffMs / 60000);
+        }
+      }
+
+      return {
+        ...c,
+        End_Time__c: endTime,
+        ClosedDate: c.ClosedDate || endTime,
+        created_at: createdTime,
+        ended_at: closedTime,
+        duration_minutes: durationMinutes,
+        is_open: isOpenAlert(c),
+        is_closed: isClosedAlert(c),
+      };
+    });
+
+    _historicalAlertsCache.set(cacheKey, {
+      data: mappedAlerts,
+      cachedAt: Date.now(),
+    });
+
+    return mappedAlerts;
+  })();
+
+  _inFlightHistoricalAlertsPromises.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    _inFlightHistoricalAlertsPromises.delete(cacheKey);
+  }
 }
 
 const _alertAnalyticsSiteCache = new Map();
@@ -3350,6 +3488,12 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', st
   if (!forceRefresh && cached && cached.expiresAt > now) {
     return cached.data;
   }
+
+  if (!forceRefresh && _inFlightAlertAnalyticsPromises.has(cacheKey)) {
+    return _inFlightAlertAnalyticsPromises.get(cacheKey);
+  }
+
+  const fetchPromise = (async () => {
 
   let cfg;
   let windowStart;
@@ -3738,7 +3882,15 @@ export async function getAlertAnalyticsForSite({ siteName = '', range = '7d', st
     expiresAt: now + 120_000,
   });
 
-  return result;
+    return result;
+  })();
+
+  _inFlightAlertAnalyticsPromises.set(cacheKey, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    _inFlightAlertAnalyticsPromises.delete(cacheKey);
+  }
 }
 
 const _redZoneSiteCache = new Map();
@@ -4087,7 +4239,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         const testPoint = now - (dayOffset * 24 * 60 * 60 * 1000);
         const test7d = distinctIncidents.filter(i => i.createdTime <= testPoint && (testPoint - i.createdTime) <= SEVEN_DAYS_MS);
         const testSev1 = test7d.filter(i => i.severity === 'sev1').length;
-        const testSev2 = test7d.filter(i => i.severity === 'sev2').length;
+        const testSev2 = test7d.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent').length;
         if (testSev1 >= 3 || testSev2 >= 5) {
           lastBreachTime = testPoint;
           break;
@@ -4150,7 +4302,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
 
       const dayIncidents = distinctIncidents.filter(i => i.createdTime >= dayStart && i.createdTime < dayEnd);
       const sev1OnDay = dayIncidents.filter(i => i.severity === 'sev1').length;
-      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2').length;
+      const sev2OnDay = dayIncidents.filter(i => i.severity === 'sev2' || i.severity === 'sev2_urgent').length;
       const resolvedOnDay = distinctIncidents.filter(i => {
         const eStr = i.endTime || i.closedDate;
         if (!eStr) return false;
@@ -4158,7 +4310,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
         return eTime >= dayStart && eTime < dayEnd;
       }).length;
       // Calculate true non-overlapping outage duration for Sev 1 & Sev 2 urgent incidents on this day
-      const daySev12 = dayIncidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && (i.endTime || i.closedDate));
+      const daySev12 = dayIncidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2' || i.severity === 'sev2_urgent') && (i.endTime || i.closedDate));
       const dayIntervals = [];
       for (const inc of daySev12) {
         const start = inc.createdTime || 0;
@@ -4201,7 +4353,7 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       });
     }
 
-    const resolvedIncidents = incidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2') && typeof i.durationHours === 'number' && i.durationHours > 0);
+    const resolvedIncidents = incidents.filter(i => (i.severity === 'sev1' || i.severity === 'sev2' || i.severity === 'sev2_urgent') && typeof i.durationHours === 'number' && i.durationHours > 0);
     const meanTimeToResolveHours = resolvedIncidents.length > 0
       ? Math.round((resolvedIncidents.reduce((acc, i) => acc + (i.durationHours || 0), 0) / resolvedIncidents.length) * 10) / 10
       : null;
@@ -4251,8 +4403,8 @@ async function _executeRedZoneFetch({ forceRefresh = false, siteName = '' } = {}
       meanTimeToResolveHours,
       qualifyingIncidents: (() => {
         const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-        const sev12 = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2'));
-        const others = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && i.severity !== 'sev1' && i.severity !== 'sev2');
+        const sev12 = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && (i.severity === 'sev1' || i.severity === 'sev2' || i.severity === 'sev2_urgent'));
+        const others = distinctIncidents.filter(i => (now - i.createdTime) <= THIRTY_DAYS_MS && i.severity !== 'sev1' && i.severity !== 'sev2' && i.severity !== 'sev2_urgent');
         return [...sev12, ...others].slice(0, 200).map(i => ({
           id: i.id,
           caseNumber: i.caseNumber,
