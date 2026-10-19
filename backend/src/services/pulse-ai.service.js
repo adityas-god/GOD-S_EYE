@@ -1584,9 +1584,11 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
   const candidateModels = [
     'openrouter/free',
     requestedModel,
+    'google/gemini-2.0-flash-exp:free',
     'minimax/minimax-m3.1-flash:free',
-    'meta-llama/llama-3.2-3b-instruct:free',
-  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('nemotron') && !m.includes('3.8'));
+    'meta-llama/llama-3.3-70b-instruct:free',
+    'qwen/qwen-2.5-72b-instruct:free',
+  ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('nemotron') && !m.includes('3.8') && !m.includes('llama-3.2-3b'));
 
   // Free models often reject or 404 when OpenAI 'tools' / function-calling schema is passed.
   // Strip 'tools' and 'tool_choice' to ensure universal compatibility across free endpoints!
@@ -1602,8 +1604,8 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
     try {
       console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (attempt ${i + 1}/${candidateModels.length})...`);
       const currentPayload = { ...cleanPayload, model: activeModel };
-      // Snappy timeout per candidate so user never waits >15s total across failovers
-      const timeoutMs = i === 0 ? 7000 : 5000;
+      // 25s timeout for primary candidate, 20s for fallbacks - gives free models ample time to complete reports
+      const timeoutMs = i === 0 ? 25000 : 20000;
       const res = await fetch(url, {
         method: 'POST',
         headers,
