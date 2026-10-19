@@ -29,7 +29,8 @@ services:
       - OPSGENIE_API_KEY=${OPSGENIE_API_KEY:-}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-nvidia/nemotron-3-ultra-550b-a55b:free}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-nvidia/nemotron-3.5-lightning:free}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - RED_ZONE_SHEET_URL=${RED_ZONE_SHEET_URL:-https://docs.google.com/spreadsheets/d/1dKhduZF_lYKWMrQ2bYBvufUxZt6oeQibNtx78P_id9M/edit?gid=1207923458#gid=1207923458}
       - PULSE_AI_SECRET=${PULSE_AI_SECRET:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
@@ -42,8 +43,8 @@ services:
       - gods-eye-net
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
-      interval: 10s
-      timeout: 5s
+      interval: 15s
+      timeout: 10s
       retries: 5
       start_period: 30s
 
@@ -56,6 +57,8 @@ services:
     restart: unless-stopped
     ports:
       - "${HOST_PORT:-8081}:80"
+    volumes:
+      - ./Frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - gods-eye-net
     depends_on:
