@@ -994,6 +994,13 @@ export function PulseAIPage() {
 
   // Render Formatted Message Markdown and Interactive Artifacts
   const renderFormattedContent = (content: string) => {
+    let sanitizedContent = content || '';
+    // Auto-close any unclosed code block (e.g. from stream or token limit) so artifacts always render
+    const backtickCount = (sanitizedContent.match(/```/g) || []).length;
+    if (backtickCount % 2 !== 0) {
+      sanitizedContent += '\n```';
+    }
+
     const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)```/g;
     const elements: ReactNode[] = [];
     let lastIndex = 0;
@@ -1222,8 +1229,8 @@ export function PulseAIPage() {
       return subElements;
     };
 
-    while ((match = codeBlockRegex.exec(content)) !== null) {
-      const textBefore = content.substring(lastIndex, match.index);
+    while ((match = codeBlockRegex.exec(sanitizedContent)) !== null) {
+      const textBefore = sanitizedContent.substring(lastIndex, match.index);
       if (textBefore.trim()) {
         elements.push(...renderMarkdownBlock(textBefore, `blk_${lastIndex}`));
       }
@@ -1293,7 +1300,7 @@ export function PulseAIPage() {
       lastIndex = match.index + match[0].length;
     }
 
-    const remainingText = content.substring(lastIndex);
+    const remainingText = sanitizedContent.substring(lastIndex);
     if (remainingText.trim()) {
       elements.push(...renderMarkdownBlock(remainingText, `blk_${lastIndex}`));
     }
