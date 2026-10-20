@@ -32,6 +32,7 @@ import {
 import { DashboardShell } from '@/components/dashboard-shell';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PulseAiOrb } from '@/components/pulse-ai-orb';
 
 export const Route = createFileRoute('/pulse-ai')({
   head: () => ({
@@ -116,6 +117,7 @@ function SitepulseLogo({
     </div>
   );
 }
+
 
 const SAMPLE_PROMPTS = [
   {
@@ -1558,16 +1560,32 @@ export function PulseAIPage() {
                     padding: '16px 0'
                   }}
                 >
+                  {/* Centre Rotating Circle Logo of Pulse AI (Cutout from 8557de74b105bcefd733d4dae074140f.mp4) */}
+                  <div style={{
+                    marginBottom: 20,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center'
+                  }}>
+                    <PulseAiOrb size={92} />
+                  </div>
+
                   {/* Headline & Subtitle */}
                   <div style={{ marginBottom: 28 }}>
-                    <h1 style={{
-                      fontSize: 28,
-                      fontWeight: 700,
-                      letterSpacing: '-0.5px',
-                      color: 'var(--foreground)',
-                      margin: '0 0 10px'
-                    }}>
-                      Welcome to pulse AI
+                    <h1
+                      className="pulse-ai-bonjour-title"
+                      style={{
+                        fontFamily: '"Bringbold Nineties Demo", "Bringbold Nineties", "Fraunces", "DM Serif Display", serif',
+                        fontSize: 38,
+                        fontWeight: 700,
+                        fontStyle: 'italic',
+                        letterSpacing: '-0.015em',
+                        lineHeight: 1.2,
+                        color: 'var(--foreground)',
+                        margin: '0 0 10px'
+                      }}
+                    >
+                      Bonjour ami
                     </h1>
                     <p style={{
                       fontSize: 14,
@@ -1580,232 +1598,159 @@ export function PulseAIPage() {
                     </p>
                   </div>
 
-                  {/* Centered Omni-Card (Inspired by Image 2 CodaAI) */}
-                  <div style={{
-                    width: '100%',
-                    maxWidth: 680,
-                    margin: '0 auto',
-                    background: 'var(--card)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 14,
-                    boxShadow: '0 8px 30px rgba(0,0,0,0.22)',
-                    padding: '12px 14px 10px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 8,
-                    textAlign: 'left'
-                  }}>
-                    {/* Omni-Card Top Bar */}
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingBottom: 8,
-                      borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <SitepulseLogo size="xs" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)', letterSpacing: '-0.2px' }}>
-                          pulse AI
-                        </span>
-                      </div>
+                  {/* Centered Omni-Card with Radiant Card Flare */}
+                  <div className="pulse-ai-omni-card-wrapper">
+                    {/* Ambient Card Flare Glow */}
+                    <div className="pulse-ai-card-flare-glow" />
 
-                      {/* Segmented [Agent | Ask] switcher */}
+                    {/* Omni-Card Container */}
+                    <div className="pulse-ai-omni-card">
+                      {/* Omni-Card Top Bar */}
                       <div style={{
-                        display: 'inline-flex',
+                        display: 'flex',
                         alignItems: 'center',
-                        background: 'var(--muted)',
-                        borderRadius: 7,
-                        padding: 2,
-                        border: '1px solid var(--border)'
+                        justifyContent: 'space-between',
+                        paddingBottom: 10,
+                        borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
                       }}>
-                        <button
-                          type="button"
-                          onClick={() => setAiMode('agent')}
-                          style={{
-                            padding: '3px 10px',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            borderRadius: 5,
-                            border: 'none',
-                            cursor: 'pointer',
-                            background: aiMode === 'agent' ? 'var(--card)' : 'transparent',
-                            color: aiMode === 'agent' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                            boxShadow: aiMode === 'agent' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          Agent
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setAiMode('query')}
-                          style={{
-                            padding: '3px 10px',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            borderRadius: 5,
-                            border: 'none',
-                            cursor: 'pointer',
-                            background: aiMode === 'query' ? 'var(--card)' : 'transparent',
-                            color: aiMode === 'query' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                            boxShadow: aiMode === 'query' ? '0 1px 3px rgba(0,0,0,0.2)' : 'none',
-                            transition: 'all 0.15s ease'
-                          }}
-                        >
-                          Ask
-                        </button>
-                      </div>
-                    </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <PulseAiOrb size={22} />
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)', letterSpacing: '-0.2px' }}>
+                            pulse AI
+                          </span>
+                        </div>
 
-                    {/* Omni-Card Textarea */}
-                    <textarea
-                      ref={textareaRef}
-                      rows={3}
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      placeholder={
-                        aiMode === 'agent'
-                          ? "Ask Pulse AI to benchmark incidents, audit sites, or analyze telemetry..."
-                          : "Ask any operations question or execute Salesforce SOQL..."
-                      }
-                      disabled={isLoading}
-                      style={{
-                        width: '100%',
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--foreground)',
-                        fontSize: 14,
-                        resize: 'none',
-                        outline: 'none',
-                        lineHeight: 1.5,
-                        padding: '6px 4px'
-                      }}
-                    />
-
-                    {/* Omni-Card Bottom Bar */}
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      paddingTop: 4
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted-foreground)' }}>
-                        <span style={{
+                        {/* Segmented [Agent | Ask] switcher */}
+                        <div style={{
                           display: 'inline-flex',
                           alignItems: 'center',
-                          gap: 5,
-                          padding: '3px 8px',
-                          borderRadius: 5,
-                          background: 'var(--muted)',
-                          border: '1px solid var(--border)',
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 11
+                          background: 'rgba(0, 0, 0, 0.35)',
+                          borderRadius: 8,
+                          padding: 2.5,
+                          border: '1px solid rgba(255, 255, 255, 0.08)'
                         }}>
-                          <Zap style={{ width: 11, height: 11, color: 'var(--primary)' }} />
-                          pulse x_7
-                        </span>
-                        <span style={{ fontSize: 11, opacity: 0.7 }}>
-                          {aiMode === 'agent' ? 'Multi-tool operations reasoning' : 'Direct answering'}
-                        </span>
+                          <button
+                            type="button"
+                            onClick={() => setAiMode('agent')}
+                            style={{
+                              padding: '3px 11px',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              borderRadius: 6,
+                              border: 'none',
+                              cursor: 'pointer',
+                              background: aiMode === 'agent' ? 'var(--card)' : 'transparent',
+                              color: aiMode === 'agent' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                              boxShadow: aiMode === 'agent' ? '0 1px 4px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            Agent
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAiMode('query')}
+                            style={{
+                              padding: '3px 11px',
+                              fontSize: 11,
+                              fontWeight: 600,
+                              borderRadius: 6,
+                              border: 'none',
+                              cursor: 'pointer',
+                              background: aiMode === 'query' ? 'var(--card)' : 'transparent',
+                              color: aiMode === 'query' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                              boxShadow: aiMode === 'query' ? '0 1px 4px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            Ask
+                          </button>
+                        </div>
                       </div>
 
-                      <Button
-                        onClick={() => handleSendMessage()}
-                        disabled={!inputMessage.trim() || isLoading}
-                        size="sm"
+                      {/* Omni-Card Textarea */}
+                      <textarea
+                        ref={textareaRef}
+                        rows={3}
+                        value={inputMessage}
+                        onChange={(e) => setInputMessage(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        placeholder={
+                          aiMode === 'agent'
+                            ? "Ask Pulse AI to benchmark incidents, audit sites, or analyze telemetry..."
+                            : "Ask any operations question or execute Salesforce SOQL..."
+                        }
+                        disabled={isLoading}
                         style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: '50%',
-                          padding: 0,
-                          background: inputMessage.trim() ? 'var(--primary)' : 'rgba(255, 255, 255, 0.05)',
-                          border: inputMessage.trim() ? '1px solid var(--primary)' : '1px solid var(--border)',
-                          color: inputMessage.trim() ? '#fff' : 'var(--muted-foreground)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          transition: 'all 0.18s ease',
-                          cursor: inputMessage.trim() ? 'pointer' : 'default'
+                          width: '100%',
+                          background: 'transparent',
+                          border: 'none',
+                          color: 'var(--foreground)',
+                          fontSize: 14,
+                          resize: 'none',
+                          outline: 'none',
+                          lineHeight: 1.6,
+                          minHeight: 76,
+                          padding: '8px 4px'
                         }}
-                        aria-label="Send query"
-                      >
-                        <ArrowUp style={{ width: 16, height: 16, strokeWidth: 2.2 }} />
-                      </Button>
-                    </div>
-                  </div>
+                      />
 
-                  {/* 4 Sleek Horizontal Suggestion Chips */}
-                  <div style={{
-                    maxWidth: 680,
-                    margin: '22px auto 0',
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(2, 1fr)',
-                    gap: 10,
-                    width: '100%'
-                  }}>
-                    {SAMPLE_PROMPTS.map((sp, idx) => {
-                      const Icon = sp.icon;
-                      return (
-                        <div
-                          key={idx}
-                          onClick={() => handleSendMessage(sp.prompt)}
-                          style={{
-                            background: 'var(--card)',
-                            border: '1px solid var(--border)',
-                            borderRadius: 10,
-                            padding: '12px 14px',
-                            cursor: 'pointer',
-                            transition: 'all 0.18s ease',
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            gap: 10,
-                            textAlign: 'left'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = 'var(--primary)';
-                            e.currentTarget.style.background = 'var(--muted)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = 'var(--border)';
-                            e.currentTarget.style.background = 'var(--card)';
-                          }}
-                        >
-                          <div style={{
-                            width: 28,
-                            height: 28,
+                      {/* Omni-Card Bottom Bar */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        paddingTop: 6,
+                        borderTop: '1px solid rgba(255, 255, 255, 0.04)'
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted-foreground)' }}>
+                          <span style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 5,
+                            padding: '3px 9px',
                             borderRadius: 6,
                             background: 'rgba(249, 115, 22, 0.08)',
-                            border: '1px solid rgba(249, 115, 22, 0.2)',
+                            border: '1px solid rgba(249, 115, 22, 0.22)',
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: 11,
+                            color: 'var(--foreground)'
+                          }}>
+                            <Zap style={{ width: 11, height: 11, color: 'var(--primary)' }} />
+                            pulse x_7
+                          </span>
+                          <span style={{ fontSize: 11, opacity: 0.75 }}>
+                            {aiMode === 'agent' ? 'Multi-tool operations reasoning' : 'Direct answering'}
+                          </span>
+                        </div>
+
+                        <Button
+                          onClick={() => handleSendMessage()}
+                          disabled={!inputMessage.trim() || isLoading}
+                          size="sm"
+                          style={{
+                            width: 34,
+                            height: 34,
+                            borderRadius: '50%',
+                            padding: 0,
+                            background: inputMessage.trim()
+                              ? 'linear-gradient(135deg, var(--primary) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%)'
+                              : 'rgba(255, 255, 255, 0.05)',
+                            border: inputMessage.trim() ? '1px solid var(--primary)' : '1px solid var(--border)',
+                            color: inputMessage.trim() ? '#fff' : 'var(--muted-foreground)',
+                            boxShadow: inputMessage.trim() ? '0 0 16px rgba(249, 115, 22, 0.45)' : 'none',
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            flexShrink: 0,
-                            marginTop: 1
-                          }}>
-                            <Icon style={{ width: 14, height: 14, color: 'var(--primary)' }} />
-                          </div>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 2 }}>
-                              {sp.title}
-                            </div>
-                            <div style={{
-                              fontSize: 11,
-                              color: 'var(--muted-foreground)',
-                              lineHeight: 1.35,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 2,
-                              WebkitBoxOrient: 'vertical'
-                            }}>
-                              {sp.desc}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
+                            cursor: inputMessage.trim() ? 'pointer' : 'default'
+                          }}
+                          aria-label="Send query"
+                        >
+                          <ArrowUp style={{ width: 16, height: 16, strokeWidth: 2.2 }} />
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1843,7 +1788,7 @@ export function PulseAIPage() {
                     {msg.role === 'user' ? (
                       authOrgId ? authOrgId.charAt(0).toUpperCase() : <User style={{ width: 14, height: 14 }} />
                     ) : (
-                      <SitepulseLogo size="xs" />
+                      <PulseAiOrb size={22} showGlow={false} />
                     )}
                   </div>
 
@@ -2015,11 +1960,12 @@ export function PulseAIPage() {
               <div style={{
                 maxWidth: 820,
                 margin: '0 auto',
-                background: 'var(--card)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
+                background: 'linear-gradient(180deg, color-mix(in oklch, var(--card) 92%, var(--primary) 8%) 0%, var(--card) 100%)',
+                border: '1px solid color-mix(in oklch, var(--primary) 28%, var(--border))',
+                borderRadius: 14,
                 padding: '10px 14px 8px',
-                boxShadow: '0 4px 18px rgba(0,0,0,0.18)',
+                boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 8px 30px -6px rgba(0,0,0,0.45), 0 0 25px -8px rgba(249, 115, 22, 0.16)',
+                backdropFilter: 'blur(16px)',
                 display: 'flex',
                 flexDirection: 'column',
                 gap: 6
@@ -2033,7 +1979,7 @@ export function PulseAIPage() {
                   borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <SitepulseLogo size="xs" />
+                    <PulseAiOrb size={20} showGlow={false} />
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground)' }}>pulse AI</span>
                   </div>
 
@@ -2058,6 +2004,7 @@ export function PulseAIPage() {
                         cursor: 'pointer',
                         background: aiMode === 'agent' ? 'var(--card)' : 'transparent',
                         color: aiMode === 'agent' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                        boxShadow: aiMode === 'agent' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none',
                         transition: 'all 0.15s ease'
                       }}
                     >
@@ -2075,6 +2022,7 @@ export function PulseAIPage() {
                         cursor: 'pointer',
                         background: aiMode === 'query' ? 'var(--card)' : 'transparent',
                         color: aiMode === 'query' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                        boxShadow: aiMode === 'query' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none',
                         transition: 'all 0.15s ease'
                       }}
                     >
@@ -2090,7 +2038,11 @@ export function PulseAIPage() {
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask pulse AI about sites, incidents, alerts, comparisons, or SOQL queries…"
+                  placeholder={
+                    aiMode === 'agent'
+                      ? "Ask pulse AI about sites, incidents, alerts, comparisons, or SOQL queries…"
+                      : "Ask any operations question or execute Salesforce SOQL…"
+                  }
                   disabled={isLoading}
                   style={{
                     width: '100%',
@@ -2142,9 +2094,12 @@ export function PulseAIPage() {
                       height: 32,
                       borderRadius: '50%',
                       padding: 0,
-                      background: inputMessage.trim() ? 'var(--primary)' : 'rgba(255, 255, 255, 0.05)',
+                      background: inputMessage.trim()
+                        ? 'linear-gradient(135deg, var(--primary) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%)'
+                        : 'rgba(255, 255, 255, 0.05)',
                       border: inputMessage.trim() ? '1px solid var(--primary)' : '1px solid var(--border)',
                       color: inputMessage.trim() ? '#fff' : 'var(--muted-foreground)',
+                      boxShadow: inputMessage.trim() ? '0 0 14px rgba(249, 115, 22, 0.45)' : 'none',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',

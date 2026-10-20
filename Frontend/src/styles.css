@@ -1120,3 +1120,128 @@ select option { background: var(--card); }
   animation: pulseAiFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
+/* Pulse AI Omni-Card Flare Aesthetics - Blue & Orange Mix */
+.pulse-ai-omni-card-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+/* Decreased, subtle ambient glow */
+.pulse-ai-card-flare-glow {
+  position: absolute;
+  inset: -1px;
+  border-radius: 18px;
+  background: radial-gradient(
+    ellipse 65% 35% at 50% 0%,
+    rgba(56, 189, 248, 0.12) 0%,
+    rgba(249, 115, 22, 0.1) 45%,
+    transparent 75%
+  );
+  filter: blur(12px);
+  opacity: 0.55;
+  transition: opacity 0.35s ease, filter 0.35s ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.pulse-ai-omni-card-wrapper:hover .pulse-ai-card-flare-glow,
+.pulse-ai-omni-card-wrapper:focus-within .pulse-ai-card-flare-glow {
+  opacity: 0.75;
+  filter: blur(14px);
+}
+
+.pulse-ai-omni-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(24, 25, 29, 0.85) 0%,
+    var(--card) 100%
+  );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset,
+    0 1px 0 0 rgba(255, 255, 255, 0.1) inset,
+    0 16px 40px -10px rgba(0, 0, 0, 0.55),
+    0 0 16px -6px rgba(56, 189, 248, 0.1),
+    0 0 18px -6px rgba(249, 115, 22, 0.1);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  padding: 14px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.pulse-ai-omni-card-wrapper:focus-within .pulse-ai-omni-card {
+  border-color: rgba(56, 189, 248, 0.3);
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.2) inset,
+    0 1px 0 0 rgba(255, 255, 255, 0.15) inset,
+    0 20px 48px -10px rgba(0, 0, 0, 0.65),
+    0 0 25px -4px rgba(56, 189, 248, 0.18),
+    0 0 25px -4px rgba(249, 115, 22, 0.18);
+}
+
+/* Pulse AI Rotating Orb Cutout */
+.pulse-ai-orb-circle {
+  border-radius: 50%;
+  overflow: hidden;
+  position: relative;
+  background: transparent;
+  box-shadow: none;
+  border: none;
+  outline: none;
+  mix-blend-mode: screen;
+}
+
+.pulse-ai-orb-video {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 640%;
+  height: 640%;
+  max-width: none;
+  max-height: none;
+  transform: translate(-50%, -33.2%);
+  pointer-events: none;
+  object-fit: cover;
+  mix-blend-mode: screen;
+  background: transparent;
+}
+
+/* Bringbold Nineties Retro Display Font */
+@font-face {
+  font-family: "Bringbold Nineties Demo";
+  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.eot");
+  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.eot?#iefix") format("embedded-opentype"),
+       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff2") format("woff2"),
+       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff") format("woff"),
+       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Bringbold Nineties";
+  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff2") format("woff2"),
+       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff") format("woff"),
+       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+.pulse-ai-bonjour-title {
+  font-family: "Bringbold Nineties Demo", "Bringbold Nineties", "Fraunces", "DM Serif Display", serif;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}

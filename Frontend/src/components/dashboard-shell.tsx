@@ -23,6 +23,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { PulseAiOrb } from './pulse-ai-orb';
 
 import { ConnectionsDialog } from './dashboard-dialogs';
 import { useQuery } from '@tanstack/react-query';
@@ -158,19 +159,7 @@ export function DashboardShell({
           >
             <Link to="/pulse-ai">
               <span>pulse AI</span>
-              <span className="nav-ai-badge" style={{
-                marginLeft: 'auto',
-                fontSize: 10,
-                fontWeight: 700,
-                padding: '1px 6px',
-                borderRadius: 999,
-                background: 'linear-gradient(135deg, #f97316, #ef4444)',
-                color: '#fff',
-                letterSpacing: '0.5px',
-                boxShadow: 'none',
-              }}>
-                AI
-              </span>
+              <PulseAiOrb size={20} style={{ marginLeft: 'auto' }} />
             </Link>
           </Button>
 
