@@ -2665,7 +2665,7 @@ INSTRUCTIONS FOR OPERATIONAL INCIDENT ANALYSIS:
 5. Provide 2-3 Actionable SRE Leadership Recommendations.
 6. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
 7. Do NOT output irrelevant infrastructure maps.
-8. CRITICAL: Do NOT output raw ```html code blocks in your markdown text; the interactive visual dashboard artifact is automatically attached by the system.
+8. CRITICAL: Do NOT output raw HTML code blocks in your markdown text; the interactive visual dashboard artifact is automatically attached by the system.
 9. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
   }
 
@@ -2710,7 +2710,7 @@ INSTRUCTIONS FOR UNIFIED EXECUTIVE SRE & INFRASTRUCTURE BRIEFING:
 3. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH].
 4. Write Case #00297257 (single hash #, NEVER double ##). In tables, write #00297257.
 5. ZERO loose raw asterisks in text. Output clean markdown directly.
-6. CRITICAL: Do NOT output raw ```html code blocks in your markdown text; the interactive visual dashboard artifact is automatically attached by the system.
+6. CRITICAL: Do NOT output raw HTML code blocks in your markdown text; the interactive visual dashboard artifact is automatically attached by the system.
 7. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
 }
 
