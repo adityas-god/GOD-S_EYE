@@ -5,6 +5,7 @@ import {
   RotateCcw,
   User,
   Copy,
+  Download,
   Check,
   ChevronDown,
   ChevronUp,
@@ -160,6 +161,7 @@ export function PulseAIPage() {
   const [inputMessage, setInputMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [downloadedId, setDownloadedId] = useState<string | null>(null);
   const [expandedTools, setExpandedTools] = useState<Record<string, boolean>>({});
   const [fullscreenArtifact, setFullscreenArtifact] = useState<{ html: string; title: string } | null>(null);
 
@@ -368,10 +370,58 @@ export function PulseAIPage() {
     setExpandedTools(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // Injects baseline executive Sitepulse dark theme into HTML artifacts if missing
+  // Triggers browser file download of standalone HTML report
+  const downloadHtmlArtifact = (rawHtml: string, title: string, id: string) => {
+    const safeHtml = processArtifactHtml(rawHtml);
+    const blob = new Blob([safeHtml], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const sanitizedTitle = (title || 'sitepulse-report')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    a.download = `${sanitizedTitle || 'sitepulse-dashboard'}.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setDownloadedId(id);
+    setTimeout(() => setDownloadedId(null), 2000);
+  };
+
+  // Scrollbar hiding CSS injected into every artifact to hide default OS scrollbars
+  const SCROLLBAR_HIDE_STYLE = `<style id="sitepulse-no-scrollbar">
+    html, body, div, table, * {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    ::-webkit-scrollbar,
+    *::-webkit-scrollbar,
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    div::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+    ::-webkit-scrollbar-thumb,
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner,
+    ::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+  </style>`;
+
+  // Injects baseline executive Sitepulse dark theme into HTML artifacts if missing and hides scrollbars
   const processArtifactHtml = (rawHtml: string): string => {
-    if (!rawHtml.includes('<html') && !rawHtml.includes('<!DOCTYPE')) {
-      return `<!DOCTYPE html>
+    let html = rawHtml;
+    if (!html.includes('<html') && !html.includes('<!DOCTYPE')) {
+      html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -391,7 +441,24 @@ export function PulseAIPage() {
       --blue: #38bdf8;
       --amber: #f59e0b;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    ::-webkit-scrollbar, html::-webkit-scrollbar, body::-webkit-scrollbar, div::-webkit-scrollbar, *::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+    html, body {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+      overflow-y: auto;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -412,11 +479,21 @@ export function PulseAIPage() {
   </style>
 </head>
 <body>
-  ${rawHtml}
+  ${html}
 </body>
 </html>`;
     }
-    return rawHtml;
+
+    // Always inject scrollbar hiding CSS so no scrollbars ever show in iframe
+    if (html.includes('</head>')) {
+      html = html.replace('</head>', `${SCROLLBAR_HIDE_STYLE}</head>`);
+    } else if (html.includes('<body')) {
+      html = html.replace('<body', `${SCROLLBAR_HIDE_STYLE}<body`);
+    } else {
+      html = `${SCROLLBAR_HIDE_STYLE}${html}`;
+    }
+
+    return html;
   };
 
   // Executive Inline Parser: strips all raw loose asterisks, converts Case numbers, Severities, Statuses into pill badges
@@ -828,25 +905,28 @@ export function PulseAIPage() {
 
           {/* Right Actions */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {/* Copy Button */}
+            {/* Download HTML Icon Button */}
             <button
-              onClick={() => copyToClipboard(htmlCode, `art_${blockKey}`)}
-              title="Copy HTML"
+              onClick={() => downloadHtmlArtifact(htmlCode, title, `art_${blockKey}`)}
+              title={downloadedId === `art_${blockKey}` ? 'Downloaded HTML report' : 'Download HTML report'}
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: 4,
-                padding: '5px 9px',
+                justifyContent: 'center',
+                padding: '5px 8px',
                 borderRadius: 6,
                 border: '1px solid var(--border)',
                 background: 'var(--card)',
-                color: 'var(--muted-foreground)',
+                color: downloadedId === `art_${blockKey}` ? '#22c55e' : 'var(--muted-foreground)',
                 fontSize: 11,
                 cursor: 'pointer',
               }}
             >
-              {copiedId === `art_${blockKey}` ? <Check style={{ width: 12, height: 12, color: '#22c55e' }} /> : <Copy style={{ width: 12, height: 12 }} />}
-              {copiedId === `art_${blockKey}` ? 'Copied' : 'Copy HTML'}
+              {downloadedId === `art_${blockKey}` ? (
+                <Check style={{ width: 13, height: 13, color: '#22c55e' }} />
+              ) : (
+                <Download style={{ width: 13, height: 13 }} />
+              )}
             </button>
 
             {/* Fullscreen Button */}
@@ -2142,6 +2222,15 @@ export function PulseAIPage() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => downloadHtmlArtifact(fullscreenArtifact.html, fullscreenArtifact.title, 'modal_art')}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+                >
+                  {downloadedId === 'modal_art' ? <Check style={{ width: 14, height: 14, color: '#22c55e' }} /> : <Download style={{ width: 14, height: 14 }} />}
+                  {downloadedId === 'modal_art' ? 'Downloaded' : 'Download HTML'}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"

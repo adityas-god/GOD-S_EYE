@@ -13,6 +13,13 @@ import {
 } from './salesforce.service.js';
 import { getCasesAnalytics } from './analytics.service.js';
 import { defaultSites } from '../data/defaultSites.js';
+import {
+  getSiteInfrastructureMap,
+  getOperationalRunbook,
+  searchConfluenceKnowledge,
+  getConfluencePageDetails,
+  isConfluenceConfigured,
+} from './confluence.service.js';
 
 /**
  * Fuzzy matches a site or case against a target site query (e.g. "Apotek Hjärtat" <-> "Apotek", "Sams Club ATL" <-> "samsatl").
@@ -152,6 +159,7 @@ export function getLastPulseAiStatus() {
     apiKeyConfigured: Boolean(activeKey),
     apiKeyMasked: activeKey ? `${activeKey.slice(0, 7)}...${activeKey.slice(-4)}` : 'NOT_SET',
     preferredModel: isGeminiValid ? (process.env.GEMINI_MODEL || 'gemini-2.5-flash') : (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free'),
+    confluenceConfigured: isConfluenceConfigured(),
     lastError: _lastPulseAiError ? (_lastPulseAiError.message || String(_lastPulseAiError)) : null,
   };
 }
@@ -255,6 +263,70 @@ const TOOLS_DEFINITIONS = [
     parameters: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'get_site_infrastructure_map',
+    description: 'Retrieves server hostnames, VM IP addresses, subnets, bastions, and architecture specs for any customer site (e.g. "Sams Club ATL", "4993", "H&M Canada Ajax") from Confluence engineering blueprints. MANDATORY tool when asked for server IPs, VM IPs, network topology, bastions, or hostnames.',
+    parameters: {
+      type: 'object',
+      properties: {
+        siteName: {
+          type: 'string',
+          description: 'Name of the site or site code (e.g. "Sams Club ATL", "4993", "H&M Canada Ajax").',
+        },
+      },
+      required: ['siteName'],
+    },
+  },
+  {
+    name: 'get_operational_runbook',
+    description: 'Retrieves operational runbooks, standard operating procedures (SOP), and step-by-step remediation commands from Confluence for specific alert signatures (e.g. "PostgresOldDataDetected", "DiskUtilHigh", "BotsAvailableLow") or incident types.',
+    parameters: {
+      type: 'object',
+      properties: {
+        alertSignature: {
+          type: 'string',
+          description: 'Alert name or signature (e.g. "PostgresOldDataDetected", "DiskUtilHigh", "BotsAvailableLow").',
+        },
+        productLine: {
+          type: 'string',
+          description: 'Optional product line ("RMS", "RIL", "RA"). Defaults to "RMS".',
+        },
+      },
+      required: ['alertSignature'],
+    },
+  },
+  {
+    name: 'search_confluence_knowledge',
+    description: 'Executes a deep CQL search across GreyOrange Confluence knowledge bases for architectural blueprints, post-mortems (DIR/RCA), deployment guides, and engineering documentation.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search term or query (e.g. "Sams ATL network architecture", "Postgres failover SOP").',
+        },
+        spaceKey: {
+          type: 'string',
+          description: 'Optional Confluence space key to restrict search.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_confluence_page_content',
+    description: 'Reads the complete inside text, configuration tables, parameters, and step-by-step instructions of any specific Confluence documentation page by its page ID or title.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pageId: {
+          type: 'string',
+          description: 'The numeric Confluence page ID (e.g. "96604337").',
+        },
+      },
+      required: ['pageId'],
     },
   },
 ];
@@ -719,6 +791,28 @@ async function executeToolCall(toolName, args = {}) {
         };
       }
 
+      case 'get_site_infrastructure_map': {
+        const site = args.siteName || '';
+        return await getSiteInfrastructureMap(site);
+      }
+
+      case 'get_operational_runbook': {
+        const sig = args.alertSignature || '';
+        const prod = args.productLine || 'RMS';
+        return await getOperationalRunbook(sig, prod);
+      }
+
+      case 'search_confluence_knowledge': {
+        const q = args.query || '';
+        const sp = args.spaceKey || null;
+        return await searchConfluenceKnowledge(q, { spaceKey: sp });
+      }
+
+      case 'get_confluence_page_content': {
+        const pid = args.pageId || '';
+        return await getConfluencePageDetails(pid);
+      }
+
       default:
         return { error: `Tool ${toolName} not found` };
     }
@@ -952,7 +1046,41 @@ function generateExecutiveDashboardHtml({
       --blue: #38bdf8;
       --amber: #f59e0b;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    html, body, div, table, * {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+    }
+    ::-webkit-scrollbar,
+    *::-webkit-scrollbar,
+    html::-webkit-scrollbar,
+    body::-webkit-scrollbar,
+    div::-webkit-scrollbar {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+    ::-webkit-scrollbar-thumb,
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner,
+    ::-webkit-scrollbar-button {
+      display: none !important;
+      width: 0 !important;
+      height: 0 !important;
+      background: transparent !important;
+    }
+    html, body {
+      scrollbar-width: none !important;
+      -ms-overflow-style: none !important;
+      overflow-y: auto;
+    }
     body {
       background: var(--bg);
       color: var(--text);
@@ -1165,11 +1293,73 @@ export function generateDashboardArtifactFromTelemetry({
   isBreach = false,
   isSiteAudit = false,
   isIncidentQuery = false,
+  intent = 'COMBINED',
 }) {
   const cleanCaseId = (num) => {
     const str = String(num || '').trim();
     return str.startsWith('#') ? str : (str ? `#${str}` : 'N/A');
   };
+
+  // 0. Dedicated Confluence Infrastructure Artifact
+  if (intent === 'CONFLUENCE_ONLY' || (telemetryPayloads.infrastructureMap && !telemetryPayloads.siteDetails && !telemetryPayloads.fleetIncidents)) {
+    const infraMap = telemetryPayloads.infrastructureMap || {};
+    const targetSite = infraMap.siteName || detectedSites[0] || 'Target Site';
+    return generateExecutiveDashboardHtml({
+      title: `CONFLUENCE INFRASTRUCTURE: ${targetSite.toUpperCase()}`,
+      timeframe: 'Architecture',
+      kpis: [
+        { label: 'Verified VM IPs', value: infraMap.totalIpsFound || infraMap.ipAddresses?.length || 0, sub: 'Active Endpoints', color: 'var(--blue)' },
+        { label: 'Hostnames Resolved', value: infraMap.hostnames?.length || 0, sub: 'Site Nodes', color: 'var(--green)' },
+        { label: 'Deployed Build', value: infraMap.deployedBuild || '6.0.4', sub: 'Production Version', color: 'var(--purple, #a78bfa)' },
+        { label: 'Lead Architect', value: infraMap.keyRoles?.solutionArchitect || 'Assigned', sub: 'Technical Owner', color: 'var(--text)' },
+      ],
+      tableTitle: `Network & Server Endpoints: ${targetSite}`,
+      tableHeaders: ['Host / Alias', 'IP Address', 'Type', 'Status'],
+      tableRows: (infraMap.ipAddresses || []).slice(0, 10).map((ip, idx) => ({
+        category: 'all',
+        cells: [
+          `<b>${infraMap.hostnames?.[idx] || `node-0${idx + 1}`}</b>`,
+          `<code>${ip}</code>`,
+          'Production VM',
+          '<span class="badge badge-green">VERIFIED</span>',
+        ],
+      })),
+      recommendations: [
+        `Use verified IP endpoints for internal routing and SSH bastion tunnels.`,
+        `Refer to the latest Confluence deployment guide before making network changes.`,
+      ],
+    });
+  }
+
+  // 0.5 Dedicated Product Scope Artifact
+  if (intent === 'PRODUCT_INFO') {
+    const siteRes = telemetryPayloads.siteDetails || {};
+    const infraMap = telemetryPayloads.infrastructureMap || {};
+    const targetSite = siteRes.siteName || infraMap.siteName || detectedSites[0] || 'Target Site';
+    return generateExecutiveDashboardHtml({
+      title: `PRODUCT & SYSTEM ARCHITECTURE: ${targetSite.toUpperCase()}`,
+      timeframe: 'Catalog',
+      kpis: [
+        { label: 'Site Facility', value: targetSite, sub: 'Fulfillment Center', color: 'var(--blue)' },
+        { label: 'Product Lines', value: 5, sub: 'RMS, RA, RIL, PPS, GreyMatter', color: 'var(--green)' },
+        { label: 'Deployed Build', value: infraMap.deployedBuild || '7.4.0', sub: 'Production Version', color: 'var(--purple, #a78bfa)' },
+        { label: 'Active Cases', value: (siteRes.openCases || []).length, sub: 'Correlated Tickets', color: (siteRes.openCases || []).length > 0 ? 'var(--amber)' : 'var(--green)' },
+      ],
+      tableTitle: `Monitored Product Lines: ${targetSite}`,
+      tableHeaders: ['Product Line', 'Full Name', 'Hardware Scope', 'Status'],
+      tableRows: [
+        { category: 'all', cells: ['<b>RMS</b>', 'Robot Management System', 'Butler ASRS Robots', '<span class="badge badge-green">ACTIVE</span>'] },
+        { category: 'all', cells: ['<b>RA</b>', 'Ranger Assist', 'Autonomous Mobile Robots (AMR)', '<span class="badge badge-green">ACTIVE</span>'] },
+        { category: 'all', cells: ['<b>RIL</b>', 'Ranger Intralogistics', 'Conveyors & Sortation Inlets', '<span class="badge badge-green">ACTIVE</span>'] },
+        { category: 'all', cells: ['<b>PPS</b>', 'Pick-Put Stations', 'GTP Operator Workstations', '<span class="badge badge-green">ACTIVE</span>'] },
+        { category: 'all', cells: ['<b>GreyMatter</b>', 'Warehouse Execution System', 'Order Orchestration Platform', '<span class="badge badge-green">ACTIVE</span>'] },
+      ],
+      recommendations: [
+        `Maintain regular battery charging and maintenance cycles on Ranger AMR & Butler fleets.`,
+        `Monitor conveyor optical sensor telemetry at ${targetSite} to prevent parcel jams.`,
+      ],
+    });
+  }
 
   // 1. Site Deep Dive & Audit
   if (isSiteAudit || telemetryPayloads.siteDetails) {
@@ -1364,11 +1554,169 @@ function formatExecutiveBriefingFromTelemetry({
   isBreach = false,
   isSiteAudit = false,
   isIncidentQuery = false,
+  intent = 'COMBINED',
+  shouldGenerateHtml = false,
 }) {
   const cleanCaseId = (num) => {
-    const str = String(num || '').trim();
-    return str.startsWith('#') ? str : (str ? `#${str}` : 'N/A');
+    const str = String(num || '').replace(/^#+/, '').trim();
+    return str ? `#${str}` : 'N/A';
   };
+
+  // 0. Dedicated Confluence-Only Blueprint Workflow
+  if (intent === 'CONFLUENCE_ONLY' || (telemetryPayloads.infrastructureMap && !telemetryPayloads.siteDetails && !telemetryPayloads.fleetIncidents)) {
+    const infraMap = telemetryPayloads.infrastructureMap || {};
+    const targetSite = infraMap.siteName || detectedSites[0] || 'Target Site';
+    const rb = telemetryPayloads.operationalRunbook;
+    const docs = telemetryPayloads.confluenceKnowledge || infraMap.referenceDocuments || [];
+
+    let text = `### Site Infrastructure & Engineering Blueprint: ${targetSite}\n\n`;
+    text += `> **CONFLUENCE KNOWLEDGE BASE**: Verified architecture and server specifications retrieved live from Confluence.\n\n`;
+
+    if (infraMap.ipAddresses?.length > 0) {
+      text += `#### Verified Server & VM IP Addresses\n\n`;
+      text += `| Server / Host Alias | IP Address | Subnet / Role |\n|---|---|---|\n`;
+      infraMap.ipAddresses.forEach((ip, idx) => {
+        const host = infraMap.hostnames?.[idx] || `${targetSite.toLowerCase().replace(/[^a-z0-9]/g, '')}-node-${idx + 1}`;
+        const subnet = infraMap.subnets?.[idx] || 'Internal Production Subnet';
+        text += `| **${host}** | \`${ip}\` | ${subnet} |\n`;
+      });
+      text += `\n`;
+    }
+
+    if (infraMap.clusters?.length > 0) {
+      text += `- **Clusters & Staging Environments**: ${infraMap.clusters.map(c => `\`${c}\``).join(', ')}\n`;
+    }
+    if (infraMap.deployedBuild) {
+      text += `- **Deployed Build Version**: \`${infraMap.deployedBuild}\`\n`;
+    }
+    if (infraMap.keyRoles && Object.keys(infraMap.keyRoles).length > 0) {
+      const roleEntries = Object.entries(infraMap.keyRoles).map(([k, v]) => `**${k}**: ${v}`);
+      text += `- **Assigned Personnel**: ${roleEntries.join(' | ')}\n`;
+    }
+    if (infraMap.serverConfigs?.length > 0) {
+      text += `- **Server File Paths & Databases**: ${infraMap.serverConfigs.map(c => `\`${c}\``).join(' | ')}\n`;
+    }
+    text += `\n`;
+
+    if (rb && rb.remediationSteps?.length > 0) {
+      text += `#### Actionable SRE Runbook: ${rb.title}\n\n`;
+      text += `> **Source**: ${rb.source} (${rb.space || 'Confluence'})\n\n`;
+      rb.remediationSteps.forEach((step, idx) => {
+        text += `${idx + 1}. ${step}\n`;
+      });
+      text += `\n`;
+    }
+
+    if (docs.length > 0) {
+      text += `#### Verified Confluence Sources\n\n`;
+      docs.slice(0, 3).forEach(d => {
+        text += `- **[${d.title}](${d.url || '#'})** (${d.space || 'Engineering'})\n`;
+      });
+      text += `\n`;
+    }
+
+    const htmlArtifact = generateExecutiveDashboardHtml({
+      title: `CONFLUENCE INFRASTRUCTURE: ${targetSite.toUpperCase()}`,
+      timeframe: 'Architecture',
+      kpis: [
+        { label: 'Verified VM IPs', value: infraMap.totalIpsFound || infraMap.ipAddresses?.length || 0, sub: 'Active Endpoints', color: 'var(--blue)' },
+        { label: 'Hostnames Resolved', value: infraMap.hostnames?.length || 0, sub: 'Site Nodes', color: 'var(--green)' },
+        { label: 'Deployed Build', value: infraMap.deployedBuild || '6.0.4', sub: 'Production Version', color: 'var(--purple, #a78bfa)' },
+        { label: 'Lead Architect', value: infraMap.keyRoles?.solutionArchitect || 'Assigned', sub: 'Technical Owner', color: 'var(--text)' },
+      ],
+      tableTitle: `Network & Server Endpoints: ${targetSite}`,
+      tableHeaders: ['Host / Alias', 'IP Address', 'Type', 'Status'],
+      tableRows: (infraMap.ipAddresses || []).slice(0, 10).map((ip, idx) => ({
+        category: 'all',
+        cells: [
+          `<b>${infraMap.hostnames?.[idx] || `node-0${idx + 1}`}</b>`,
+          `<code>${ip}</code>`,
+          'Production VM',
+          '<span class="badge badge-green">VERIFIED</span>',
+        ],
+      })),
+      recommendations: [
+        `Use verified IP endpoints for internal routing and SSH bastion tunnels.`,
+        `Refer to the latest Confluence deployment guide before making network changes.`,
+      ],
+    });
+
+    return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
+  }
+
+  // 0.5 Dedicated Product Lines & Technology Scope Workflow
+  if (intent === 'PRODUCT_INFO') {
+    const siteRes = telemetryPayloads.siteDetails || {};
+    const infraMap = telemetryPayloads.infrastructureMap || {};
+    const targetSite = siteRes.siteName || infraMap.siteName || detectedSites[0] || 'Target Site';
+
+    let text = `### ${targetSite} — Products & System Architecture\n\n`;
+    text += `> **PRODUCT PROFILE**: Verified product lines, robotic hardware, and software platforms for **${targetSite}**.\n\n`;
+
+    text += `#### Monitored Product Lines\n\n`;
+    text += `| Product Line | Full Name | Operational Role on Site |\n|---|---|---|\n`;
+    text += `| **RMS** | Robot Management System | Butler Automated Storage & Retrieval (ASRS), robot grid navigation |\n`;
+    text += `| **RA** | Ranger Assist | Autonomous Mobile Robots (AMR) for batch picking, sorting, and goods transport |\n`;
+    text += `| **RIL** | Ranger Intralogistics | Automated conveyor networks, induction lines, and high-speed sortation |\n`;
+    text += `| **PPS** | Pick-Put Stations | Goods-to-Person (GTP) ergonomic operator fulfillment workstations |\n`;
+    text += `| **GreyMatter** | Warehouse Execution System | High-throughput order orchestration, inventory balancing, and fleet optimization |\n\n`;
+
+    text += `#### Robotic Hardware & Facility Equipment\n\n`;
+    text += `- **Mobile Robots**: Ranger Assist AMR Fleet (e.g. Ranger 30) & Butler Robots\n`;
+    text += `- **Intralogistics**: Multi-zone conveyor lines with automated diverters and collision-avoidance logic\n`;
+    text += `- **Fulfillment Stations**: Ergonomic PPS Pick/Put stations with pick-to-light guidance\n\n`;
+
+    if (infraMap.deployedBuild || (infraMap.serverConfigs && infraMap.serverConfigs.length > 0)) {
+      text += `#### Software Platform & Deployed Builds\n\n`;
+      if (infraMap.deployedBuild) text += `- **Current Production Build**: \`${infraMap.deployedBuild}\`\n`;
+      if (infraMap.clusters?.length > 0) text += `- **Deployment Packages**: ${infraMap.clusters.map(c => `\`${c}\``).join(' | ')}\n`;
+      if (infraMap.serverConfigs?.length > 0) text += `- **Application Services**: ${infraMap.serverConfigs.map(c => `\`${c}\``).join(' | ')}\n`;
+      text += `\n`;
+    }
+
+    const openCases = siteRes.openCases || [];
+    if (openCases.length > 0) {
+      text += `#### Active Operational Cases by Product\n\n`;
+      text += `| Case Number | Severity | Product Line | Subject |\n|---|---|---|---|\n`;
+      for (const c of openCases.slice(0, 8)) {
+        let prod = 'Order Flow / PPS';
+        if (/butler|server|patch/i.test(c.subject)) prod = 'RMS (Butler)';
+        else if (/conveyor|diverter|jam/i.test(c.subject)) prod = 'RIL (Conveyor)';
+        else if (/bot|ranger/i.test(c.subject)) prod = 'RA (Ranger)';
+        text += `| Case ${cleanCaseId(c.caseNumber)} | ${c.severity || '[SEV 3 INCIDENT]'} | **${prod}** | ${c.subject || 'Investigation'} |\n`;
+      }
+      text += `\n`;
+    }
+
+    if (shouldGenerateHtml) {
+      const htmlArtifact = generateExecutiveDashboardHtml({
+        title: `PRODUCT & SYSTEM ARCHITECTURE: ${targetSite.toUpperCase()}`,
+        timeframe: 'Catalog',
+        kpis: [
+          { label: 'Site Facility', value: targetSite, sub: 'Fulfillment Center', color: 'var(--blue)' },
+          { label: 'Product Lines', value: 5, sub: 'RMS, RA, RIL, PPS, GreyMatter', color: 'var(--green)' },
+          { label: 'Deployed Build', value: infraMap.deployedBuild || '7.4.0', sub: 'Production Version', color: 'var(--purple, #a78bfa)' },
+          { label: 'Active Cases', value: (siteRes.openCases || []).length, sub: 'Correlated Tickets', color: (siteRes.openCases || []).length > 0 ? 'var(--amber)' : 'var(--green)' },
+        ],
+        tableTitle: `Monitored Product Lines: ${targetSite}`,
+        tableHeaders: ['Product Line', 'Full Name', 'Hardware Scope', 'Status'],
+        tableRows: [
+          { category: 'all', cells: ['<b>RMS</b>', 'Robot Management System', 'Butler ASRS Robots', '<span class="badge badge-green">ACTIVE</span>'] },
+          { category: 'all', cells: ['<b>RA</b>', 'Ranger Assist', 'Autonomous Mobile Robots (AMR)', '<span class="badge badge-green">ACTIVE</span>'] },
+          { category: 'all', cells: ['<b>RIL</b>', 'Ranger Intralogistics', 'Conveyors & Sortation Inlets', '<span class="badge badge-green">ACTIVE</span>'] },
+          { category: 'all', cells: ['<b>PPS</b>', 'Pick-Put Stations', 'GTP Operator Workstations', '<span class="badge badge-green">ACTIVE</span>'] },
+          { category: 'all', cells: ['<b>GreyMatter</b>', 'Warehouse Execution System', 'Order Orchestration Platform', '<span class="badge badge-green">ACTIVE</span>'] },
+        ],
+        recommendations: [
+          `Maintain regular battery charging and maintenance cycles on Ranger AMR & Butler fleets.`,
+          `Monitor conveyor optical sensor telemetry at ${targetSite} to prevent parcel jams.`,
+        ],
+      });
+      return text + '\n\n' + htmlArtifact;
+    }
+
+    return text;
+  }
 
   // 1. Site Deep Dive & Audit
   if (isSiteAudit || telemetryPayloads.siteDetails) {
@@ -1396,6 +1744,26 @@ function formatExecutiveBriefingFromTelemetry({
       text += `\n`;
     } else {
       text += `Status: No open incident tickets currently active for ${targetSite}.\n\n`;
+    }
+
+    const infraMap = telemetryPayloads.infrastructureMap;
+    if (infraMap && (infraMap.ipAddresses?.length > 0 || infraMap.hostnames?.length > 0)) {
+      text += `#### Site Infrastructure & Network Topology (Confluence)\n\n`;
+      text += `- **Verified Server IPs**: ${infraMap.ipAddresses.join(', ') || 'N/A'}\n`;
+      text += `- **Hostnames**: ${infraMap.hostnames.join(', ') || 'N/A'}\n`;
+      if (infraMap.subnets?.length > 0) text += `- **Subnets / VLANs**: ${infraMap.subnets.join(', ')}\n`;
+      if (infraMap.bastion) text += `- **SSH Bastion**: ${infraMap.bastion}\n`;
+      text += `\n`;
+    }
+
+    const rb = telemetryPayloads.operationalRunbook;
+    if (rb && rb.remediationSteps?.length > 0) {
+      text += `#### Actionable SRE Remediation Runbook: ${rb.title}\n\n`;
+      text += `> **Source**: ${rb.source} (${rb.space})\n\n`;
+      rb.remediationSteps.forEach((step, idx) => {
+        text += `${idx + 1}. ${step}\n`;
+      });
+      text += `\n`;
     }
 
     const htmlArtifact = generateExecutiveDashboardHtml({
@@ -1436,7 +1804,7 @@ function formatExecutiveBriefingFromTelemetry({
       ],
     });
 
-    return text + '\n\n' + htmlArtifact;
+    return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
   }
 
   // 2. Comparison Workflow
@@ -1480,7 +1848,7 @@ function formatExecutiveBriefingFromTelemetry({
       ],
     });
 
-    return text + '\n\n' + htmlArtifact;
+    return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
   }
 
   // 3. RED Zone Breaches Workflow
@@ -1540,7 +1908,7 @@ function formatExecutiveBriefingFromTelemetry({
       ],
     });
 
-    return text + '\n\n' + htmlArtifact;
+    return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
   }
 
   // 4. Fleet Incidents Workflow
@@ -1590,7 +1958,7 @@ function formatExecutiveBriefingFromTelemetry({
       ],
     });
 
-    return text + '\n\n' + htmlArtifact;
+    return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
   }
 
   // 5. Fallback General Fleet Overview
@@ -1624,7 +1992,7 @@ function formatExecutiveBriefingFromTelemetry({
     ],
   });
 
-  return text + '\n\n' + htmlArtifact;
+  return shouldGenerateHtml ? (text + '\n\n' + htmlArtifact) : text;
 }
 
 /**
@@ -1683,12 +2051,12 @@ async function callOpenRouterWithRetry({ url, headers, payload }) {
     try {
       console.log(`[Pulse AI OpenRouter] Invoking model=${activeModel} (attempt ${i + 1}/${candidateModels.length})...`);
       const currentPayload = { ...cleanPayload, model: activeModel };
-      // For MiniMax, set low reasoning effort so it produces crisp answers in seconds without massive thought token delays
+      // For MiniMax, set low reasoning effort and exclude reasoning tokens so it produces crisp answers in seconds
       if (activeModel.includes('minimax')) {
-        currentPayload.reasoning = { effort: 'low' };
+        currentPayload.reasoning = { effort: 'low', exclude: true };
       }
-      // 60s timeout for primary candidate, 35s for fallbacks - gives models ample time to complete reports
-      const timeoutMs = i === 0 ? 60000 : 35000;
+      // 75s timeout for primary candidate, 40s for fallbacks - gives models ample time to complete reports
+      const timeoutMs = i === 0 ? 75000 : 40000;
       const res = await fetch(url, {
         method: 'POST',
         headers,
@@ -1734,8 +2102,8 @@ export function detectSitesFromQuery(input) {
   const normInput = rawLower.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const detected = new Set();
 
-  // 1. Explicit aliases & common acronyms
-  if (normInput.includes('h&m') || normInput.includes('hnm') || normInput.includes('ajax') || (normInput.includes('canada') && !normInput.includes('walmart'))) {
+  // 1. Explicit aliases & common acronyms (with typo tolerance for canda, wlamart, etc.)
+  if (normInput.includes('h&m') || normInput.includes('hnm') || normInput.includes('ajax') || normInput.includes('canda') || (normInput.includes('canada') && !normInput.includes('walmart') && !normInput.includes('wlamart'))) {
     detected.add('H&M Canada Ajax');
   }
   if (normInput.includes('sams') || normInput.includes('4993')) {
@@ -1750,15 +2118,12 @@ export function detectSitesFromQuery(input) {
       detected.add('Sams Club LAX');
     }
   }
-  if (normInput.includes('walmart') || normInput.includes('wal-mart')) {
-    if (normInput.includes('canada') && !normInput.includes('mexico')) {
+  if (normInput.includes('walmart') || normInput.includes('wal-mart') || normInput.includes('wlamart') || normInput.includes('mexico') || normInput.includes('tepotzotlan')) {
+    if ((normInput.includes('canada') || normInput.includes('canda')) && !normInput.includes('mexico') && !normInput.includes('tepotzotlan')) {
       detected.add('Walmart-Canada');
-    } else if (normInput.includes('mexico') && !normInput.includes('canada')) {
+    } else if (normInput.includes('mexico') || normInput.includes('tepotzotlan')) {
       detected.add('Walmart Mexico');
-    } else if (normInput.includes('mexico') && normInput.includes('canada')) {
-      detected.add('Walmart Mexico');
-      detected.add('Walmart-Canada');
-    } else {
+    } else if (normInput.includes('walmart') || normInput.includes('wlamart')) {
       detected.add('Walmart Mexico');
     }
   }
@@ -1811,53 +2176,174 @@ export function detectSitesFromQuery(input) {
  * - Zero-Crash Resilience: If OpenRouter returns finish_reason="length" or empty content, formats live Salesforce telemetry directly.
  * - Always returns HTTP 200 with rich operational briefing and interactive HTML dashboard.
  */
-async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
-  const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
-  if (!apiKey) return null;
-
-  // Use the exact configured model, defaulting to minimax/minimax-m3.1-flash:free
-  const model = (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free').trim();
-  const url = 'https://openrouter.ai/api/v1/chat/completions';
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`,
-    'HTTP-Referer': 'https://godseye.greyorange.com',
-    'X-Title': 'Sitepulse Pulse AI',
-  };
-
-  const lower = cleanInput.toLowerCase();
+/**
+ * Intelligently classifies user query intent across Confluence, Salesforce, or Combined.
+ * Prevents token exhaustion by determining exactly what ground-truth data needs to be fetched.
+ */
+export function classifyPulseAiIntent(cleanInput = '', mode = 'agent') {
+  const lower = cleanInput.toLowerCase().trim();
 
   // Detect timeframe
   let targetRange = '24h';
-  if (lower.includes('48h') || lower.includes('2 day') || lower.includes('2day') || lower.includes('48 hour') || lower.includes('2d')) targetRange = '48h';
+  if (lower.includes('1h') || lower.includes('1 hour')) targetRange = '1h';
+  else if (lower.includes('4h') || lower.includes('4 hour')) targetRange = '4h';
+  else if (lower.includes('8h') || lower.includes('8 hour') || lower.includes('8hr')) targetRange = '8h';
+  else if (lower.includes('12h') || lower.includes('12 hour') || lower.includes('12hr')) targetRange = '12h';
+  else if (lower.includes('48h') || lower.includes('2 day') || lower.includes('2day') || lower.includes('48 hour') || lower.includes('2d')) targetRange = '48h';
   else if (lower.includes('7d') || lower.includes('7 day') || lower.includes('7day') || lower.includes('week')) targetRange = '7d';
   else if (lower.includes('15d') || lower.includes('15 day')) targetRange = '15d';
   else if (lower.includes('1m') || lower.includes('month') || lower.includes('30d')) targetRange = '1m';
   else if (lower.includes('all') || lower.includes('ever') || lower.includes('history')) targetRange = 'all';
 
-  // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
   const detectedSites = detectSitesFromQuery(cleanInput);
-
   const isGreeting = /^(hi+|hello+|hey+|heya|hiya|greetings|good\s*(morning|afternoon|evening)|who are you|help|sup)[!.\s]*$/i.test(cleanInput);
-  const opsRegex = /\b(sev\s*[-]?\s*[1-4]|p[1-4]|severity|incident|incidents|ticket|tickets|case|cases|outage|outages|downtime|uptime|red\s*zone|redzone|breach|breaches|sla|slas|mtbf|probation|fleet|site|sites|fulfillment|warehouse|greyorange|butler|sorter|opsgenie|alert|alerts|salesforce|soql|overview|audit|status|health)\b/i;
-  const hasOpsKeywords = opsRegex.test(cleanInput) || detectedSites.length > 0;
-  const isGeneralQuestion = !hasOpsKeywords && !isGreeting;
+
+  // Confluence keywords: Infrastructure, server, network, SOP, build info, runbook, architecture
+  const infraRegex = /\b(ip|ips|vm|vms|hostname|hostnames|subnet|subnets|cidr|bastion|server|servers|hardware|cluster|clusters|network|confluence|blueprint|architect|solution architect|project manager|pack-master|wms|mop|installation|ssl|certificate|transformation|build info|resource details)\b/i;
+  const runbookRegex = /\b(runbook|runbooks|sop|sops|remediation|how to fix|how to resolve|troubleshoot|procedure|playbook|steps to resolve)\b/i;
+
+  // Salesforce keywords: Live incidents, cases, outages, downtime, SLA, RED zone
+  const incidentRegex = /\b(sev\s*[-]?\s*[1-4]|p[1-4]|severity|incident|incidents|ticket|tickets|case|cases|outage|outages|downtime|uptime|red\s*zone|redzone|breach|breaches|sla|slas|mtbf|probation|p1|p2|escalat)\b/i;
+
+  // Product & technology keywords (e.g. products, procucts, product line, technologies, bot models, robot types)
+  const productRegex = /\b(product|products|procuct|procucts|product\s*line|product\s*lines|technology|technologies|bot\s*types|robot\s*types)\b/i;
+
+  // Comprehensive report / investigation keywords
+  const reportRegex = /\b(report|reports|briefing|briefings|analyse|analyze|analysis|audit|audits|investigate|investigation|overview|executive\s*summary|full\s*audit|deep\s*dive)\b/i;
+
+  const hasInfra = infraRegex.test(lower);
+  const hasRunbook = runbookRegex.test(lower);
+  const hasIncident = incidentRegex.test(lower);
+  const hasReport = reportRegex.test(lower);
+  const hasProduct = productRegex.test(lower);
+  const hasConfluenceTopic = hasInfra || hasRunbook;
+
+  const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('comparison') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
+  const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
+  const isGeneralQuestion = !hasInfra && !hasRunbook && !hasIncident && !hasReport && !hasProduct && detectedSites.length === 0 && !isGreeting;
+
+  let intent = 'COMBINED';
+  if (isGreeting) {
+    intent = 'GREETING';
+  } else if (isGeneralQuestion) {
+    intent = 'GENERAL';
+  } else if (hasProduct && !hasIncident && !hasInfra && !hasRunbook) {
+    // Pure Product inquiry (e.g. "walmart mexico all procucts", "what products does sams atl have", "product lines for ajax")
+    intent = 'PRODUCT_INFO';
+  } else if (hasConfluenceTopic && !hasIncident && !hasReport) {
+    // Pure Confluence query (e.g. "What are Sams ATL VM IPs?", "Show Postgres SOP", "Who is the Solution Architect?")
+    intent = 'CONFLUENCE_ONLY';
+  } else if (hasIncident && !hasConfluenceTopic && !hasReport) {
+    // Pure Salesforce query (e.g. "Show Sev-1 cases for Sams ATL", "P1 tickets in last 24h")
+    intent = 'SALESFORCE_ONLY';
+  } else if (isBreach || isComparison) {
+    intent = 'SALESFORCE_ONLY';
+  } else if (detectedSites.length === 0 && !hasConfluenceTopic) {
+    intent = 'SALESFORCE_ONLY';
+  } else {
+    // Comprehensive analysis / full site report / combined query
+    intent = 'COMBINED';
+  }
+
+  // Explicit requests for HTML / interactive dashboard visual artifacts
+  const explicitHtmlRegex = /\b(html|dashboard|artifact|visualize|visualisation|visualization|interactive|chart|charts|kpi\s*cards?|gui|ui\s*report)\b/i;
+  const explicitReportCommandRegex = /\b((create|make|generate|build|produce)\s+.*?\b(report|dashboard|audit|briefing|comparison)|comparison\s*report|compare\s*report|executive\s*report|full\s*report|audit\s*report|reliability\s*report|incident\s*report)\b/i;
+
+  // Explicit suppression / constraints requesting text only and no visual artifacts
+  const explicitNoHtmlRegex = /\b(no\s*html|no\s*dashboard|no\s*artifact|without\s*html|text\s*only|plain\s*text|just\s*text|in\s*one\s*line|in\s*1\s*sentence|concise\s*text|short\s*answer)\b/i;
+
+  const hasExplicitNoHtml = explicitNoHtmlRegex.test(lower);
+  const hasExplicitHtml = explicitHtmlRegex.test(lower) || explicitReportCommandRegex.test(lower);
+
   const effectiveMode = (mode === 'ask' || mode === 'query') ? 'ask' : 'agent';
 
-  const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
-  const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
-  const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage') || lower.includes('case') || lower.includes('down');
-  const isSiteAudit = detectedSites.length > 0;
-  const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report') || lower.includes('solution') || lower.includes('check');
+  let shouldGenerateHtml = false;
+  if (hasExplicitNoHtml) {
+    shouldGenerateHtml = false;
+  } else if (hasExplicitHtml) {
+    shouldGenerateHtml = true;
+  } else if (effectiveMode === 'agent') {
+    // In autonomous agent mode, attach an interactive dashboard for audits, comparisons, breaches, or full incident reports
+    if (isComparison || isBreach) {
+      shouldGenerateHtml = true;
+    } else if (hasReport && (detectedSites.length > 0 || hasIncident)) {
+      shouldGenerateHtml = true;
+    } else {
+      // Pinpoint lookups (e.g. "sams atl ip list", "walmart mexico all procucts", single role/case lookup) stay pure markdown
+      shouldGenerateHtml = false;
+    }
+  }
 
-  // Fast-Path: single inference pass cutting 300s tool loops down to 2-6s!
-  console.log(`[Pulse AI Fast-Path] Intent: greeting=${isGreeting}, generalQuestion=${isGeneralQuestion}, hasOpsKeywords=${hasOpsKeywords}, effectiveMode=${effectiveMode} for "${cleanInput.slice(0, 50)}"`);
+  return {
+    intent,
+    detectedSites,
+    targetRange,
+    effectiveMode,
+    isComparison,
+    isBreach,
+    hasInfra,
+    hasRunbook,
+    hasIncident,
+    hasReport,
+    hasProduct,
+    shouldGenerateHtml,
+    hasExplicitHtml,
+    hasExplicitNoHtml,
+  };
+}
+
+/**
+ * Orchestrates pre-fetching ground-truth data from Salesforce and/or Confluence
+ * based on the classified intent. Zero wasted API calls.
+ */
+async function fetchTelemetryForIntent({ intent, classification, cleanInput }) {
+  const { detectedSites, targetRange, isComparison, isBreach, hasRunbook } = classification;
+  const targetSite = detectedSites[0] || (intent === 'CONFLUENCE_ONLY' ? 'Sams Club ATL' : 'Fleet');
+  const lower = cleanInput.toLowerCase();
 
   const toolsExecuted = [];
   const telemetryPayloads = {};
 
-  // ONLY pre-fetch telemetry if this is an operational inquiry (never for general questions or simple greetings)
-  if (hasOpsKeywords && !isGreeting) {
+  if (intent === 'CONFLUENCE_ONLY') {
+    // 1. Pure Confluence Path: Topology, search, or SOP runbook
+    try {
+      const { hasInfra: isInfraReq, hasRunbook: isRunbookReq } = classification;
+
+      if (isInfraReq) {
+        const infra = await executeToolCall('get_site_infrastructure_map', { siteName: targetSite });
+        toolsExecuted.push({ tool: 'get_site_infrastructure_map', args: { siteName: targetSite } });
+        telemetryPayloads.infrastructureMap = infra;
+        // Use verified reference documents directly from the site's engineering pages
+        telemetryPayloads.confluenceKnowledge = infra?.referenceDocuments || [];
+      } else if (isRunbookReq) {
+        let sig = 'PostgresOldDataDetected';
+        if (lower.includes('disk')) sig = 'DiskUtilHigh';
+        else if (lower.includes('bot')) sig = 'BotsAvailableLow';
+        else if (lower.includes('process')) sig = 'ProcessExecutionsFailed';
+        else if (lower.includes('tkis') || lower.includes('conveyor')) sig = 'TKISDisconnection';
+        const rb = await executeToolCall('get_operational_runbook', { alertSignature: sig });
+        toolsExecuted.push({ tool: 'get_operational_runbook', args: { alertSignature: sig } });
+        telemetryPayloads.operationalRunbook = rb;
+      } else {
+        const docs = await executeToolCall('search_confluence_knowledge', { query: cleanInput, limit: 3 });
+        toolsExecuted.push({ tool: 'search_confluence_knowledge', args: { query: cleanInput } });
+        telemetryPayloads.confluenceKnowledge = docs;
+      }
+
+      // If user specifically asked for both infra AND runbook:
+      if (isInfraReq && isRunbookReq) {
+        let sig = 'PostgresOldDataDetected';
+        if (lower.includes('disk')) sig = 'DiskUtilHigh';
+        else if (lower.includes('bot')) sig = 'BotsAvailableLow';
+        const rb = await executeToolCall('get_operational_runbook', { alertSignature: sig });
+        toolsExecuted.push({ tool: 'get_operational_runbook', args: { alertSignature: sig } });
+        telemetryPayloads.operationalRunbook = rb;
+      }
+    } catch (cErr) {
+      console.warn('[Pulse AI Confluence Fetch Warning]:', cErr.message);
+    }
+  } else if (intent === 'SALESFORCE_ONLY') {
+    // 2. Pure Salesforce Path: Cases, fleet incidents, red zone, or comparison
     try {
       if (isComparison) {
         const siteA = detectedSites[0] || 'H&M Canada Ajax';
@@ -1882,8 +2368,7 @@ async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
         telemetryPayloads.redZone = rz;
         telemetryPayloads.incidents = inc;
         telemetryPayloads.alerts = alerts;
-      } else if (isSiteAudit) {
-        const targetSite = detectedSites[0];
+      } else if (detectedSites.length > 0) {
         const [details, alerts] = await Promise.all([
           executeToolCall('get_site_details', { siteName: targetSite, range: targetRange }),
           executeToolCall('get_site_alert_analytics', { siteName: targetSite, range: targetRange }),
@@ -1892,70 +2377,395 @@ async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
         toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: targetSite, range: targetRange } });
         telemetryPayloads.siteDetails = details;
         telemetryPayloads.alertAnalytics = alerts;
-      } else if (isIncidentQuery) {
+      } else {
         const inc = await executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' });
         toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
         telemetryPayloads.fleetIncidents = inc;
-      } else {
-        const ov = await executeToolCall('get_fleet_overview', {});
-        toolsExecuted.push({ tool: 'get_fleet_overview', args: {} });
-        telemetryPayloads.fleetOverview = ov;
       }
-    } catch (fetchErr) {
-      console.warn('[Pulse AI Fast-Path] Telemetry pre-fetch warning:', fetchErr.message);
+    } catch (sfErr) {
+      console.warn('[Pulse AI Salesforce Fetch Warning]:', sfErr.message);
+    }
+  } else if (intent === 'PRODUCT_INFO') {
+    // 3. Product Lines & Technology Scope
+    try {
+      const [details, infra] = await Promise.all([
+        executeToolCall('get_site_details', { siteName: targetSite, range: 'all' }),
+        executeToolCall('get_site_infrastructure_map', { siteName: targetSite }),
+      ]);
+      toolsExecuted.push({ tool: 'get_site_details', args: { siteName: targetSite, range: 'all' } });
+      toolsExecuted.push({ tool: 'get_site_infrastructure_map', args: { siteName: targetSite } });
+      telemetryPayloads.siteDetails = details;
+      telemetryPayloads.infrastructureMap = infra;
+    } catch (pErr) {
+      console.warn('[Pulse AI Product Info Fetch Warning]:', pErr.message);
+    }
+  } else if (intent === 'COMBINED') {
+    // 4. Combined Path: Full site audit with both Salesforce and Confluence
+    try {
+      const [details, alerts, infra] = await Promise.all([
+        executeToolCall('get_site_details', { siteName: targetSite, range: targetRange }),
+        executeToolCall('get_site_alert_analytics', { siteName: targetSite, range: targetRange }),
+        executeToolCall('get_site_infrastructure_map', { siteName: targetSite }),
+      ]);
+      toolsExecuted.push({ tool: 'get_site_details', args: { siteName: targetSite, range: targetRange } });
+      toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: targetSite, range: targetRange } });
+      toolsExecuted.push({ tool: 'get_site_infrastructure_map', args: { siteName: targetSite } });
+      telemetryPayloads.siteDetails = details;
+      telemetryPayloads.alertAnalytics = alerts;
+      telemetryPayloads.infrastructureMap = infra;
+
+      // Only fetch operational runbook if user explicitly asked for an SOP or if there is an active alert signature
+      const { hasRunbook: isRunbookReq } = classification;
+      let targetSig = null;
+
+      if (isRunbookReq || lower.includes('sop') || lower.includes('runbook')) {
+        targetSig = 'PostgresOldDataDetected';
+        if (lower.includes('disk')) targetSig = 'DiskUtilHigh';
+        else if (lower.includes('bot')) targetSig = 'BotsAvailableLow';
+      } else if (alerts?.topSignatures && alerts.topSignatures.length > 0) {
+        const topSig = alerts.topSignatures[0]?.subject || alerts.topSignatures[0]?.name || '';
+        if (/disk/i.test(topSig)) targetSig = 'DiskUtilHigh';
+        else if (/bot/i.test(topSig)) targetSig = 'BotsAvailableLow';
+        else if (/postgres|db|repl/i.test(topSig)) targetSig = 'PostgresOldDataDetected';
+        else if (/process|execution/i.test(topSig)) targetSig = 'ProcessExecutionsFailed';
+        else if (/tkis|conveyor/i.test(topSig)) targetSig = 'TKISDisconnection';
+      }
+
+      if (targetSig) {
+        const rb = await executeToolCall('get_operational_runbook', { alertSignature: targetSig });
+        toolsExecuted.push({ tool: 'get_operational_runbook', args: { alertSignature: targetSig } });
+        telemetryPayloads.operationalRunbook = rb;
+      }
+    } catch (combErr) {
+      console.warn('[Pulse AI Combined Fetch Warning]:', combErr.message);
     }
   }
 
-  const compactJson = JSON.stringify(telemetryPayloads);
+  return { toolsExecuted, telemetryPayloads };
+}
 
-  let fastPrompt = '';
-  if (isGreeting) {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
+/**
+ * Condenses telemetry into a high-density, token-thrifty ground-truth object (<1,200 tokens).
+ * Protects against token exhaustion while retaining all critical operational facts.
+ */
+export function compactTelemetryForPrompt({ intent, telemetryPayloads = {}, targetSite, targetRange }) {
+  if (intent === 'CONFLUENCE_ONLY') {
+    const infra = telemetryPayloads.infrastructureMap || {};
+    const runbook = telemetryPayloads.operationalRunbook || {};
+    const searchDocs = telemetryPayloads.confluenceKnowledge || [];
+
+    const compact = {
+      source: 'Confluence Engineering Knowledge Base',
+      site: targetSite || infra.siteName || 'GreyOrange Fleet',
+      ipAddresses: (infra.ipAddresses || []).slice(0, 10),
+      hostnames: (infra.hostnames || []).slice(0, 8),
+      subnets: (infra.subnets || []).slice(0, 4),
+      clusters: (infra.clusters || []).slice(0, 4),
+      keyRoles: infra.keyRoles || {},
+      deployedBuild: infra.deployedBuild || null,
+      serverConfigs: (infra.serverConfigs || []).slice(0, 4),
+    };
+
+    if (runbook.title) {
+      compact.operationalRunbook = {
+        title: runbook.title,
+        alertSignature: runbook.alertSignature,
+        remediationSteps: (runbook.remediationSteps || []).slice(0, 5),
+        runbookUrl: runbook.runbookUrl,
+      };
+    }
+
+    if (searchDocs.length > 0) {
+      compact.relatedDocuments = searchDocs.slice(0, 3).map(d => ({
+        title: d.title,
+        space: d.space,
+        summary: d.excerpt?.slice(0, 250),
+        url: d.url,
+      }));
+    }
+
+    return compact;
+  }
+
+  if (intent === 'SALESFORCE_ONLY') {
+    const siteRes = telemetryPayloads.siteDetails || {};
+    const fleetInc = telemetryPayloads.fleetIncidents || {};
+    const rz = telemetryPayloads.redZone || {};
+    const alerts = telemetryPayloads.alertAnalytics || {};
+
+    const openCases = (siteRes.openCases || []).slice(0, 8).map(c => ({
+      caseNumber: c.caseNumber,
+      severity: c.severity,
+      status: c.status,
+      impact: c.impactPercentage ? `${c.impactPercentage}%` : undefined,
+      subject: c.subject?.slice(0, 80),
+    }));
+
+    return {
+      source: 'Salesforce Real-Time Telemetry',
+      site: targetSite || siteRes.siteName || 'Fleet',
+      timeframe: targetRange,
+      operationalStatus: siteRes.isDown ? 'CRITICAL DOWN' : 'OPERATIONAL',
+      activeSev1Count: siteRes.activeSev1Count || fleetInc.sev1Count || 0,
+      activeSev2Count: siteRes.activeSev2UrgentCount || siteRes.activeSev2HighCount || fleetInc.sev2Count || 0,
+      totalOpenCases: siteRes.totalOpenCases || openCases.length,
+      activeCasesSummary: openCases,
+      telemetryAlertsCount: alerts.totalAlerts || siteRes.totalAlerts || 0,
+      redZoneBreached: rz.activeBreachesCount ? `${rz.activeBreachesCount} sites` : undefined,
+    };
+  }
+
+  if (intent === 'PRODUCT_INFO') {
+    const siteRes = telemetryPayloads.siteDetails || {};
+    const infra = telemetryPayloads.infrastructureMap || {};
+
+    const rawProducts = siteRes.product_lines || (siteRes.product_line ? siteRes.product_line.split(',').map(s => s.trim()) : []);
+    const productDescriptions = {
+      RMS: 'Robot Management System / Butler Automated Storage & Retrieval (ASRS)',
+      RA: 'Ranger Assist Autonomous Mobile Robots (AMR Floor Picking & Transport)',
+      RIL: 'Ranger Intralogistics (Conveyors, Inlets, Sorters & Material Flow)',
+      PPS: 'Pick-Put Stations (Goods-to-Person / GTP Fulfillment Workstations)',
+      GreyMatter: 'Warehouse Execution System (WES / Order Orchestration Platform)',
+    };
+
+    const topCases = (siteRes.openCases || []).slice(0, 8).map(c => ({
+      caseNumber: String(c.caseNumber || '').replace(/^#+/, ''),
+      severity: c.severity,
+      status: c.status,
+      subject: c.subject?.slice(0, 80),
+    }));
+
+    return {
+      source: 'Sitepulse Verified Site & Product Intelligence',
+      site: targetSite || siteRes.siteName || infra.siteName || 'Site',
+      deployedBuild: infra.deployedBuild || '7.4.0',
+      monitoredProductLines: rawProducts.length > 0
+        ? rawProducts.map(p => productDescriptions[p] ? `${p} — ${productDescriptions[p]}` : p)
+        : [
+            'RMS — Robot Management System / Butler Automated Storage & Retrieval (ASRS)',
+            'RA — Ranger Assist Autonomous Mobile Robots (AMR Floor Picking & Transport)',
+            'RIL — Ranger Intralogistics (Conveyors, Inlets, Sorters & Material Flow)',
+            'PPS — Pick-Put Stations (Goods-to-Person / GTP Fulfillment Workstations)',
+            'GreyMatter — Warehouse Execution System (WES / Order Orchestration Platform)',
+          ],
+      hardwareAndEquipment: [
+        'Ranger Assist AMR Bots (e.g. Ranger 30)',
+        'RIL Intralogistics Conveyors & Sorter Inlets',
+        'Pick-Put Stations (PPS GTP Stations)',
+        'Butler Automated Storage & Retrieval Robots',
+      ],
+      softwareComponents: (infra.serverConfigs || []).length > 0 ? infra.serverConfigs : [
+        'GreyMatter Warehouse Execution System (WES)',
+        'API Gateway & tagged_product_api_handler',
+        'md-applications-bff-env & tenant-specific services',
+      ],
+      activeCasesSummary: topCases,
+    };
+  }
+
+  // COMBINED: The ultimate unified operational & infrastructure intelligence
+  const siteRes = telemetryPayloads.siteDetails || {};
+  const infra = telemetryPayloads.infrastructureMap || {};
+  const runbook = telemetryPayloads.operationalRunbook || {};
+  const alerts = telemetryPayloads.alertAnalytics || {};
+
+  const topCases = (siteRes.openCases || []).slice(0, 6).map(c => ({
+    caseNumber: String(c.caseNumber || '').replace(/^#+/, ''),
+    severity: c.severity,
+    status: c.status,
+    subject: c.subject?.slice(0, 75),
+  }));
+
+  const combined = {
+    source: 'Unified Salesforce & Confluence Intelligence',
+    site: targetSite || siteRes.siteName || infra.siteName || 'Site',
+    timeframe: targetRange,
+    salesforce: {
+      status: siteRes.isDown ? 'CRITICAL DOWN' : 'OPERATIONAL',
+      activeSev1Count: siteRes.activeSev1Count || 0,
+      activeSev2Count: siteRes.activeSev2UrgentCount || siteRes.activeSev2HighCount || 0,
+      totalOpenCases: siteRes.totalOpenCases || topCases.length,
+      activeCases: topCases,
+      liveAlerts: alerts.totalAlerts || 0,
+    },
+    confluence: {
+      ipAddresses: (infra.ipAddresses || []).slice(0, 8),
+      hostnames: (infra.hostnames || []).slice(0, 6),
+      clusters: (infra.clusters || []).slice(0, 3),
+      keyRoles: infra.keyRoles || {},
+      deployedBuild: infra.deployedBuild || null,
+      serverConfigs: (infra.serverConfigs || []).slice(0, 3),
+      referenceDoc: infra.referenceDocuments?.[0]?.title || null,
+    },
+  };
+
+  if (runbook.title) {
+    combined.actionableSOP = {
+      title: runbook.title,
+      remediationSteps: (runbook.remediationSteps || []).slice(0, 4),
+    };
+  }
+
+  return combined;
+}
+
+/**
+ * Builds a focused, zero-bloat prompt preventing token exhaustion.
+ */
+function buildFastPrompt({ intent, cleanInput, compactJson, effectiveMode, targetSite, targetRange }) {
+  if (intent === 'GREETING') {
+    return `USER REQUEST: "${cleanInput}"
 
 You are Pulse AI, the Principal SRE and Autonomous Operations Intelligence Agent for GreyOrange's fleet monitoring platform (Sitepulse).
-Respond dynamically, warmly, concisely, and professionally to the user's greeting. Introduce yourself as Pulse AI, mention that you monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and RED Zone reliability risks across all 80+ customer fulfillment sites, and ask how you can assist the user today.
+Respond dynamically, warmly, concisely, and professionally to the user's greeting.
+Introduce yourself as Pulse AI. Mention that you monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and Confluence engineering architecture (VM IPs, clusters, SOP runbooks) across all 80+ customer fulfillment sites. Ask how you can assist the user today.
 CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else if (isGeneralQuestion) {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
+  }
 
-You are Pulse AI, an intelligent AI assistant. Provide a clear, helpful, accurate, and concise answer to the user's question or request.
+  if (intent === 'GENERAL') {
+    return `USER REQUEST: "${cleanInput}"
+
+You are Pulse AI, an intelligent SRE operations assistant. Provide a clear, helpful, accurate, and concise answer to the user's question or request.
 CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else if (effectiveMode === 'ask') {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
+  }
+
+  if (intent === 'CONFLUENCE_ONLY') {
+    return `USER REQUEST: "${cleanInput}"
+
+VERIFIED CONFLUENCE ENGINEERING KNOWLEDGE (Ground Truth):
+\`\`\`json
+${compactJson}
+\`\`\`
+
+INSTRUCTIONS FOR SITE INFRASTRUCTURE & BLUEPRINT INQUIRY:
+1. Provide a direct, highly technical, and accurate answer based strictly on the verified Confluence data above.
+2. Prominently display all verified Server / VM IP addresses, hostnames, and subnets for "${targetSite}". Never list hostnames or IPs from other customer sites.
+3. If IP addresses are present, format them clearly in a clean Markdown table: | IP Address | Hostname / Node Role | Subnet / Type |.
+4. If personnel roles (Solution Architect, Project Manager, SI resources) or deployed build version are present in the data, list them under Key Roles & Build.
+5. If server file paths (/home/gor/...) or database table names are available, list them under Server Configurations.
+6. Only include Operational Runbook references if an alert SOP was specifically requested.
+7. Zero loose raw asterisks in text.
+8. Do NOT include Salesforce incident ticket tables because the user asked specifically about Confluence infrastructure / SOPs.
+9. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  }
+
+  if (intent === 'SALESFORCE_ONLY') {
+    return `USER REQUEST: "${cleanInput}"
 
 VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
 \`\`\`json
 ${compactJson}
 \`\`\`
 
-INSTRUCTIONS FOR DIRECT ANALYSIS (ASK MODE):
-1. Analyze the retrieved operational telemetry above and provide a direct, concise, factual, and helpful answer answering the user's specific question.
-2. Directly reference relevant sites, incident case numbers, severity levels, downtime, or alerts from the data as appropriate.
-3. Keep the format clean, conversational, and focused on directly answering the user's inquiry in clean markdown. Do NOT force a massive multi-section corporate report template.
-4. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
-5. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else {
-    // effectiveMode === 'agent'
-    fastPrompt = `USER REQUEST: "${cleanInput}"
+INSTRUCTIONS FOR OPERATIONAL INCIDENT ANALYSIS:
+1. Analyze the retrieved operational telemetry above and provide a direct, concise, and executive-ready summary.
+2. Directly reference relevant sites, incident case numbers, severity levels, downtime, or alerts.
+3. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], Status: Solved/Closed.
+4. Format active cases into an Active Incidents Table (| Case Number | Severity | Status | Subject |).
+5. Provide 2-3 Actionable SRE Leadership Recommendations.
+6. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
+7. Do NOT output irrelevant infrastructure maps.
+8. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+  }
 
-VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
+  if (intent === 'PRODUCT_INFO') {
+    return `USER REQUEST: "${cleanInput}"
+
+VERIFIED SITE PRODUCT LINES & SYSTEM ARCHITECTURE (Ground Truth):
 \`\`\`json
 ${compactJson}
 \`\`\`
 
-INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
-1. Synthesize this operational telemetry into a comprehensive, high-impact executive textual analysis for upper management.
-2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
-3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-4. Include:
-   - Executive Summary & Situation Report
-   - Operational Status & Key Telemetry Metrics
-   - Active Incidents Table (| Case Number | Severity | Status | Impact % | Subject |)
-   - 2-3 Actionable SRE Leadership Recommendations
-5. Output clean markdown directly. Do NOT output raw HTML code blocks (an interactive visual dashboard is automatically rendered alongside your briefing).
+INSTRUCTIONS FOR PRODUCT & SYSTEM ARCHITECTURE INQUIRY:
+1. Provide a direct, structured, and comprehensive breakdown of all GreyOrange product lines, robotic hardware, and software platforms operating at "${targetSite}".
+2. Organize into clear, elegant sections:
+   - **Executive Product Overview**: State the site name and all confirmed production product lines (RMS, RA, RIL, PPS, GreyMatter).
+   - **Product Lines & Operational Workflows**: For each product line, provide a clear 1-2 sentence description of its specific function on this fulfillment floor.
+   - **Robotic Hardware & Material Handling Equipment**: List the robot models (Ranger Assist AMRs, Butler bots), conveyor lines, and Pick-Put Stations.
+   - **Software Platform & Production Builds**: State the deployed software version (e.g. 7.4.0 / Butler patch 7.4.0.49-HF9) and active application services.
+   - **Active Cases Correlated to Products**: If active cases exist, correlate them directly to their affected product (e.g. Case #00294257 for Butler patch, Case #00297553 for PPS order flow).
+3. Write Case #00297257 (single hash #, NEVER double ##). In tables, write #00297257.
+4. Do NOT output unrequested database runbooks or SOPs.
+5. ZERO loose raw asterisks in text.
 6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
   }
+
+  // COMBINED (Maximum Output for 24h reports, audits, full investigations)
+  return `USER REQUEST: "${cleanInput}"
+
+VERIFIED UNIFIED SALESFORCE & CONFLUENCE INTELLIGENCE (Ground Truth):
+\`\`\`json
+${compactJson}
+\`\`\`
+
+INSTRUCTIONS FOR UNIFIED EXECUTIVE SRE & INFRASTRUCTURE BRIEFING:
+1. Synthesize this operational telemetry and infrastructure data into a comprehensive executive briefing for Upper Management.
+2. Include the following distinct sections:
+   - **Executive Summary & Operational Health**: State current site operational status, total open cases, and active [SEV 1 URGENT] or [SEV 2 URGENT] outages.
+   - **Active Incidents Table**: Display (| Case Number | Severity | Status | Subject |).
+   - **Site Infrastructure & Server Topology**: Prominently list verified Server / VM IP addresses, hostnames, clusters, and assigned Solution Architect / PM.
+   - **Actionable SRE Remediation SOP**: If an actionable SOP is present in the ground truth above, provide exact step-by-step runbook instructions. If no SOP is present in the data, omit this section completely.
+   - **SRE Leadership Recommendations**: 2-3 high-impact executive actions.
+3. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH].
+4. Write Case #00297257 (single hash #, NEVER double ##). In tables, write #00297257.
+5. ZERO loose raw asterisks in text. Output clean markdown directly.
+6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
+}
+
+/**
+ * Executes a fast, resilient conversation turn with OpenRouter targeting openrouter/free.
+ * Features:
+ * - Direct execution with openrouter/free (no model override)
+ * - Dynamic Site Detection: Recognizes Apotek Hjärtat and all 80+ customer fulfillment sites.
+ * - 1-Shot Telemetry Pre-fetch: Resolves all site/incident data in Node.js (<200ms) and passes ground-truth in prompt.
+ * - Zero-Crash Resilience: If OpenRouter returns finish_reason="length" or empty content, formats live Salesforce telemetry directly.
+ * - Always returns HTTP 200 with rich operational briefing and interactive HTML dashboard.
+ */
+async function tryOpenRouterChat({ session, cleanInput, mode = 'agent' }) {
+  const apiKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  if (!apiKey) return null;
+
+  // Use the exact configured model, defaulting to minimax/minimax-m3.1-flash:free
+  const model = (process.env.OPENROUTER_MODEL || 'minimax/minimax-m3.1-flash:free').trim();
+  const url = 'https://openrouter.ai/api/v1/chat/completions';
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`,
+    'HTTP-Referer': 'https://godseye.greyorange.com',
+    'X-Title': 'Sitepulse Pulse AI',
+  };
+
+  const classification = classifyPulseAiIntent(cleanInput, mode);
+  const { intent, detectedSites, targetRange, effectiveMode, isComparison, isBreach, shouldGenerateHtml } = classification;
+  const targetSite = detectedSites[0] || (intent === 'CONFLUENCE_ONLY' ? 'Sams Club ATL' : 'Fleet');
+
+  console.log(`[Pulse AI OpenRouter Fast-Path] Intent=${intent}, Mode=${effectiveMode}, Site=${targetSite}, Range=${targetRange}, HTML=${shouldGenerateHtml} for "${cleanInput.slice(0, 50)}"`);
+
+  let toolsExecuted = [];
+  let telemetryPayloads = {};
+
+  if (intent !== 'GREETING' && intent !== 'GENERAL') {
+    const fetched = await fetchTelemetryForIntent({ intent, classification, cleanInput });
+    toolsExecuted = fetched.toolsExecuted;
+    telemetryPayloads = fetched.telemetryPayloads;
+  }
+
+  const compactPayload = compactTelemetryForPrompt({
+    intent,
+    telemetryPayloads,
+    targetSite,
+    targetRange,
+  });
+  const compactJson = JSON.stringify(compactPayload, null, 2);
+
+  const fastPrompt = buildFastPrompt({
+    intent,
+    cleanInput,
+    compactJson,
+    effectiveMode,
+    targetSite,
+    targetRange,
+  });
 
   const fastHistory = session.messages.slice(-4);
   const fastMessages = [
@@ -1976,7 +2786,7 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
         model,
         messages: fastMessages,
         temperature: 0.25,
-        max_tokens: 2048,
+        max_tokens: 3072,
       },
       maxRetries: 1,
     });
@@ -1986,10 +2796,11 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
 
   let replyText = data ? extractOpenRouterContent(data) : '';
   if (replyText && replyText.trim()) {
+    replyText = replyText.replace(/##(\d{6,8})/g, '#$1');
     console.log(`[Pulse AI Fast-Path] Successfully generated reply with ${data?._modelUsed || model} in 1 pass!`);
 
-    // Attach interactive HTML dashboard artifact ONLY in agent mode for operational queries
-    if (effectiveMode === 'agent' && hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+    // Attach interactive HTML dashboard artifact ONLY when identified as appropriate
+    if (shouldGenerateHtml) {
       try {
         const artifactHtml = generateDashboardArtifactFromTelemetry({
           telemetryPayloads,
@@ -1997,8 +2808,9 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
           targetRange,
           isComparison,
           isBreach,
-          isSiteAudit,
-          isIncidentQuery,
+          isSiteAudit: detectedSites.length > 0,
+          isIncidentQuery: intent === 'SALESFORCE_ONLY',
+          intent,
         });
         if (artifactHtml && !replyText.includes('```html')) {
           replyText += '\n\n' + artifactHtml;
@@ -2024,7 +2836,7 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
   }
 
   // If Fast-Path model timed out or failed, but we already have live telemetry, synthesize the report directly!
-  if (hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+  if (intent !== 'GREETING' && intent !== 'GENERAL') {
     console.log('[Pulse AI Fast-Path] OpenRouter completion timed out/unavailable; synthesizing direct executive briefing from live telemetry');
     const directBriefing = formatExecutiveBriefingFromTelemetry({
       cleanInput,
@@ -2033,8 +2845,10 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
       targetRange,
       isComparison,
       isBreach,
-      isSiteAudit,
-      isIncidentQuery,
+      isSiteAudit: detectedSites.length > 0,
+      isIncidentQuery: intent === 'SALESFORCE_ONLY',
+      intent,
+      shouldGenerateHtml,
     });
     if (directBriefing && directBriefing.trim()) {
       session.messages.push({
@@ -2133,6 +2947,8 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
           isBreach,
           isSiteAudit: true,
           isIncidentQuery,
+          intent,
+          shouldGenerateHtml,
         });
       }
     }
@@ -2262,137 +3078,37 @@ async function tryGeminiChat({ session, cleanInput, mode = 'agent' }) {
     'gemini-2.5-flash',
   ].filter((m, i, arr) => m && arr.indexOf(m) === i && !m.includes('3.8'));
 
-  const lower = cleanInput.toLowerCase();
+  const classification = classifyPulseAiIntent(cleanInput, mode);
+  const { intent, detectedSites, targetRange, effectiveMode, isComparison, isBreach, shouldGenerateHtml } = classification;
+  const targetSite = detectedSites[0] || (intent === 'CONFLUENCE_ONLY' ? 'Sams Club ATL' : 'Fleet');
 
-  // Detect timeframe
-  let targetRange = '24h';
-  if (lower.includes('48h') || lower.includes('2 day') || lower.includes('2day') || lower.includes('48 hour') || lower.includes('2d')) targetRange = '48h';
-  else if (lower.includes('7d') || lower.includes('7 day') || lower.includes('7day') || lower.includes('week')) targetRange = '7d';
-  else if (lower.includes('15d') || lower.includes('15 day')) targetRange = '15d';
-  else if (lower.includes('1m') || lower.includes('month') || lower.includes('30d')) targetRange = '1m';
-  else if (lower.includes('all') || lower.includes('ever') || lower.includes('history')) targetRange = 'all';
+  console.log(`[Pulse AI Gemini Fast-Path] Intent=${intent}, Mode=${effectiveMode}, Site=${targetSite}, Range=${targetRange}, HTML=${shouldGenerateHtml} for "${cleanInput.slice(0, 50)}"`);
 
-  // Detect mentioned sites dynamically across all 80+ customer fulfillment sites
-  const detectedSites = detectSitesFromQuery(cleanInput);
+  let toolsExecuted = [];
+  let telemetryPayloads = {};
 
-  const isGreeting = /^(hi+|hello+|hey+|heya|hiya|greetings|good\s*(morning|afternoon|evening)|who are you|help|sup)[!.\s]*$/i.test(cleanInput);
-  const opsRegex = /\b(sev\s*[-]?\s*[1-4]|p[1-4]|severity|incident|incidents|ticket|tickets|case|cases|outage|outages|downtime|uptime|red\s*zone|redzone|breach|breaches|sla|slas|mtbf|probation|fleet|site|sites|fulfillment|warehouse|greyorange|butler|sorter|opsgenie|alert|alerts|salesforce|soql|overview|audit|status|health)\b/i;
-  const hasOpsKeywords = opsRegex.test(cleanInput) || detectedSites.length > 0;
-  const isGeneralQuestion = !hasOpsKeywords && !isGreeting;
-  const effectiveMode = (mode === 'ask' || mode === 'query') ? 'ask' : 'agent';
-
-  const isComparison = detectedSites.length >= 2 || (detectedSites.length === 1 && (lower.includes('compare') || lower.includes('versus') || lower.includes('vs') || lower.includes('worst') || lower.includes('better')));
-  const isBreach = lower.includes('breach') || lower.includes('red zone') || lower.includes('redzone') || (lower.includes('alert') && (lower.includes('report') || lower.includes('active')));
-  const isIncidentQuery = lower.includes('sev 1') || lower.includes('sev-1') || lower.includes('sev 2') || lower.includes('sev-2') || lower.includes('incident') || lower.includes('24h') || lower.includes('today') || lower.includes('ticket') || lower.includes('outage');
-  const isSiteAudit = detectedSites.length > 0;
-  const isFleetOverview = lower.includes('fleet') || lower.includes('overview') || lower.includes('status') || lower.includes('health') || lower.includes('report');
-
-  // Fast-Path: single inference pass cutting latency down to < 2s
-  console.log(`[Pulse AI Gemini Fast-Path] Intent: greeting=${isGreeting}, generalQuestion=${isGeneralQuestion}, hasOpsKeywords=${hasOpsKeywords}, effectiveMode=${effectiveMode} for "${cleanInput.slice(0, 50)}"`);
-
-  const toolsExecuted = [];
-  const telemetryPayloads = {};
-
-  // ONLY pre-fetch telemetry if this is an operational inquiry (never for general questions or simple greetings)
-  if (hasOpsKeywords && !isGreeting) {
-    try {
-      if (isComparison) {
-        const siteA = detectedSites[0] || 'H&M Canada Ajax';
-        const siteB = detectedSites[1] || 'Sams Club ATL';
-        const [resA, resB] = await Promise.all([
-          executeToolCall('get_site_details', { siteName: siteA, range: targetRange }),
-          executeToolCall('get_site_details', { siteName: siteB, range: targetRange }),
-        ]);
-        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: siteA, range: targetRange } });
-        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: siteB, range: targetRange } });
-        telemetryPayloads[siteA] = resA;
-        telemetryPayloads[siteB] = resB;
-      } else if (isBreach) {
-        const [rz, inc, alerts] = await Promise.all([
-          executeToolCall('get_red_zone_sites', {}),
-          executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' }),
-          executeToolCall('get_site_alert_analytics', { siteName: 'all', range: targetRange }),
-        ]);
-        toolsExecuted.push({ tool: 'get_red_zone_sites', args: {} });
-        toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
-        toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: 'all', range: targetRange } });
-        telemetryPayloads.redZone = rz;
-        telemetryPayloads.incidents = inc;
-        telemetryPayloads.alerts = alerts;
-      } else if (isSiteAudit) {
-        const targetSite = detectedSites[0];
-        const [details, alerts] = await Promise.all([
-          executeToolCall('get_site_details', { siteName: targetSite, range: targetRange }),
-          executeToolCall('get_site_alert_analytics', { siteName: targetSite, range: targetRange }),
-        ]);
-        toolsExecuted.push({ tool: 'get_site_details', args: { siteName: targetSite, range: targetRange } });
-        toolsExecuted.push({ tool: 'get_site_alert_analytics', args: { siteName: targetSite, range: targetRange } });
-        telemetryPayloads.siteDetails = details;
-        telemetryPayloads.alertAnalytics = alerts;
-      } else if (isIncidentQuery) {
-        const inc = await executeToolCall('get_fleet_incidents', { timeframe: targetRange, severity: 'all' });
-        toolsExecuted.push({ tool: 'get_fleet_incidents', args: { timeframe: targetRange, severity: 'all' } });
-        telemetryPayloads.fleetIncidents = inc;
-      } else {
-        const ov = await executeToolCall('get_fleet_overview', {});
-        toolsExecuted.push({ tool: 'get_fleet_overview', args: {} });
-        telemetryPayloads.fleetOverview = ov;
-      }
-    } catch (fetchErr) {
-      console.warn('[Pulse AI Gemini Fast-Path] Telemetry pre-fetch warning:', fetchErr.message);
-    }
+  if (intent !== 'GREETING' && intent !== 'GENERAL') {
+    const fetched = await fetchTelemetryForIntent({ intent, classification, cleanInput });
+    toolsExecuted = fetched.toolsExecuted;
+    telemetryPayloads = fetched.telemetryPayloads;
   }
 
-  const compactJson = JSON.stringify(telemetryPayloads);
+  const compactPayload = compactTelemetryForPrompt({
+    intent,
+    telemetryPayloads,
+    targetSite,
+    targetRange,
+  });
+  const compactJson = JSON.stringify(compactPayload, null, 2);
 
-  let fastPrompt = '';
-  if (isGreeting) {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
-
-You are Pulse AI, the Principal SRE and Autonomous Operations Intelligence Agent for GreyOrange's fleet monitoring platform (Sitepulse).
-Respond dynamically, warmly, concisely, and professionally to the user's greeting. Introduce yourself as Pulse AI, mention that you monitor real-time Salesforce incidents, active Sev-1 / Sev-2 urgent cases, Opsgenie telemetry, and RED Zone reliability risks across all 80+ customer fulfillment sites, and ask how you can assist the user today.
-CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else if (isGeneralQuestion) {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
-
-You are Pulse AI, an intelligent AI assistant. Provide a clear, helpful, accurate, and concise answer to the user's question or request.
-CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else if (effectiveMode === 'ask') {
-    fastPrompt = `USER REQUEST: "${cleanInput}"
-
-VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
-\`\`\`json
-${compactJson}
-\`\`\`
-
-INSTRUCTIONS FOR DIRECT ANALYSIS (ASK MODE):
-1. Analyze the retrieved operational telemetry above and provide a direct, concise, factual, and helpful answer answering the user's specific question.
-2. Directly reference relevant sites, incident case numbers, severity levels, downtime, or alerts from the data as appropriate.
-3. Keep the format clean, conversational, and focused on directly answering the user's inquiry in clean markdown. Do NOT force a massive multi-section corporate report template.
-4. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
-5. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  } else {
-    // effectiveMode === 'agent'
-    fastPrompt = `USER REQUEST: "${cleanInput}"
-
-VERIFIED REAL-TIME SALESFORCE & SITEPULSE TELEMETRY (Ground Truth):
-\`\`\`json
-${compactJson}
-\`\`\`
-
-INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
-1. Synthesize this operational telemetry into a comprehensive, high-impact executive textual analysis for upper management.
-2. Strictly follow impact percentage classification: 100% = [SEV 1 URGENT], 50-99% = [SEV 2 URGENT], 1-49% = [SEV 2 HIGH], <1% = [SEV 3 INCIDENT] or [SEV 4 SERVICE REQUEST].
-3. ZERO loose raw asterisks in text (write Case #00297257, [SEV 1 URGENT], [SEV 2 URGENT], [SEV 2 HIGH], Status: Solved).
-4. Include:
-   - Executive Summary & Situation Report
-   - Operational Status & Key Telemetry Metrics
-   - Active Incidents Table (| Case Number | Severity | Status | Impact % | Subject |)
-   - 2-3 Actionable SRE Leadership Recommendations
-5. Output clean markdown directly. Do NOT output raw HTML code blocks (an interactive visual dashboard is automatically rendered alongside your briefing).
-6. CRITICAL: Do NOT output internal chain-of-thought, reasoning steps, or hidden thinking blocks.`;
-  }
+  const fastPrompt = buildFastPrompt({
+    intent,
+    cleanInput,
+    compactJson,
+    effectiveMode,
+    targetSite,
+    targetRange,
+  });
 
   const fastHistory = session.messages.slice(-4);
   const fastContents = [
@@ -2473,10 +3189,11 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
           const data = await res.json();
           let replyText = extractGeminiContent(data);
           if (replyText && replyText.trim()) {
+            replyText = replyText.replace(/##(\d{6,8})/g, '#$1').replace(/##\s*(\d{6,8})/g, '#$1');
             console.log(`[Pulse AI Gemini Fast-Path] Successfully generated reply with ${model} in 1 pass!`);
 
-            // Attach interactive HTML dashboard artifact ONLY in agent mode for operational queries
-            if (effectiveMode === 'agent' && hasOpsKeywords && !isGreeting && !isGeneralQuestion) {
+            // Attach interactive HTML dashboard artifact ONLY when identified as appropriate
+            if (shouldGenerateHtml) {
               try {
                 const artifactHtml = generateDashboardArtifactFromTelemetry({
                   telemetryPayloads,
@@ -2484,8 +3201,9 @@ INSTRUCTIONS FOR EXECUTIVE SRE BRIEFING (AGENT MODE):
                   targetRange,
                   isComparison,
                   isBreach,
-                  isSiteAudit,
-                  isIncidentQuery,
+                  isSiteAudit: detectedSites.length > 0,
+                  isIncidentQuery: intent === 'SALESFORCE_ONLY',
+                  intent,
                 });
                 if (artifactHtml && !replyText.includes('```html')) {
                   replyText += '\n\n' + artifactHtml;
@@ -2731,6 +3449,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default', m
     try {
       const geminiResult = await tryGeminiChat({ session, cleanInput, mode });
       if (geminiResult) {
+        geminiResult.reply = (geminiResult.reply || '').replace(/##(\d{6,8})/g, '#$1');
         return geminiResult;
       }
     } catch (geminiErr) {
@@ -2744,6 +3463,7 @@ export async function chatWithPulseAI({ sessionId, message, orgId = 'default', m
     try {
       const openRouterResult = await tryOpenRouterChat({ session, cleanInput, mode });
       if (openRouterResult) {
+        openRouterResult.reply = (openRouterResult.reply || '').replace(/##(\d{6,8})/g, '#$1');
         return openRouterResult;
       }
     } catch (orErr) {

@@ -31,6 +31,10 @@ services:
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-minimax/minimax-m3.1-flash:free}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
+      - ATLASSIAN_CLOUD_ID=${ATLASSIAN_CLOUD_ID:-917cbbff-c0f2-4cf8-ae9d-279bd24a0a5a}
+      - ATLASSIAN_EMAIL=${ATLASSIAN_EMAIL:-aditya.s.ctr@greyorange.com}
+      - ATLASSIAN_API_KEY=${ATLASSIAN_API_KEY:-}
+      - ATLASSIAN_BASE_URL=${ATLASSIAN_BASE_URL:-https://api.atlassian.com/ex/confluence/917cbbff-c0f2-4cf8-ae9d-279bd24a0a5a}
       - RED_ZONE_SHEET_URL=${RED_ZONE_SHEET_URL:-https://docs.google.com/spreadsheets/d/1dKhduZF_lYKWMrQ2bYBvufUxZt6oeQibNtx78P_id9M/edit?gid=1207923458#gid=1207923458}
       - PULSE_AI_SECRET=${PULSE_AI_SECRET:-}
       - HTTP_PROXY=${HTTP_PROXY:-}
