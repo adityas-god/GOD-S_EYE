@@ -381,12 +381,17 @@ export function isLiveOpenCase(c: SFCase): boolean {
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
 
-  for (const pattern of EXCLUDED_STATUS_PATTERNS) {
+  // Exclude closed/solved/resolved/cancelled/completed/duplicate statuses
+  // On-hold tickets without an end time are included in live open cases
+  for (const pattern of CLOSED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
 
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
+  if (isChangeRequestTicket(c)) return false;
+  if (isImTicket(c)) return false;
+  if (isPmTicket(c)) return false;
 
   return true;
 }
@@ -399,6 +404,18 @@ export function isDirTicket(c: SFCase): boolean {
   if (!c) return false;
 
   const raw = c as Record<string, unknown>;
+
+  // Root Incident Guard: If a ticket is explicitly an Incident or Technical Support,
+  // and its Record Type is NOT Problem/DIR/RCA, it is a real incident, NEVER a DIR ticket!
+  const rawType = String(raw.Type || raw.type || raw.rawType || raw.raw_type || '').trim().toLowerCase();
+  const isExplicitIncident = /^(incident|technical support)$/i.test(rawType);
+  if (isExplicitIncident) {
+    const recTypeObj = raw.RecordType as { Name?: string; name?: string } | undefined;
+    const recType = String(recTypeObj?.Name || raw.Case_Record_Type__c || raw.Record_Type__c || '').toLowerCase();
+    if (!recType.includes('dir') && !recType.includes('problem') && !recType.includes('rca')) {
+      return false;
+    }
+  }
 
   // 1. Explicit Type: In GreyOrange Salesforce & ITIL, 'Problem' is the post-incident DIR/RCA tracking case
   const typeStr = String(raw.Type || raw.type || raw.rawType || raw.raw_type || '').trim().toLowerCase();
@@ -502,6 +519,172 @@ export function isDirTicket(c: SFCase): boolean {
       desc.includes('root cause analysis (rca)') ||
       desc.includes('dir approval') ||
       desc.includes('rca status:'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a ticket is a Change Request (CR / RFC / HotFix Upgrade / Deployment tracking ticket).
+ * User requirement: "see i want that omitt tallthese change request tickets also"
+ */
+export function isChangeRequestTicket(c: SFCase): boolean {
+  if (!c) return false;
+
+  const raw = c as Record<string, unknown>;
+
+  // 1. Case Record Type (RecordType object or custom record type field)
+  const recTypeObj = raw.RecordType as { Name?: string; name?: string } | undefined;
+  const recordTypeName = String(
+    recTypeObj?.Name ||
+    recTypeObj?.name ||
+    raw.Record_Type__c ||
+    raw.Case_Record_Type__c ||
+    raw.Record_Type_Name__c ||
+    raw.record_type ||
+    (typeof raw.RecordType === 'string' ? raw.RecordType : '') ||
+    ''
+  ).trim().toLowerCase();
+
+  if (
+    recordTypeName.includes('change') ||
+    recordTypeName === 'cr' ||
+    recordTypeName.includes('rfc') ||
+    recordTypeName.includes('hotfix')
+  ) {
+    return true;
+  }
+
+  // 2. Change Type custom field (e.g. 'Firmware Update', 'HotFix Upgrade', 'Standard', 'Emergency', etc.)
+  const changeType = String(
+    raw.Change_Type__c ||
+    raw.change_type ||
+    raw.ChangeType__c ||
+    raw.Change_Request_Type__c ||
+    raw.Change_Cost_Center__c ||
+    raw.change_cost_center ||
+    ''
+  ).trim().toLowerCase();
+
+  if (
+    changeType &&
+    changeType !== 'null' &&
+    changeType !== 'undefined' &&
+    changeType !== 'none' &&
+    changeType !== 'n/a' &&
+    changeType !== ''
+  ) {
+    return true;
+  }
+
+  // 3. Customer Approval Status field
+  const custApproval = String(
+    raw.Customer_Approval_Status__c ||
+    raw.customer_approval_status ||
+    raw.Customer_Approval_Status ||
+    raw.Approval_status__c ||
+    raw.approval_status ||
+    ''
+  ).trim().toLowerCase();
+
+  if (
+    custApproval &&
+    custApproval !== 'null' &&
+    custApproval !== 'undefined' &&
+    custApproval !== 'none' &&
+    custApproval !== 'n/a' &&
+    custApproval !== '' &&
+    (custApproval.includes('approval') ||
+      custApproval.includes('pending') ||
+      custApproval.includes('approved') ||
+      custApproval.includes('submitted'))
+  ) {
+    return true;
+  }
+
+  // 4. Status / Pipeline stages specific to Change Requests
+  const statusStr = String(raw.Status || raw.status || '').trim().toLowerCase();
+  if (
+    statusStr.includes('approval') ||
+    statusStr.includes('pending deployment') ||
+    statusStr.includes('post deployment monitoring') ||
+    statusStr.includes('post deployment review') ||
+    statusStr.includes('post deployment') ||
+    statusStr.includes('pre deployment') ||
+    statusStr.includes('deployment in progress') ||
+    statusStr.includes('ready for deployment') ||
+    statusStr.includes('change approved') ||
+    statusStr.includes('cab approval') ||
+    statusStr.includes('pending cab') ||
+    statusStr.includes('change review')
+  ) {
+    return true;
+  }
+
+  // 5. Explicit Type field
+  const typeStr = String(
+    raw.Type ||
+    raw.type ||
+    raw.rawType ||
+    raw.raw_type ||
+    raw.Case_Type__c ||
+    ''
+  ).trim().toLowerCase();
+
+  if (
+    typeStr === 'change request' ||
+    typeStr.includes('change request') ||
+    typeStr === 'change' ||
+    typeStr === 'cr' ||
+    typeStr === 'rfc' ||
+    typeStr.includes('hotfix') ||
+    typeStr === 'deployment' ||
+    typeStr === 'deployment request'
+  ) {
+    return true;
+  }
+
+  // 6. ServiceNow Change Request ID (starts with CHG)
+  const snowId = String(
+    raw.Snow_id__c ||
+    raw.Snow_Id__c ||
+    raw.snow_id ||
+    raw.snow_id__c ||
+    ''
+  ).trim().toUpperCase();
+
+  if (snowId.startsWith('CHG') || snowId.startsWith('CR-') || snowId.startsWith('RFC-')) {
+    return true;
+  }
+
+  // 7. Subject patterns
+  const sub = String(raw.Subject || raw.subject || '').trim();
+  if (
+    /\b(change\s*request|hotfix\s*upgrade|hotfix\s*update|firmware\s*upgrade|firmware\s*update|software\s*upgrade|software\s*update|patch\s*upgrade|patch\s*update)\b/i.test(sub) ||
+    /\b(?:firmware|software|patch|vda)\s+(?:upgrade|update)\b/i.test(sub) ||
+    /\b(?:upgrade|update)\s+to\s+v?[\d\.]+/i.test(sub) ||
+    /\b(?:scheduled|maintenance|planned)\s+deployment\b/i.test(sub) ||
+    /(?:^|[\s\[\(_\-])(?:CR|CHG|RFC)[-_:\s#]*\d+/i.test(sub) ||
+    /\[\s*(?:CR|CHG|RFC|CHANGE REQUEST)\s*\]/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // 8. Description check
+  const desc = String(raw.Description || raw.description || '').toLowerCase();
+  if (
+    desc &&
+    (desc.includes('case record type: change request') ||
+      desc.includes('change type: hotfix') ||
+      desc.includes('change type: firmware') ||
+      desc.includes('hotfix upgrade') ||
+      desc.includes('firmware upgrade') ||
+      desc.includes('firmware update') ||
+      desc.includes('change request details') ||
+      desc.includes('vda remote releases') ||
+      desc.includes('customer approval status'))
   ) {
     return true;
   }
@@ -684,14 +867,126 @@ export function isImTicket(c: SFCase): boolean {
 }
 
 /**
+ * Checks if a ticket is a PM (Preventive Maintenance / Planned Maintenance / Routine PM / Problem PRB) ticket.
+ */
+export function isPmTicket(c: SFCase): boolean {
+  if (!c) return false;
+  const raw = c as Record<string, unknown>;
+
+  // Root Incident Guard: If a ticket is explicitly an Incident or Technical Support,
+  // and its Record Type is NOT Preventive Maintenance or Problem, it is a real incident, NEVER a PM ticket!
+  const rawType = String(raw.Type || raw.type || raw.rawType || raw.raw_type || raw.Case_Type__c || '').trim().toLowerCase();
+  const isExplicitIncident = /^(incident|technical support)$/i.test(rawType);
+  if (isExplicitIncident) {
+    const recTypeObj = raw.RecordType as { Name?: string; name?: string } | undefined;
+    const recType = String(recTypeObj?.Name || raw.Case_Record_Type__c || raw.Record_Type__c || '').toLowerCase();
+    if (!recType.includes('preventive') && !recType.includes('maintenance') && !recType.includes('problem')) {
+      return false;
+    }
+  }
+
+  // 1. Explicit Type field
+  if (
+    rawType === 'pm' ||
+    rawType === 'preventive' ||
+    rawType === 'planned' ||
+    rawType === 'maintenance' ||
+    rawType === 'preventive maintenance' ||
+    rawType === 'planned maintenance' ||
+    rawType === 'routine maintenance' ||
+    rawType === 'scheduled maintenance' ||
+    rawType === 'servicing' ||
+    rawType === 'inspection' ||
+    rawType === 'problem' ||
+    rawType === 'prb' ||
+    rawType.includes('preventive') ||
+    rawType.includes('maintenance')
+  ) {
+    return true;
+  }
+
+  // 2. Category / Sub-category field
+  const cat = String(
+    raw.Category__c || raw.category || raw.Sub_Category__c || raw.Snow_Category__c || raw.Snow_Category || ''
+  ).trim().toLowerCase();
+  if (
+    cat === 'pm' ||
+    cat === 'preventive' ||
+    cat === 'maintenance' ||
+    cat === 'preventive maintenance' ||
+    cat === 'planned maintenance' ||
+    cat === 'routine maintenance' ||
+    cat.includes('preventive') ||
+    cat.includes('planned maintenance')
+  ) {
+    return true;
+  }
+
+  // 3. Subject checks
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // Explicit bracket or prefix PM: e.g. "[PM]", "PM:", "PM -", "PM_", "PM #", "PM 123"
+  if (
+    /^\[?\s*PM\s*\]?[:\s\-_#]/i.test(sub) ||
+    /\[\s*PM\s*\]/i.test(sub) ||
+    /\bPM[-_#\s]*\d+\b/i.test(sub) ||
+    /\bPRB\d+\b/i.test(sub) ||
+    /\bCHG\d+\b/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // PM with operational activity words: PM activity, PM checklist, PM servicing, PM work, PM done, PM visit, PM audit
+  if (
+    /\bPM\s*(?:activity|inspection|checklist|servicing|task|ticket|work|done|pending|visit|audit|schedule|scheduled|sheet|plan|service)\b/i.test(sub) ||
+    /\b(?:weekly|monthly|quarterly|annual|routine|preventive|planned|scheduled)\s*(?:pm|maintenance|inspection)\b/i.test(sub) ||
+    /\bpreventive\s*maintenance\b/i.test(sub) ||
+    /\bplanned\s*maintenance\b/i.test(sub) ||
+    /\broutine\s*maintenance\b/i.test(sub) ||
+    /\bscheduled\s*maintenance\b/i.test(sub)
+  ) {
+    return true;
+  }
+
+  // Standalone word "PM" in subject - make sure it's not a timestamp like "5:00 PM" or "10 PM"
+  if (/\bPM\b/i.test(sub)) {
+    const isTimeSuffix = /(?:\d{1,2}:\d{2}\s*|\b\d{1,2}\s*)PM\b/i.test(sub);
+    if (!isTimeSuffix) {
+      if (/(?:^|[\s\[\(_\-])PM(?:[:\s#\d\-_\]\)]|$)/i.test(sub)) {
+        return true;
+      }
+    }
+  }
+
+  // 4. Description checks for PM templates
+  const desc = String(c.Description || raw.description || '').toLowerCase();
+  if (
+    desc &&
+    (desc.includes('preventive maintenance') ||
+      desc.includes('planned maintenance') ||
+      desc.includes('routine maintenance') ||
+      desc.includes('pm checklist') ||
+      desc.includes('pm activity') ||
+      desc.includes('pm servicing') ||
+      desc.includes('scheduled pm'))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Checks if a ticket is a valid incident ticket.
- * Excludes alert tickets and DIR tickets.
+ * Excludes alert tickets, DIR tickets, Change Requests, IM, and PM tickets.
  */
 export function isIncidentTicket(c: SFCase): boolean {
   if (!c) return false;
   if (isAlertCase(c)) return false;
   if (isDirTicket(c)) return false;
+  if (isChangeRequestTicket(c)) return false;
   if (isImTicket(c)) return false;
+  if (isPmTicket(c)) return false;
   return true;
 }
 
