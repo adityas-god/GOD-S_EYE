@@ -13,9 +13,12 @@ export function PulseAiOrb({
   showGlow = false,
   style = {},
 }: PulseAiOrbProps) {
+  const isSmall = size <= 28;
+  const isLarge = size >= 60;
+
   return (
     <div
-      className={className}
+      className={`pulse-ai-orb-wrapper ${isSmall ? 'pulse-ai-orb-small' : isLarge ? 'pulse-ai-orb-large' : 'pulse-ai-orb-medium'} ${className}`}
       style={{
         position: 'relative',
         width: size,
@@ -24,21 +27,16 @@ export function PulseAiOrb({
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
-        background: 'transparent',
-        mixBlendMode: 'screen',
         ...style,
       }}
     >
       {showGlow && (
         <div
+          className="pulse-ai-orb-glow"
           style={{
             position: 'absolute',
-            inset: -4,
+            inset: isLarge ? -10 : -4,
             borderRadius: '50%',
-            background:
-              'radial-gradient(circle, rgba(56, 189, 248, 0.28) 0%, rgba(249, 115, 22, 0.22) 55%, transparent 75%)',
-            filter: 'blur(8px)',
-            opacity: 0.8,
             pointerEvents: 'none',
           }}
         />
@@ -48,10 +46,6 @@ export function PulseAiOrb({
         style={{
           width: size,
           height: size,
-          background: 'transparent',
-          border: 'none',
-          boxShadow: 'none',
-          mixBlendMode: 'screen',
         }}
       >
         <video

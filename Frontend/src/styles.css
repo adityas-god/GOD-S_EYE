@@ -1120,7 +1120,9 @@ select option { background: var(--card); }
   animation: pulseAiFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* Pulse AI Omni-Card Flare Aesthetics - Blue & Orange Mix */
+/* ==========================================================================
+   Pulse AI Omni-Card & Ambient Flare (Dark & Light Theme)
+   ========================================================================== */
 .pulse-ai-omni-card-wrapper {
   position: relative;
   width: 100%;
@@ -1128,7 +1130,7 @@ select option { background: var(--card); }
   margin: 0 auto;
 }
 
-/* Decreased, subtle ambient glow */
+/* Ambient Card Flare Glow - Dark Theme */
 .pulse-ai-card-flare-glow {
   position: absolute;
   inset: -1px;
@@ -1152,13 +1154,14 @@ select option { background: var(--card); }
   filter: blur(14px);
 }
 
+/* Omni-Card - Dark Theme */
 .pulse-ai-omni-card {
   position: relative;
   z-index: 1;
   width: 100%;
   background: linear-gradient(
     180deg,
-    rgba(24, 25, 29, 0.85) 0%,
+    rgba(28, 29, 34, 0.88) 0%,
     var(--card) 100%
   );
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1176,7 +1179,7 @@ select option { background: var(--card); }
   flex-direction: column;
   gap: 8px;
   text-align: left;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
 }
 
 .pulse-ai-omni-card-wrapper:focus-within .pulse-ai-omni-card {
@@ -1189,16 +1192,280 @@ select option { background: var(--card); }
     0 0 25px -4px rgba(249, 115, 22, 0.18);
 }
 
-/* Pulse AI Rotating Orb Cutout */
+/* Card Topbar & Bottombar - Dark Default */
+.pulse-ai-card-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.pulse-ai-card-bottombar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Segmented Switcher [Agent | Ask] - Dark Default */
+.pulse-ai-mode-switcher {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 2.5px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 2px;
+}
+
+.pulse-ai-mode-btn {
+  padding: 3px 11px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: var(--muted-foreground);
+  transition: all 0.15s ease;
+}
+
+.pulse-ai-mode-btn:hover {
+  color: var(--foreground);
+}
+
+.pulse-ai-mode-btn.active {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+/* Omni-Card Textarea */
+.pulse-ai-card-textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--foreground);
+  font-size: 14px;
+  resize: none;
+  outline: none;
+  line-height: 1.6;
+  min-height: 76px;
+  padding: 8px 4px;
+  font-family: inherit;
+}
+
+.pulse-ai-card-textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.85;
+}
+
+/* Model Tag */
+.pulse-ai-model-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: rgba(249, 115, 22, 0.08);
+  border: 1px solid rgba(249, 115, 22, 0.22);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--foreground);
+}
+
+/* Send Button */
+.pulse-ai-send-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted-foreground);
+  cursor: default;
+}
+
+.pulse-ai-send-btn.ready {
+  background: linear-gradient(135deg, var(--primary) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%);
+  border-color: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 0 16px rgba(249, 115, 22, 0.45);
+  cursor: pointer;
+}
+
+.pulse-ai-send-btn.ready:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 0 20px rgba(249, 115, 22, 0.6);
+}
+
+/* Docked Input Card - Dark Default */
+.pulse-ai-docked-card {
+  max-width: 820px;
+  margin: 0 auto;
+  background: linear-gradient(180deg, color-mix(in oklch, var(--card) 92%, var(--primary) 8%) 0%, var(--card) 100%);
+  border: 1px solid color-mix(in oklch, var(--primary) 28%, var(--border));
+  border-radius: 14px;
+  padding: 10px 14px 8px;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 8px 30px -6px rgba(0, 0, 0, 0.45), 0 0 25px -8px rgba(249, 115, 22, 0.16);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pulse-ai-docked-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* ==========================================================================
+   LIGHT MODE: Pulse AI Omni-Card & Elements
+   ========================================================================== */
+[data-theme="light"] .pulse-ai-card-flare-glow {
+  background: radial-gradient(
+    ellipse 65% 35% at 50% 0%,
+    rgba(249, 115, 22, 0.13) 0%,
+    rgba(56, 189, 248, 0.1) 45%,
+    transparent 75%
+  );
+  filter: blur(16px);
+  opacity: 0.65;
+}
+
+[data-theme="light"] .pulse-ai-omni-card-wrapper:hover .pulse-ai-card-flare-glow,
+[data-theme="light"] .pulse-ai-omni-card-wrapper:focus-within .pulse-ai-card-flare-glow {
+  opacity: 0.85;
+  filter: blur(18px);
+}
+
+[data-theme="light"] .pulse-ai-omni-card {
+  background: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #faf8f3 100%
+  );
+  border: 1px solid rgba(44, 38, 30, 0.12);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.95) inset,
+    0 1px 2px 0 rgba(44, 38, 30, 0.04),
+    0 14px 34px -10px rgba(44, 38, 30, 0.1),
+    0 24px 50px -14px rgba(249, 115, 22, 0.07),
+    0 0 22px -6px rgba(56, 189, 248, 0.08);
+}
+
+[data-theme="light"] .pulse-ai-omni-card-wrapper:focus-within .pulse-ai-omni-card {
+  border-color: rgba(249, 115, 22, 0.45);
+  box-shadow:
+    0 0 0 1px rgba(249, 115, 22, 0.22) inset,
+    0 1px 2px 0 rgba(44, 38, 30, 0.04),
+    0 18px 42px -10px rgba(44, 38, 30, 0.13),
+    0 0 28px -4px rgba(249, 115, 22, 0.18),
+    0 0 24px -4px rgba(56, 189, 248, 0.14);
+}
+
+[data-theme="light"] .pulse-ai-card-topbar {
+  border-bottom: 1px solid rgba(44, 38, 30, 0.08);
+}
+
+[data-theme="light"] .pulse-ai-card-bottombar {
+  border-top: 1px solid rgba(44, 38, 30, 0.07);
+}
+
+[data-theme="light"] .pulse-ai-mode-switcher {
+  background: rgba(44, 38, 30, 0.06);
+  border: 1px solid rgba(44, 38, 30, 0.09);
+}
+
+[data-theme="light"] .pulse-ai-mode-btn.active {
+  background: #ffffff;
+  color: #1c1917;
+  box-shadow:
+    0 1px 3px rgba(44, 38, 30, 0.12),
+    0 0 0 1px rgba(44, 38, 30, 0.05);
+}
+
+[data-theme="light"] .pulse-ai-card-textarea::placeholder {
+  color: #716c63;
+  opacity: 0.9;
+}
+
+[data-theme="light"] .pulse-ai-model-tag {
+  background: rgba(249, 115, 22, 0.1);
+  border-color: rgba(249, 115, 22, 0.3);
+  color: #9a3412;
+  font-weight: 600;
+}
+
+[data-theme="light"] .pulse-ai-send-btn {
+  background: rgba(44, 38, 30, 0.05);
+  border-color: rgba(44, 38, 30, 0.12);
+  color: #8c857b;
+}
+
+[data-theme="light"] .pulse-ai-send-btn.ready {
+  background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+  border-color: #f97316;
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(249, 115, 22, 0.35);
+}
+
+[data-theme="light"] .pulse-ai-docked-card {
+  background: linear-gradient(180deg, #ffffff 0%, #faf8f3 100%);
+  border-color: rgba(249, 115, 22, 0.32);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.9) inset,
+    0 6px 24px -4px rgba(44, 38, 30, 0.09),
+    0 0 18px -4px rgba(249, 115, 22, 0.12);
+}
+
+[data-theme="light"] .pulse-ai-docked-topbar {
+  border-bottom: 1px solid rgba(44, 38, 30, 0.07);
+}
+
+/* ==========================================================================
+   Pulse AI Rotating Orb (Dual-Theme Treatment)
+   ========================================================================== */
+.pulse-ai-orb-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 50%;
+  transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+/* Dark Theme Orb: Blend seamlessly with dark page */
+:root:not([data-theme="light"]) .pulse-ai-orb-wrapper,
+[data-theme="dark"] .pulse-ai-orb-wrapper {
+  background: transparent;
+  mix-blend-mode: screen;
+}
+
+:root:not([data-theme="light"]) .pulse-ai-orb-circle,
+[data-theme="dark"] .pulse-ai-orb-circle {
+  mix-blend-mode: screen;
+  background: transparent;
+}
+
 .pulse-ai-orb-circle {
   border-radius: 50%;
   overflow: hidden;
   position: relative;
-  background: transparent;
   box-shadow: none;
   border: none;
   outline: none;
-  mix-blend-mode: screen;
 }
 
 .pulse-ai-orb-video {
@@ -1212,8 +1479,65 @@ select option { background: var(--card); }
   transform: translate(-50%, -33.2%);
   pointer-events: none;
   object-fit: cover;
-  mix-blend-mode: screen;
   background: transparent;
+}
+
+/* Ambient Glow behind orb */
+.pulse-ai-orb-glow {
+  background: radial-gradient(
+    circle,
+    rgba(56, 189, 248, 0.28) 0%,
+    rgba(249, 115, 22, 0.22) 55%,
+    transparent 75%
+  );
+  filter: blur(8px);
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+/* LIGHT THEME ORB: Polished Obsidian Sphere Lens with Glass Specular Rim */
+[data-theme="light"] .pulse-ai-orb-wrapper {
+  background: #08090d;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.12),
+    0 4px 14px rgba(44, 38, 30, 0.15),
+    inset 0 1px 1px rgba(255, 255, 255, 0.35);
+}
+
+[data-theme="light"] .pulse-ai-orb-circle {
+  background: #08090d;
+}
+
+/* Hero Large Orb in Light Mode (3D Obsidian Sphere with Light Reflection) */
+[data-theme="light"] .pulse-ai-orb-wrapper.pulse-ai-orb-large {
+  background: radial-gradient(circle at 35% 30%, #161822 0%, #08090d 75%, #040508 100%);
+  box-shadow:
+    0 0 0 1px rgba(44, 38, 30, 0.08),
+    0 14px 34px -6px rgba(44, 38, 30, 0.22),
+    0 0 36px -4px rgba(56, 189, 248, 0.28),
+    0 0 32px -4px rgba(249, 115, 22, 0.22),
+    inset 0 1.5px 2px rgba(255, 255, 255, 0.45),
+    inset 0 -1.5px 2px rgba(0, 0, 0, 0.6);
+}
+
+/* Small Mini-Orbs (Sidebar, Card Header, Docked) in Light Mode */
+[data-theme="light"] .pulse-ai-orb-wrapper.pulse-ai-orb-small {
+  background: #08090d;
+  box-shadow:
+    0 0 0 1px rgba(249, 115, 22, 0.3),
+    0 1px 4px rgba(44, 38, 30, 0.2),
+    inset 0 0.5px 1px rgba(255, 255, 255, 0.4);
+}
+
+[data-theme="light"] .pulse-ai-orb-glow {
+  background: radial-gradient(
+    circle,
+    rgba(249, 115, 22, 0.25) 0%,
+    rgba(56, 189, 248, 0.22) 50%,
+    transparent 75%
+  ) !important;
+  filter: blur(14px) !important;
+  opacity: 0.9 !important;
 }
 
 /* Bringbold Nineties Retro Display Font */

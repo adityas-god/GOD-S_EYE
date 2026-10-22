@@ -1567,7 +1567,7 @@ export function PulseAIPage() {
                     justifyContent: 'center',
                     alignItems: 'center'
                   }}>
-                    <PulseAiOrb size={92} />
+                    <PulseAiOrb size={92} showGlow={true} />
                   </div>
 
                   {/* Headline & Subtitle */}
@@ -1606,13 +1606,7 @@ export function PulseAIPage() {
                     {/* Omni-Card Container */}
                     <div className="pulse-ai-omni-card">
                       {/* Omni-Card Top Bar */}
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        paddingBottom: 10,
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
-                      }}>
+                      <div className="pulse-ai-card-topbar">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <PulseAiOrb size={22} />
                           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--foreground)', letterSpacing: '-0.2px' }}>
@@ -1621,47 +1615,18 @@ export function PulseAIPage() {
                         </div>
 
                         {/* Segmented [Agent | Ask] switcher */}
-                        <div style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          background: 'rgba(0, 0, 0, 0.35)',
-                          borderRadius: 8,
-                          padding: 2.5,
-                          border: '1px solid rgba(255, 255, 255, 0.08)'
-                        }}>
+                        <div className="pulse-ai-mode-switcher">
                           <button
                             type="button"
                             onClick={() => setAiMode('agent')}
-                            style={{
-                              padding: '3px 11px',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              borderRadius: 6,
-                              border: 'none',
-                              cursor: 'pointer',
-                              background: aiMode === 'agent' ? 'var(--card)' : 'transparent',
-                              color: aiMode === 'agent' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                              boxShadow: aiMode === 'agent' ? '0 1px 4px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
+                            className={`pulse-ai-mode-btn ${aiMode === 'agent' ? 'active' : ''}`}
                           >
                             Agent
                           </button>
                           <button
                             type="button"
                             onClick={() => setAiMode('query')}
-                            style={{
-                              padding: '3px 11px',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              borderRadius: 6,
-                              border: 'none',
-                              cursor: 'pointer',
-                              background: aiMode === 'query' ? 'var(--card)' : 'transparent',
-                              color: aiMode === 'query' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                              boxShadow: aiMode === 'query' ? '0 1px 4px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.06)' : 'none',
-                              transition: 'all 0.15s ease'
-                            }}
+                            className={`pulse-ai-mode-btn ${aiMode === 'query' ? 'active' : ''}`}
                           >
                             Ask
                           </button>
@@ -1681,41 +1646,13 @@ export function PulseAIPage() {
                             : "Ask any operations question or execute Salesforce SOQL..."
                         }
                         disabled={isLoading}
-                        style={{
-                          width: '100%',
-                          background: 'transparent',
-                          border: 'none',
-                          color: 'var(--foreground)',
-                          fontSize: 14,
-                          resize: 'none',
-                          outline: 'none',
-                          lineHeight: 1.6,
-                          minHeight: 76,
-                          padding: '8px 4px'
-                        }}
+                        className="pulse-ai-card-textarea"
                       />
 
                       {/* Omni-Card Bottom Bar */}
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        paddingTop: 6,
-                        borderTop: '1px solid rgba(255, 255, 255, 0.04)'
-                      }}>
+                      <div className="pulse-ai-card-bottombar">
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--muted-foreground)' }}>
-                          <span style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 5,
-                            padding: '3px 9px',
-                            borderRadius: 6,
-                            background: 'rgba(249, 115, 22, 0.08)',
-                            border: '1px solid rgba(249, 115, 22, 0.22)',
-                            fontFamily: 'var(--font-mono)',
-                            fontSize: 11,
-                            color: 'var(--foreground)'
-                          }}>
+                          <span className="pulse-ai-model-tag">
                             <Zap style={{ width: 11, height: 11, color: 'var(--primary)' }} />
                             pulse x_7
                           </span>
@@ -1724,31 +1661,15 @@ export function PulseAIPage() {
                           </span>
                         </div>
 
-                        <Button
+                        <button
+                          type="button"
                           onClick={() => handleSendMessage()}
                           disabled={!inputMessage.trim() || isLoading}
-                          size="sm"
-                          style={{
-                            width: 34,
-                            height: 34,
-                            borderRadius: '50%',
-                            padding: 0,
-                            background: inputMessage.trim()
-                              ? 'linear-gradient(135deg, var(--primary) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%)'
-                              : 'rgba(255, 255, 255, 0.05)',
-                            border: inputMessage.trim() ? '1px solid var(--primary)' : '1px solid var(--border)',
-                            color: inputMessage.trim() ? '#fff' : 'var(--muted-foreground)',
-                            boxShadow: inputMessage.trim() ? '0 0 16px rgba(249, 115, 22, 0.45)' : 'none',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-                            cursor: inputMessage.trim() ? 'pointer' : 'default'
-                          }}
+                          className={`pulse-ai-send-btn ${inputMessage.trim() ? 'ready' : ''}`}
                           aria-label="Send query"
                         >
                           <ArrowUp style={{ width: 16, height: 16, strokeWidth: 2.2 }} />
-                        </Button>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1957,74 +1878,29 @@ export function PulseAIPage() {
                   flexShrink: 0
                 }}
               >
-              <div style={{
-                maxWidth: 820,
-                margin: '0 auto',
-                background: 'linear-gradient(180deg, color-mix(in oklch, var(--card) 92%, var(--primary) 8%) 0%, var(--card) 100%)',
-                border: '1px solid color-mix(in oklch, var(--primary) 28%, var(--border))',
-                borderRadius: 14,
-                padding: '10px 14px 8px',
-                boxShadow: '0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 8px 30px -6px rgba(0,0,0,0.45), 0 0 25px -8px rgba(249, 115, 22, 0.16)',
-                backdropFilter: 'blur(16px)',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 6
-              }}>
+              <div className="pulse-ai-docked-card">
                 {/* Top row */}
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  paddingBottom: 6,
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.05)'
-                }}>
+                <div className="pulse-ai-docked-topbar">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <PulseAiOrb size={20} showGlow={false} />
                     <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground)' }}>pulse AI</span>
                   </div>
 
                   {/* Segmented [Agent | Ask] switcher */}
-                  <div style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    background: 'var(--muted)',
-                    borderRadius: 6,
-                    padding: 2,
-                    border: '1px solid var(--border)'
-                  }}>
+                  <div className="pulse-ai-mode-switcher" style={{ padding: 2, borderRadius: 6 }}>
                     <button
                       type="button"
                       onClick={() => setAiMode('agent')}
-                      style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        borderRadius: 4,
-                        border: 'none',
-                        cursor: 'pointer',
-                        background: aiMode === 'agent' ? 'var(--card)' : 'transparent',
-                        color: aiMode === 'agent' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                        boxShadow: aiMode === 'agent' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none',
-                        transition: 'all 0.15s ease'
-                      }}
+                      className={`pulse-ai-mode-btn ${aiMode === 'agent' ? 'active' : ''}`}
+                      style={{ padding: '2px 8px', borderRadius: 4 }}
                     >
                       Agent
                     </button>
                     <button
                       type="button"
                       onClick={() => setAiMode('query')}
-                      style={{
-                        padding: '2px 8px',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        borderRadius: 4,
-                        border: 'none',
-                        cursor: 'pointer',
-                        background: aiMode === 'query' ? 'var(--card)' : 'transparent',
-                        color: aiMode === 'query' ? 'var(--foreground)' : 'var(--muted-foreground)',
-                        boxShadow: aiMode === 'query' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none',
-                        transition: 'all 0.15s ease'
-                      }}
+                      className={`pulse-ai-mode-btn ${aiMode === 'query' ? 'active' : ''}`}
+                      style={{ padding: '2px 8px', borderRadius: 4 }}
                     >
                       Ask
                     </button>
@@ -2044,18 +1920,8 @@ export function PulseAIPage() {
                       : "Ask any operations question or execute Salesforce SOQL…"
                   }
                   disabled={isLoading}
-                  style={{
-                    width: '100%',
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'var(--foreground)',
-                    fontSize: 13.5,
-                    resize: 'none',
-                    outline: 'none',
-                    maxHeight: 160,
-                    lineHeight: 1.5,
-                    padding: '4px 2px'
-                  }}
+                  className="pulse-ai-card-textarea"
+                  style={{ minHeight: 'unset', maxHeight: 160, padding: '4px 2px', fontSize: 13.5, lineHeight: 1.5 }}
                 />
 
                 {/* Bottom row */}
@@ -2066,17 +1932,7 @@ export function PulseAIPage() {
                   paddingTop: 2
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--muted-foreground)' }}>
-                    <span style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: 'var(--muted)',
-                      border: '1px solid var(--border)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: 10.5
-                    }}>
+                    <span className="pulse-ai-model-tag" style={{ padding: '2px 6px', fontSize: 10.5 }}>
                       <Zap style={{ width: 10, height: 10, color: 'var(--primary)' }} />
                       pulse x_7
                     </span>
@@ -2085,31 +1941,16 @@ export function PulseAIPage() {
                     </span>
                   </div>
 
-                  <Button
+                  <button
+                    type="button"
                     onClick={() => handleSendMessage()}
                     disabled={!inputMessage.trim() || isLoading}
-                    size="sm"
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: '50%',
-                      padding: 0,
-                      background: inputMessage.trim()
-                        ? 'linear-gradient(135deg, var(--primary) 0%, color-mix(in oklch, var(--primary) 85%, black) 100%)'
-                        : 'rgba(255, 255, 255, 0.05)',
-                      border: inputMessage.trim() ? '1px solid var(--primary)' : '1px solid var(--border)',
-                      color: inputMessage.trim() ? '#fff' : 'var(--muted-foreground)',
-                      boxShadow: inputMessage.trim() ? '0 0 14px rgba(249, 115, 22, 0.45)' : 'none',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: inputMessage.trim() ? 'pointer' : 'default',
-                      transition: 'all 0.18s ease'
-                    }}
+                    className={`pulse-ai-send-btn ${inputMessage.trim() ? 'ready' : ''}`}
+                    style={{ width: 32, height: 32 }}
                     aria-label="Send query"
                   >
                     <ArrowUp style={{ width: 15, height: 15, strokeWidth: 2.2 }} />
-                  </Button>
+                  </button>
                 </div>
               </div>
 
