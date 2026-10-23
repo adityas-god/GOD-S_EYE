@@ -5,7 +5,6 @@ import {
   PlugZap,
   ArrowUpRight,
   Bell,
-  Radio,
   Cloud,
   Shield,
   ShieldAlert,
@@ -21,9 +20,15 @@ import {
   Settings,
   Activity,
   BarChart3,
+  Radio,
+  Flame,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { PulseAiOrb } from './pulse-ai-orb';
+import { GoEventsIcon } from './go-events-icon';
+import { GoRosterIcon } from './go-roster-icon';
+import { WarRoomsDialog } from './war-rooms-dialog';
+import { fetchActiveWarRooms } from '@/lib/war-rooms';
 
 import { ConnectionsDialog } from './dashboard-dialogs';
 import { useQuery } from '@tanstack/react-query';
@@ -62,7 +67,17 @@ export function DashboardShell({
   });
   const redZoneCount = redZoneOverview?.totalRedZoneSites ?? 0;
 
+  // Active War Rooms Query (polls every 15s for live updates)
+  const { data: activeWarRooms = [] } = useQuery({
+    queryKey: ['active-war-rooms'],
+    queryFn: fetchActiveWarRooms,
+    staleTime: 10_000,
+    refetchInterval: 15_000,
+  });
+  const activeWarRoomsCount = activeWarRooms.length;
+
   const [connections, setConnections] = useState(false);
+  const [warRoomsOpen, setWarRoomsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -161,6 +176,77 @@ export function DashboardShell({
               <span>pulse AI</span>
               <PulseAiOrb size={20} style={{ marginLeft: 'auto' }} />
             </Link>
+          </Button>
+
+          {/* GO Events Calendar (Google Apps Script) */}
+          <Button
+            variant="nav"
+            asChild
+            className="go-events-btn"
+          >
+            <a
+              href="https://script.google.com/a/macros/greyorange.com/s/AKfycbxaR9IPu98xpp_ecpkK6wdpGRPSw46oueDED5oNtmdDmG-J0hx04yfFIxetaarZdybaIQ/exec"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open GO Events Calendar"
+            >
+              <GoEventsIcon size={16} />
+              <span className="go-events-text">GO Events Calendar</span>
+              <ArrowUpRight style={{ width: 12, height: 12, marginLeft: 'auto', opacity: 0.55 }} />
+            </a>
+          </Button>
+
+          {/* GO Support Roster */}
+          <Button
+            variant="nav"
+            asChild
+            className="go-roster-btn"
+          >
+            <a
+              href="http://172.27.160.170/"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open GO Support Roster (http://172.27.160.170/)"
+            >
+              <GoRosterIcon size={16} />
+              <span className="go-roster-text">GO Support Roster</span>
+              <ArrowUpRight style={{ width: 12, height: 12, marginLeft: 'auto', opacity: 0.55 }} />
+            </a>
+          </Button>
+
+          {/* Active War Rooms Panel Button */}
+          <Button
+            variant="nav"
+            onClick={() => setWarRoomsOpen(true)}
+            className="war-rooms-nav-btn"
+            style={{
+              background: activeWarRoomsCount > 0 ? 'var(--orange-surface)' : undefined,
+              color: activeWarRoomsCount > 0 ? 'var(--soft-orange)' : undefined,
+            }}
+            title="Active War Rooms & Incident Bridges"
+          >
+            <Radio
+              style={{
+                width: 15,
+                height: 15,
+                color: activeWarRoomsCount > 0 ? 'var(--soft-orange)' : 'currentColor',
+              }}
+            />
+            <span>Active war rooms</span>
+            <span
+              className="nav-count"
+              style={
+                activeWarRoomsCount > 0
+                  ? {
+                      background: 'var(--secondary)',
+                      color: 'var(--soft-orange)',
+                      fontWeight: 600,
+                    }
+                  : undefined
+              }
+            >
+              {activeWarRoomsCount > 0 ? `${activeWarRoomsCount} LIVE` : '0'}
+            </span>
           </Button>
 
           {/* Site Monitoring (The 2 buckets: Salesforce cases & Opsgenie alerts) */}
@@ -304,11 +390,6 @@ export function DashboardShell({
           <div className="source-health">
             <span className="nav-label">YOUR DATA SOURCES</span>
             <div>
-              <Radio />
-              <span>Opsgenie</span>
-              <span className="source-dot" />
-            </div>
-            <div>
               <Cloud />
               <span>Salesforce</span>
               <span className="source-dot" />
@@ -423,6 +504,7 @@ export function DashboardShell({
         )}
       </div>
       <ConnectionsDialog open={connections} onOpenChange={setConnections} />
+      <WarRoomsDialog open={warRoomsOpen} onOpenChange={setWarRoomsOpen} />
     </div>
   );
 }

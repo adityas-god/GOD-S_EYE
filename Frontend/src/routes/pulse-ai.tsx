@@ -1691,56 +1691,6 @@ export function PulseAIPage() {
                       </div>
                     </div>
                   </div>
-
-                  {/* Suggestion Prompts Grid */}
-                  <div style={{
-                    marginTop: 22,
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-                    gap: 10,
-                    textAlign: 'left',
-                    maxWidth: 720,
-                    margin: '22px auto 0',
-                  }}>
-                    {SAMPLE_PROMPTS.map((sample, idx) => {
-                      const Icon = sample.icon;
-                      return (
-                        <div
-                          key={idx}
-                          onClick={() => handleSendMessage(sample.prompt)}
-                          style={{
-                            padding: '12px 14px',
-                            borderRadius: 10,
-                            background: 'var(--card)',
-                            border: '1px solid var(--border)',
-                            cursor: 'pointer',
-                            transition: 'all 0.18s ease',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: 5,
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.borderColor = 'rgba(249, 115, 22, 0.45)';
-                            e.currentTarget.style.transform = 'translateY(-2px)';
-                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.borderColor = 'var(--border)';
-                            e.currentTarget.style.transform = 'none';
-                            e.currentTarget.style.boxShadow = 'none';
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 650, color: 'var(--foreground)' }}>
-                            <Icon style={{ width: 14, height: 14, color: 'var(--primary)', flexShrink: 0 }} />
-                            <span>{sample.title}</span>
-                          </div>
-                          <p style={{ margin: 0, fontSize: 11, color: 'var(--muted-foreground)', lineHeight: 1.4 }}>
-                            {sample.desc}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
               )}
 

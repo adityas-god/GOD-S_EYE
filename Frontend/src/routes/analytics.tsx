@@ -61,9 +61,11 @@ function formatDate(dateStr?: string | null): string {
   try {
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return String(dateStr);
+    const isThisYear = d.getFullYear() === new Date().getFullYear();
     return d.toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
+      ...(isThisYear ? {} : { year: 'numeric' }),
       hour: 'numeric',
       minute: '2-digit',
       hour12: true,
@@ -1630,7 +1632,7 @@ export function AnalyticsPage() {
                         <th style={{ padding: '10px 18px' }}>SUBSYSTEM</th>
                         <th style={{ padding: '10px 18px', textAlign: 'right' }}>OUTAGE DOWNTIME</th>
                         <th style={{ padding: '10px 18px' }}>STATUS</th>
-                        <th style={{ padding: '10px 18px' }}>CREATED</th>
+                        <th style={{ padding: '10px 18px' }}>CREATED DATE &amp; TIME</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2630,7 +2632,7 @@ export function AnalyticsPage() {
                         <th style={{ padding: '10px 18px', textAlign: 'center' }}>SLA TARGET</th>
                         <th style={{ padding: '10px 18px', textAlign: 'right' }}>BREACH OVERDUE</th>
                         <th style={{ padding: '10px 18px' }}>STATUS</th>
-                        <th style={{ padding: '10px 18px' }}>TRIGGERED</th>
+                        <th style={{ padding: '10px 18px' }}>TRIGGERED DATE &amp; TIME</th>
                       </tr>
                     </thead>
                     <tbody>

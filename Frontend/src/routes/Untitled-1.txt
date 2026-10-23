@@ -1,0 +1,3 @@
+# 
+
+{"status":"ok","timestamp":"2026-10-16T23:34:33.167Z","database":{"connected":false,"provider":"MongoDB","uri_configured":true},"salesforce":{"configured":true,"instance":"https://greyorangeorg.my.salesforce.com","clientIdMasked":"3MVG9G...Stxz","clientSecretConfigured":true,"lastError":null,"liveAuth":null}}

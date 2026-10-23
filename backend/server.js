@@ -24,6 +24,7 @@ import casesRouter from './src/routes/cases.routes.js';
 import webhooksRouter from './src/routes/webhooks.routes.js';
 import analyticsRouter from './src/routes/analytics.routes.js';
 import pulseAiRouter from './src/routes/pulse-ai.routes.js';
+import warRoomsRouter from './src/routes/war-rooms.routes.js';
 
 import { getSfConfig, getSalesforceToken, getLastSalesforceError, fetchRedZoneSitesOverview } from './src/services/salesforce.service.js';
 import { getLastPulseAiStatus } from './src/services/pulse-ai.service.js';
@@ -112,6 +113,7 @@ app.use('/api/cases', casesRouter);
 app.use('/api/webhooks', webhooksRouter);
 app.use('/api/analytics', analyticsRouter);
 app.use('/api/pulse-ai', pulseAiRouter);
+app.use('/api/war-rooms', warRoomsRouter);
 
 // 404 Handler
 app.use((req, res) => {

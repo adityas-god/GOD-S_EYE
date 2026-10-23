@@ -585,21 +585,30 @@ function Index() {
     });
   }, [currentBucketItems, severityFilter, productFilter, categoryFilter, assigneeFilter, statusFilter, activeBucket]);
 
-  const formatPreciseTime = (isoString?: string | null): string => {
-    if (!isoString) return '—';
+  const formatDateTimeParts = (isoString?: string | null): { date: string; time: string; full: string } => {
+    if (!isoString) return { date: '—', time: '', full: '—' };
     try {
       const d = new Date(isoString);
-      if (isNaN(d.getTime())) return '—';
-      return d.toLocaleString(undefined, {
+      if (isNaN(d.getTime())) return { date: '—', time: '', full: '—' };
+      const isThisYear = d.getFullYear() === new Date().getFullYear();
+      const date = d.toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
+        ...(isThisYear ? {} : { year: 'numeric' }),
+      });
+      const time = d.toLocaleTimeString(undefined, {
         hour: '2-digit',
         minute: '2-digit',
         hour12: true,
       });
+      return { date, time, full: `${date}, ${time}` };
     } catch {
-      return '—';
+      return { date: '—', time: '', full: '—' };
     }
+  };
+
+  const formatPreciseTime = (isoString?: string | null): string => {
+    return formatDateTimeParts(isoString).full;
   };
 
   // Pre-computed ticket view models for O(1) instant rendering without re-parsing on every frame
@@ -664,12 +673,12 @@ function Index() {
         !isClosedTodayAlert
       );
 
-      const createdTimeFormatted = formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
-      const endTimeFormatted = alertEndTime ? formatPreciseTime(alertEndTime) : '—';
-      const dateVal = c.CreatedDate || c.LastModifiedDate;
-      const casesDateFormatted = fromToday
-        ? (dateVal ? new Date(dateVal).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : 'Today')
-        : (dateVal ? new Date(dateVal).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—');
+      const createdDateVal = c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined) || c.LastModifiedDate;
+      const createdParts = formatDateTimeParts(createdDateVal);
+      const endParts = formatDateTimeParts(alertEndTime);
+      const createdTimeFormatted = createdParts.full;
+      const endTimeFormatted = endParts.full;
+      const casesDateFormatted = createdParts.full;
 
       return {
         c,
@@ -695,6 +704,8 @@ function Index() {
         createdTimeFormatted,
         endTimeFormatted,
         casesDateFormatted,
+        createdParts,
+        endParts,
       };
     });
   }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId, activeBucket]);
@@ -1630,14 +1641,14 @@ function Index() {
                 <span>SITE / LOCATION</span>
                 {activeBucket === 'closed' ? (
                   <>
-                    <span>START TIME</span>
+                    <span>CREATED (START)</span>
                     <span>END TIME</span>
                     <span>DURATION (MTTR)</span>
                   </>
                 ) : activeBucket === 'alerts' ? (
-                  <span>START TIME</span>
+                  <span>CREATED (START)</span>
                 ) : (
-                  <span>CREATED / MODIFIED</span>
+                  <span>CREATED DATE &amp; TIME</span>
                 )}
               </div>
 
@@ -1672,6 +1683,8 @@ function Index() {
                         createdTimeFormatted,
                         endTimeFormatted,
                         casesDateFormatted,
+                        createdParts,
+                        endParts,
                       } = item;
 
                       return (
@@ -1785,18 +1798,33 @@ function Index() {
                             )}
                           </div>
 
-                          {/* Date Cells: Start Time in Open Alerts; Start, End Time & MTTR Duration in Closed Alerts; Created/Modified in Cases */}
+                          {/* Date Cells: Created Date & Time displayed prominently in all views */}
                           {activeBucket === 'alerts' ? (
-                            <div className="case-date-cell" style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>
-                              {createdTimeFormatted}
+                            <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${createdParts.full}`}>
+                              <span style={{ fontSize: 10.5, color: '#f87171', fontWeight: 600 }}>
+                                {createdParts.date}
+                              </span>
+                              <span style={{ fontSize: 9.5, color: '#fca5a5', fontFamily: 'var(--font-mono)' }}>
+                                {createdParts.time}
+                              </span>
                             </div>
                           ) : activeBucket === 'closed' ? (
                             <>
-                              <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
-                                {createdTimeFormatted}
+                              <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${createdParts.full}`}>
+                                <span style={{ fontSize: 10.5, color: '#cbd5e1', fontWeight: 600 }}>
+                                  {createdParts.date}
+                                </span>
+                                <span style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>
+                                  {createdParts.time}
+                                </span>
                               </div>
-                              <div className="case-date-cell" style={{ fontSize: 10, color: '#34d399', fontWeight: 600 }}>
-                                {endTimeFormatted}
+                              <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Ended: ${endParts.full}`}>
+                                <span style={{ fontSize: 10.5, color: '#34d399', fontWeight: 600 }}>
+                                  {endParts.date}
+                                </span>
+                                <span style={{ fontSize: 9.5, color: '#6ee7b7', fontFamily: 'var(--font-mono)' }}>
+                                  {endParts.time}
+                                </span>
                               </div>
                               <div>
                                 <span
@@ -1820,9 +1848,12 @@ function Index() {
                               </div>
                             </>
                           ) : (
-                            <div className="case-date-cell">
-                              <span style={{ color: '#ffffff', fontWeight: fromToday ? 600 : 500 }}>
-                                {casesDateFormatted}
+                            <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created: ${createdParts.full}`}>
+                              <span style={{ color: '#ffffff', fontWeight: 600, fontSize: 10.5 }}>
+                                {createdParts.date}
+                              </span>
+                              <span style={{ fontSize: 9.5, color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>
+                                {createdParts.time}
                               </span>
                             </div>
                           )}
@@ -2209,16 +2240,22 @@ function Index() {
                   {selectedCase.Is_Site_100_Down__c ? '100% DOWN' : 'Normal'}
                 </p>
               </div>
-              <div style={{ gridColumn: 'span 2' }}>
+              <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Site / Location</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
                   {String(selectedCase.Snow_Sitename__c || selectedCase.Customer_Location__c || selectedCase.Site_Name_Customer_Input__c || selectedCase.Account_Name__c || 'GreyOrange Org')}
                 </p>
               </div>
               <div>
+                <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Created Date &amp; Time</span>
+                <p style={{ margin: '3px 0 0', fontWeight: 600, color: 'var(--foreground)' }}>
+                  {formatDateTimeParts(selectedCase.CreatedDate || selectedCase.created_at || selectedCase.LastModifiedDate).full}
+                </p>
+              </div>
+              <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Last Updated</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.LastModifiedDate ? new Date(selectedCase.LastModifiedDate).toLocaleDateString() : '—'}
+                  {formatDateTimeParts(selectedCase.LastModifiedDate).full}
                 </p>
               </div>
             </div>

@@ -73,21 +73,30 @@ export const SITE_TIME_RANGES: Array<{ key: SiteTimeRangeKey; label: string; hou
   { key: 'custom', label: 'Custom', hours: 0 },
 ];
 
-function formatPreciseTime(isoString?: string | null): string {
-  if (!isoString) return '—';
+function formatDateTimeParts(isoString?: string | null): { date: string; time: string; full: string } {
+  if (!isoString) return { date: '—', time: '', full: '—' };
   try {
     const d = new Date(isoString);
-    if (isNaN(d.getTime())) return '—';
-    return d.toLocaleString(undefined, {
+    if (isNaN(d.getTime())) return { date: '—', time: '', full: '—' };
+    const isThisYear = d.getFullYear() === new Date().getFullYear();
+    const date = d.toLocaleDateString(undefined, {
       month: 'short',
       day: 'numeric',
+      ...(isThisYear ? {} : { year: 'numeric' }),
+    });
+    const time = d.toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
       hour12: true,
     });
+    return { date, time, full: `${date}, ${time}` };
   } catch {
-    return '—';
+    return { date: '—', time: '', full: '—' };
   }
+}
+
+function formatPreciseTime(isoString?: string | null): string {
+  return formatDateTimeParts(isoString).full;
 }
 
 function resolveSite(sites: Site[] | undefined, idOrName: string): Site | undefined {
@@ -1741,19 +1750,19 @@ function SiteDetail() {
 
                 {activeBucket === 'closed' ? (
                   <>
-                    <span>START TIME</span>
+                    <span>CREATED (START)</span>
                     <span>END TIME</span>
                     <span>DURATION (MTTR)</span>
                   </>
                 ) : activeBucket === 'alerts' ? (
                   <>
                     <span>SITE / LOCATION</span>
-                    <span>START TIME</span>
+                    <span>CREATED (START)</span>
                   </>
                 ) : (
                   <>
                     <span>SITE / LOCATION</span>
-                    <span>LAST MODIFIED</span>
+                    <span>CREATED DATE &amp; TIME</span>
                   </>
                 )}
               </div>
@@ -1983,10 +1992,16 @@ function SiteDetail() {
                             </span>
                           </div>
 
-                          {/* Start Time (ONLY start time in open alerts) */}
-                          <div className="case-date-cell" style={{ fontSize: 10, color: '#f87171', fontWeight: 600 }}>
-                            {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
-                          </div>
+                          {/* Created / Start Time */}
+                          {(() => {
+                            const p = formatDateTimeParts(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
+                            return (
+                              <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${p.full}`}>
+                                <span style={{ fontSize: 10.5, color: '#f87171', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: '#fca5a5', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                              </div>
+                            );
+                          })()}
                         </>
                       ) : activeBucket === 'closed' ? (
                         <>
@@ -2041,15 +2056,27 @@ function SiteDetail() {
                             </span>
                           </div>
 
-                          {/* Start Time */}
-                          <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
-                            {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
-                          </div>
+                          {/* Created / Start Time */}
+                          {(() => {
+                            const p = formatDateTimeParts(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
+                            return (
+                              <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${p.full}`}>
+                                <span style={{ fontSize: 10.5, color: '#cbd5e1', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                              </div>
+                            );
+                          })()}
 
                           {/* End Time */}
-                          <div className="case-date-cell" style={{ fontSize: 10, color: '#34d399', fontWeight: 600 }}>
-                            {alertEndTime ? formatPreciseTime(alertEndTime) : '—'}
-                          </div>
+                          {(() => {
+                            const p = formatDateTimeParts(alertEndTime);
+                            return (
+                              <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Ended: ${p.full}`}>
+                                <span style={{ fontSize: 10.5, color: '#34d399', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: '#6ee7b7', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                              </div>
+                            );
+                          })()}
 
                           {/* Duration (MTTR) */}
                           <div>
@@ -2154,16 +2181,20 @@ function SiteDetail() {
                             </span>
                           </div>
 
-                          {/* Last Modified */}
-                          <div className="case-date-cell">
-                            {c.LastModifiedDate
-                              ? new Date(c.LastModifiedDate).toLocaleDateString(undefined, {
-                                  month: 'short',
-                                  day: 'numeric',
-                                  year: 'numeric',
-                                })
-                              : '—'}
-                          </div>
+                          {/* Created Date & Time */}
+                          {(() => {
+                            const p = formatDateTimeParts(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined) || c.LastModifiedDate);
+                            return (
+                              <div
+                                className="case-date-cell"
+                                style={{ display: 'flex', flexDirection: 'column', gap: 1 }}
+                                title={`Created: ${p.full}`}
+                              >
+                                <span style={{ color: '#ffffff', fontWeight: 600, fontSize: 10.5 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                              </div>
+                            );
+                          })()}
                         </>
                       )}
                     </div>
@@ -2313,16 +2344,22 @@ function SiteDetail() {
                   {selectedCase.Is_Site_100_Down__c ? '100% DOWN' : 'Normal'}
                 </p>
               </div>
-              <div style={{ gridColumn: 'span 2' }}>
+              <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Site / Location</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
                   {String(selectedCase.Snow_Sitename__c || selectedCase.Customer_Location__c || site.name)}
                 </p>
               </div>
               <div>
+                <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Created Date &amp; Time</span>
+                <p style={{ margin: '3px 0 0', fontWeight: 600, color: 'var(--foreground)' }}>
+                  {formatDateTimeParts(selectedCase.CreatedDate || selectedCase.created_at || selectedCase.LastModifiedDate).full}
+                </p>
+              </div>
+              <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Last Updated</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {selectedCase.LastModifiedDate ? new Date(selectedCase.LastModifiedDate).toLocaleDateString() : '—'}
+                  {formatDateTimeParts(selectedCase.LastModifiedDate).full}
                 </p>
               </div>
             </div>

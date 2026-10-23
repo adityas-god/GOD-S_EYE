@@ -1599,7 +1599,7 @@ function RedZonePage() {
                   <span>Case #</span>
                   <span>Severity</span>
                   <span>Status</span>
-                  <span>When It Came</span>
+                  <span>Created Date &amp; Time</span>
                   <span>Closing Time</span>
                   <span>Duration</span>
                   <span>Subject &amp; Root Cause</span>
