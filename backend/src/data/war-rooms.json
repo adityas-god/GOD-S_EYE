@@ -1,5 +1,93 @@
 [
   {
+    "id": "wr-1792793024168-aycfw",
+    "name": "Ryder Maryland War Room",
+    "url": "https://greyorange.zoom.us/j/84456844987?pwd=7yn82z6FhmOGiIUh6ZomkoN7FjRnqV.1",
+    "siteName": "Ryder Maryland",
+    "siteId": "sf-site-ryder-maryland",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T22:03:44.168Z"
+  },
+  {
+    "id": "wr-1792792966565-j2dts",
+    "name": "DHL Figs War Room",
+    "url": "https://greyorange.zoom.us/j/83912126593?pwd=RhSR5Q1Iae1EO10NlDw7at46rcz3Zb.1",
+    "siteName": "DHL- Figs",
+    "siteId": "sf-site-dhl-figs",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T22:02:46.565Z"
+  },
+  {
+    "id": "wr-1792792827683-o9hxj",
+    "name": "Walmart Mexico War Room",
+    "url": "https://greyorange.zoom.us/j/81427755139?pwd=wbr2KWbkA5hDta2wSXYyahJGv8NWmw.1",
+    "siteName": "Walmart Mexico",
+    "siteId": "sf-site-walmart-mexico",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T22:00:27.683Z"
+  },
+  {
+    "id": "wr-1792792756412-gn0sh",
+    "name": "H&M Ajax Canada war room",
+    "url": "https://greyorange.zoom.us/j/4081581913?pwd=6WCl9jquyvYkBOuUb562qrbmWbov2R.1",
+    "siteName": "H&M Canada Ajax",
+    "siteId": "sf-site-h-m-canada-ajax",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T21:59:16.412Z"
+  },
+  {
+    "id": "wr-1792792698059-c9d1s",
+    "name": "O&M War Room",
+    "url": "https://greyorange.zoom.us/j/89429183533?pwd=lSd1x3JDbgro2hZWRYQO8natyyGbNz.1",
+    "siteName": "Owens & Minor",
+    "siteId": "sf-site-owens-minor",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T21:58:18.059Z"
+  },
+  {
+    "id": "wr-1792792381025-hdllk",
+    "name": "Sedico Spare RTP Hyper care War Room",
+    "url": "https://greyorange.zoom.us/j/8813392556?pwd=EIYEXyyyfyzoyQcbNUw7WQbbRk6gtZ.1",
+    "siteName": "SEDICO SPARE",
+    "siteId": null,
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T21:53:01.025Z"
+  },
+  {
+    "id": "wr-1792792276548-0qj61",
+    "name": "EL-ATL Hyper Care War Room",
+    "url": "https://greyorange.zoom.us/j/89651989429?pwd=PWHAgp6Ow1GmOBkSuu7Woj1aX5aT13.1",
+    "siteName": "Essilor Luxottica Atlanta",
+    "siteId": "sf-site-essilor-luxottica-atlanta",
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T21:51:16.548Z"
+  },
+  {
+    "id": "wr-1792792211272-vk6uy",
+    "name": "Kenco- GMI UAT War Room",
+    "url": "https://greyorange.zoom.us/j/81445161642?pwd=vnOHIpFpNA8NOYQqN68EFan2Cvnw5P.1",
+    "siteName": "kenco GMI",
+    "siteId": null,
+    "severity": "SEV 1",
+    "lead": "CAC",
+    "notes": "DAILY INCIDENTS",
+    "startedAt": "2026-10-23T21:50:11.272Z"
+  },
+  {
     "id": "wr-1792791603983-y8fbs",
     "name": "Walmart POT & Apotek War Room 24*7",
     "url": "https://greyorange.zoom.us/j/86709320731?pwd=KeK17e7oGoqzN8Pk4Sbqa3lZc0Svia.1",

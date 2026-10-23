@@ -18,13 +18,13 @@ import {
   Plus,
   X,
   MapPin,
-  Clock,
   Flame,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchActiveWarRooms, createActiveWarRoom, removeActiveWarRoom, type WarRoom } from '@/lib/war-rooms';
 import { sitesQueryOptions } from '@/lib/sites';
+import { ZoomIcon } from './zoom-icon';
 
 interface WarRoomsDialogProps {
   open: boolean;
@@ -177,19 +177,6 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
     });
   };
 
-  const formatElapsed = (iso: string) => {
-    try {
-      const ms = Date.now() - new Date(iso).getTime();
-      const mins = Math.floor(ms / 60000);
-      if (mins < 1) return 'Just started';
-      if (mins < 60) return `Started ${mins}m ago`;
-      const hrs = Math.floor(mins / 60);
-      return `Started ${hrs}h ${mins % 60}m ago`;
-    } catch {
-      return '';
-    }
-  };
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -222,15 +209,14 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
                   width: 36,
                   height: 36,
                   borderRadius: 6,
-                  background: 'var(--orange-surface)',
-                  color: 'var(--soft-orange)',
+                  background: 'var(--secondary)',
                   border: '1px solid var(--border)',
                   display: 'grid',
                   placeItems: 'center',
                   flexShrink: 0,
                 }}
               >
-                <Radio style={{ width: 18, height: 18 }} />
+                <ZoomIcon size={20} />
               </div>
 
               <div>
@@ -558,9 +544,6 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {warRooms.map((room) => {
-                const isSev1 = room.severity?.includes('1') || room.severity?.toLowerCase().includes('crit');
-                const elapsed = formatElapsed(room.startedAt);
-
                 return (
                   <div
                     key={room.id}
@@ -575,98 +558,41 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
                       transition: 'border-color 0.15s ease',
                     }}
                   >
-                    {/* Top Row: Badges, Title, Remove Button */}
-                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                          {/* Live indicator tag */}
+                    {/* Top Row: Only Text / Site Name, and Remove Button */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: 'var(--foreground)',
+                            fontFamily: 'var(--font-sans)',
+                            letterSpacing: '-0.01em',
+                          }}
+                        >
+                          {room.name}
+                        </span>
+
+                        {room.siteName && (
                           <span
                             style={{
+                              fontSize: 10,
+                              fontWeight: 500,
+                              color: 'var(--foreground)',
+                              background: 'var(--secondary)',
+                              border: '1px solid var(--border)',
+                              padding: '1.5px 6px',
+                              borderRadius: 4,
                               display: 'inline-flex',
                               alignItems: 'center',
-                              gap: 4,
-                              fontSize: 9,
-                              fontWeight: 600,
-                              fontFamily: 'var(--font-mono)',
-                              color: isSev1 ? 'var(--destructive)' : 'var(--yellow)',
-                              background: isSev1 ? 'oklch(0.62 0.21 25 / 0.12)' : 'oklch(0.79 0.11 88 / 0.12)',
-                              border: isSev1 ? '1px solid oklch(0.62 0.21 25 / 0.3)' : '1px solid oklch(0.79 0.11 88 / 0.3)',
-                              padding: '1px 5px',
-                              borderRadius: 3,
-                              textTransform: 'uppercase',
+                              gap: 3.5,
+                              fontFamily: 'var(--font-sans)',
                             }}
                           >
-                            <span
-                              style={{
-                                width: 4.5,
-                                height: 4.5,
-                                borderRadius: '50%',
-                                background: isSev1 ? 'var(--destructive)' : 'var(--yellow)',
-                                display: 'inline-block',
-                              }}
-                            />
-                            LIVE BRIDGE
+                            <MapPin style={{ width: 10, height: 10, color: 'var(--muted-foreground)' }} />
+                            {room.siteName}
                           </span>
-
-                          {/* Severity */}
-                          <span
-                            style={{
-                              fontSize: 9,
-                              fontWeight: 600,
-                              fontFamily: 'var(--font-mono)',
-                              color: isSev1 ? '#ffffff' : '#ffffff',
-                              background: isSev1 ? 'var(--destructive)' : 'var(--yellow)',
-                              padding: '1px 5px',
-                              borderRadius: 3,
-                            }}
-                          >
-                            {room.severity || 'SEV 1'}
-                          </span>
-
-                          {/* Site Tag if available */}
-                          {room.siteName && (
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                fontWeight: 500,
-                                color: 'var(--foreground)',
-                                background: 'var(--secondary)',
-                                border: '1px solid var(--border)',
-                                padding: '1px 5px',
-                                borderRadius: 3,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 3,
-                                fontFamily: 'var(--font-sans)',
-                              }}
-                            >
-                              <MapPin style={{ width: 9.5, height: 9.5, color: 'var(--muted-foreground)' }} />
-                              {room.siteName}
-                            </span>
-                          )}
-
-                          {/* Elapsed time */}
-                          {elapsed && (
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                color: 'var(--muted-foreground)',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: 3,
-                                fontFamily: 'var(--font-mono)',
-                              }}
-                            >
-                              <Clock style={{ width: 9.5, height: 9.5 }} />
-                              {elapsed}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* War Room Name */}
-                        <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--foreground)', marginTop: 2, fontFamily: 'var(--font-sans)' }}>
-                          {room.name}
-                        </div>
+                        )}
                       </div>
 
                       {/* Remove Button */}
@@ -683,6 +609,7 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
                           padding: 0,
                           color: 'var(--muted-foreground)',
                           borderRadius: 4,
+                          flexShrink: 0,
                         }}
                         title="Remove / Close War Room"
                       >

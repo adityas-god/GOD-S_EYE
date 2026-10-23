@@ -126,7 +126,8 @@ body.light,
 .go-roster-btn:hover .go-roster-text { color: #7dd3fc; }
 .go-roster-btn svg:first-child { width: 16px; height: 16px; flex-shrink: 0; }
 .war-rooms-nav-btn { transition: all 0.15s ease; }
-.war-rooms-nav-btn:hover { background: var(--secondary) !important; color: var(--foreground) !important; }
+.war-rooms-nav-btn:hover { background: var(--secondary); color: var(--foreground); }
+.war-rooms-nav-btn.active { background: var(--orange-surface); color: var(--soft-orange); }
 .connection-dot { width: 5px; height: 5px; border-radius: 100%; background: var(--muted-foreground); margin-left: auto; }
 .sidebar-bottom { margin-top: auto; }
 .source-health { border: 1px solid var(--border); border-radius: 6px; padding: 16px 13px 11px; margin-bottom: 16px; }

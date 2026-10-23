@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { PulseAiOrb } from './pulse-ai-orb';
 import { GoEventsIcon } from './go-events-icon';
 import { GoRosterIcon } from './go-roster-icon';
+import { ZoomIcon } from './zoom-icon';
 import { WarRoomsDialog } from './war-rooms-dialog';
 import { fetchActiveWarRooms } from '@/lib/war-rooms';
 
@@ -229,33 +230,12 @@ export function DashboardShell({
           <Button
             variant="nav"
             onClick={() => setWarRoomsOpen(true)}
-            className="war-rooms-nav-btn"
-            style={{
-              background: activeWarRoomsCount > 0 ? 'var(--orange-surface)' : undefined,
-              color: activeWarRoomsCount > 0 ? 'var(--soft-orange)' : undefined,
-            }}
+            className={`war-rooms-nav-btn ${warRoomsOpen ? 'active' : ''}`}
             title="Active War Rooms & Incident Bridges"
           >
-            <Radio
-              style={{
-                width: 15,
-                height: 15,
-                color: activeWarRoomsCount > 0 ? 'var(--soft-orange)' : 'currentColor',
-              }}
-            />
+            <ZoomIcon size={16} />
             <span>Active war rooms</span>
-            <span
-              className="nav-count"
-              style={
-                activeWarRoomsCount > 0
-                  ? {
-                      background: 'var(--secondary)',
-                      color: 'var(--soft-orange)',
-                      fontWeight: 600,
-                    }
-                  : undefined
-              }
-            >
+            <span className="nav-count">
               {activeWarRoomsCount > 0 ? `${activeWarRoomsCount} LIVE` : '0'}
             </span>
           </Button>
