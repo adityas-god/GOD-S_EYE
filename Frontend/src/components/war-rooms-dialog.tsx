@@ -64,29 +64,65 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
     return () => window.removeEventListener('war-rooms-changed', handleChanged);
   }, [queryClient]);
 
-  // Create Mutation
+  // Create Mutation with Instant Optimistic Update (0ms)
   const addMutation = useMutation({
     mutationFn: createActiveWarRoom,
-    onSuccess: (newRoom) => {
-      void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
-      toast.success(`War Room added: ${newRoom.name}`);
+    onMutate: async (newRoomData) => {
+      await queryClient.cancelQueries({ queryKey: ['active-war-rooms'] });
+      const previous = queryClient.getQueryData<WarRoom[]>(['active-war-rooms']) || [];
+      const optimisticRoom: WarRoom = {
+        id: `wr-opt-${Date.now()}`,
+        name: newRoomData.name,
+        url: newRoomData.url,
+        siteName: newRoomData.siteName || null,
+        siteId: newRoomData.siteId || null,
+        severity: newRoomData.severity || 'SEV 1',
+        lead: newRoomData.lead || null,
+        notes: newRoomData.notes || null,
+        startedAt: new Date().toISOString(),
+      };
+      queryClient.setQueryData<WarRoom[]>(['active-war-rooms'], [optimisticRoom, ...previous]);
       resetForm();
       setIsAdding(false);
+      toast.success(`War Room added: ${newRoomData.name}`);
+      return { previous, tempId: optimisticRoom.id };
     },
-    onError: (err: Error) => {
-      toast.error(`Failed to add war room: ${err.message}`);
+    onSuccess: (savedRoom, _vars, context) => {
+      queryClient.setQueryData<WarRoom[]>(['active-war-rooms'], (old = []) => [
+        savedRoom,
+        ...old.filter(r => r.id !== context?.tempId && r.id !== savedRoom.id),
+      ]);
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['active-war-rooms'], context.previous);
+      }
+      toast.error('Failed to add war room');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
     },
   });
 
-  // Remove Mutation
+  // Remove Mutation with Instant Optimistic Update (0ms)
   const removeMutation = useMutation({
     mutationFn: removeActiveWarRoom,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
+    onMutate: async (idToDelete: string) => {
+      await queryClient.cancelQueries({ queryKey: ['active-war-rooms'] });
+      const previous = queryClient.getQueryData<WarRoom[]>(['active-war-rooms']) || [];
+      const updated = previous.filter(r => r.id !== idToDelete);
+      queryClient.setQueryData<WarRoom[]>(['active-war-rooms'], updated);
       toast.success('War room removed');
+      return { previous };
     },
-    onError: (err: Error) => {
-      toast.error(`Failed to remove war room: ${err.message}`);
+    onError: (_err, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['active-war-rooms'], context.previous);
+      }
+      toast.error('Failed to remove war room');
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
     },
   });
 
@@ -637,10 +673,9 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => {
-                          if (window.confirm(`Remove War Room: "${room.name}"?`)) {
-                            removeMutation.mutate(room.id);
-                          }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeMutation.mutate(room.id);
                         }}
                         style={{
                           height: 24,

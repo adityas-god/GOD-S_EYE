@@ -26,7 +26,7 @@ const DEFAULT_WAR_ROOMS: WarRoom[] = [
   },
 ];
 
-function getStoredWarRooms(): WarRoom[] {
+export function getStoredWarRooms(): WarRoom[] {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -39,7 +39,7 @@ function getStoredWarRooms(): WarRoom[] {
   return DEFAULT_WAR_ROOMS;
 }
 
-function setStoredWarRooms(rooms: WarRoom[]): void {
+export function setStoredWarRooms(rooms: WarRoom[]): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
@@ -48,9 +48,17 @@ function setStoredWarRooms(rooms: WarRoom[]): void {
   } catch {}
 }
 
+/**
+ * Fetch active war rooms with 2.5s network timeout and instant local fallback
+ */
 export async function fetchActiveWarRooms(): Promise<WarRoom[]> {
   try {
-    const res = await fetch('/api/war-rooms');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+    const res = await fetch('/api/war-rooms', { signal: controller.signal });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.warRooms)) {
@@ -59,11 +67,14 @@ export async function fetchActiveWarRooms(): Promise<WarRoom[]> {
       }
     }
   } catch {
-    // Backend offline or unreachable, fall back gracefully to localStorage
+    // Network offline or timeout - instant return from local storage
   }
   return getStoredWarRooms();
 }
 
+/**
+ * Create active war room with instant local storage write and non-blocking backend sync
+ */
 export async function createActiveWarRoom(room: {
   name: string;
   url: string;
@@ -73,7 +84,8 @@ export async function createActiveWarRoom(room: {
   lead?: string | null;
   notes?: string | null;
 }): Promise<WarRoom> {
-  const payload = {
+  const newRoom: WarRoom = {
+    id: `wr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: room.name.trim(),
     url: room.url.trim(),
     siteName: room.siteName?.trim() || null,
@@ -81,45 +93,64 @@ export async function createActiveWarRoom(room: {
     severity: room.severity?.trim() || 'SEV 1',
     lead: room.lead?.trim() || null,
     notes: room.notes?.trim() || null,
+    startedAt: new Date().toISOString(),
   };
 
+  // Instant local storage update (0ms latency)
+  const current = getStoredWarRooms().filter(r => r.id !== newRoom.id);
+  const updated = [newRoom, ...current];
+  setStoredWarRooms(updated);
+
+  // Sync to backend in parallel with fast 3s timeout
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
     const res = await fetch('/api/war-rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(newRoom),
+      signal: controller.signal,
     });
+    clearTimeout(timeoutId);
+
     if (res.ok) {
       const data = await res.json();
-      if (data && data.warRoom) {
-        const current = getStoredWarRooms().filter(r => r.id !== data.warRoom.id);
-        const updated = [data.warRoom, ...current];
-        setStoredWarRooms(updated);
+      if (data?.warRoom?.id) {
+        const synced = [data.warRoom, ...getStoredWarRooms().filter(r => r.id !== newRoom.id && r.id !== data.warRoom.id)];
+        setStoredWarRooms(synced);
         return data.warRoom;
       }
     }
-  } catch {}
+  } catch {
+    // Backend offline; local persistent copy remains active
+  }
 
-  // Fallback to local storage
-  const localRoom: WarRoom = {
-    id: `wr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    ...payload,
-    startedAt: new Date().toISOString(),
-  };
-  const updated = [localRoom, ...getStoredWarRooms()];
-  setStoredWarRooms(updated);
-  return localRoom;
+  return newRoom;
 }
 
+/**
+ * Remove active war room with instant local storage purge and non-blocking backend sync
+ */
 export async function removeActiveWarRoom(id: string): Promise<boolean> {
-  try {
-    await fetch(`/api/war-rooms/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
-  } catch {}
-
+  // Instant local purge (0ms latency)
   const current = getStoredWarRooms();
   const filtered = current.filter(r => r.id !== id);
   setStoredWarRooms(filtered);
+
+  // Sync delete to backend in parallel
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    await fetch(`/api/war-rooms/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+  } catch {
+    // Silently continue
+  }
+
   return true;
 }

@@ -31,7 +31,7 @@ import { WarRoomsDialog } from './war-rooms-dialog';
 import { fetchActiveWarRooms } from '@/lib/war-rooms';
 
 import { ConnectionsDialog } from './dashboard-dialogs';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { sitesQueryOptions } from '@/lib/sites';
 import { sfFetchRedZoneSites } from '@/integrations/salesforce/client';
 import type { SiteRunbook } from '@/lib/runbook';
@@ -67,14 +67,25 @@ export function DashboardShell({
   });
   const redZoneCount = redZoneOverview?.totalRedZoneSites ?? 0;
 
+  const queryClient = useQueryClient();
+
   // Active War Rooms Query (polls every 15s for live updates)
   const { data: activeWarRooms = [] } = useQuery({
     queryKey: ['active-war-rooms'],
     queryFn: fetchActiveWarRooms,
-    staleTime: 10_000,
+    staleTime: 5_000,
     refetchInterval: 15_000,
   });
   const activeWarRoomsCount = activeWarRooms.length;
+
+  // Real-time synchronization for war room updates across all tabs and panels
+  useEffect(() => {
+    const handleChanged = () => {
+      void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
+    };
+    window.addEventListener('war-rooms-changed', handleChanged);
+    return () => window.removeEventListener('war-rooms-changed', handleChanged);
+  }, [queryClient]);
 
   const [connections, setConnections] = useState(false);
   const [warRoomsOpen, setWarRoomsOpen] = useState(false);

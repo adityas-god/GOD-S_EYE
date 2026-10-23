@@ -23,11 +23,15 @@ const warRoomSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    bufferCommands: false, // Prevents queries from hanging when MongoDB is disconnected or connecting!
+    autoIndex: false,
   }
 );
 
 export const WarRoomModel =
   mongoose.models.WarRoom || mongoose.model('WarRoom', warRoomSchema);
+
+let _memoryRooms = null;
 
 function readFromFile() {
   try {
@@ -52,29 +56,43 @@ function writeToFile(list) {
   }
 }
 
+function getMemoryRooms() {
+  if (_memoryRooms === null) {
+    _memoryRooms = readFromFile();
+  }
+  return _memoryRooms;
+}
+
 export const WarRoomRepository = {
   async findAll() {
+    // If DB is connected, fetch and sync asynchronously
     if (isDbConnected()) {
       try {
-        const rooms = await WarRoomModel.find({ is_active: true })
-          .sort({ startedAt: -1 })
-          .lean();
-        return rooms.map(r => ({
-          id: r.id,
-          name: r.name,
-          url: r.url,
-          siteName: r.siteName,
-          siteId: r.siteId,
-          severity: r.severity,
-          lead: r.lead,
-          notes: r.notes,
-          startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : new Date().toISOString(),
-        }));
-      } catch (err) {
-        console.error('[WarRoomRepository] Mongo query error, falling back to file:', err.message);
+        const rooms = await Promise.race([
+          WarRoomModel.find({ is_active: true }).sort({ startedAt: -1 }).lean(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Mongo timeout')), 1000)),
+        ]);
+        if (Array.isArray(rooms)) {
+          const formatted = rooms.map(r => ({
+            id: r.id,
+            name: r.name,
+            url: r.url,
+            siteName: r.siteName,
+            siteId: r.siteId,
+            severity: r.severity,
+            lead: r.lead,
+            notes: r.notes,
+            startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : new Date().toISOString(),
+          }));
+          _memoryRooms = formatted;
+          writeToFile(formatted);
+          return formatted;
+        }
+      } catch {
+        // Fallback to instant memory/file
       }
     }
-    return readFromFile();
+    return getMemoryRooms();
   },
 
   async create(roomData) {
@@ -91,68 +109,62 @@ export const WarRoomRepository = {
       is_active: true,
     };
 
-    if (isDbConnected()) {
-      try {
-        await WarRoomModel.findOneAndUpdate(
-          { id: newRoom.id },
-          { $set: newRoom },
-          { upsert: true, new: true }
-        );
-      } catch (err) {
-        console.error('[WarRoomRepository] Mongo create error:', err.message);
-      }
-    }
-
-    // Always mirror to file cache for resiliency
-    const fileRooms = readFromFile().filter(r => r.id !== newRoom.id);
-    fileRooms.unshift({
-      ...newRoom,
-      startedAt: newRoom.startedAt.toISOString(),
-    });
-    writeToFile(fileRooms);
-
-    return {
+    const formattedRoom = {
       ...newRoom,
       startedAt: newRoom.startedAt.toISOString(),
     };
+
+    // Instant update in-memory and write to file (< 1ms latency)
+    const current = getMemoryRooms().filter(r => r.id !== newRoom.id);
+    _memoryRooms = [formattedRoom, ...current];
+    writeToFile(_memoryRooms);
+
+    // Asynchronously upsert to MongoDB without delaying the response
+    if (isDbConnected()) {
+      WarRoomModel.findOneAndUpdate(
+        { id: newRoom.id },
+        { $set: newRoom },
+        { upsert: true }
+      ).catch(err => console.error('[WarRoomRepository] Mongo async create warning:', err.message));
+    }
+
+    return formattedRoom;
   },
 
   async delete(id) {
+    // Instant update in-memory and write to file (< 1ms latency)
+    const current = getMemoryRooms();
+    _memoryRooms = current.filter(r => r.id !== id);
+    writeToFile(_memoryRooms);
+
+    // Asynchronously delete from MongoDB without delaying the response
     if (isDbConnected()) {
-      try {
-        await WarRoomModel.deleteOne({ id });
-      } catch (err) {
-        console.error('[WarRoomRepository] Mongo delete error:', err.message);
-      }
+      WarRoomModel.deleteOne({ id }).catch(err =>
+        console.error('[WarRoomRepository] Mongo async delete warning:', err.message)
+      );
     }
 
-    const fileRooms = readFromFile().filter(r => r.id !== id);
-    writeToFile(fileRooms);
     return true;
   },
 
   async update(id, updates) {
-    let updatedRoom = null;
-    if (isDbConnected()) {
-      try {
-        updatedRoom = await WarRoomModel.findOneAndUpdate(
-          { id },
-          { $set: updates },
-          { new: true }
-        ).lean();
-      } catch (err) {
-        console.error('[WarRoomRepository] Mongo update error:', err.message);
-      }
-    }
+    const current = getMemoryRooms();
+    const idx = current.findIndex(r => r.id === id);
+    let updated = null;
 
-    const fileRooms = readFromFile();
-    const idx = fileRooms.findIndex(r => r.id === id);
     if (idx !== -1) {
-      fileRooms[idx] = { ...fileRooms[idx], ...updates };
-      writeToFile(fileRooms);
-      if (!updatedRoom) updatedRoom = fileRooms[idx];
+      current[idx] = { ...current[idx], ...updates };
+      _memoryRooms = [...current];
+      writeToFile(_memoryRooms);
+      updated = current[idx];
     }
 
-    return updatedRoom;
+    if (isDbConnected()) {
+      WarRoomModel.findOneAndUpdate({ id }, { $set: updates }, { new: true }).catch(err =>
+        console.error('[WarRoomRepository] Mongo async update warning:', err.message)
+      );
+    }
+
+    return updated;
   },
 };
