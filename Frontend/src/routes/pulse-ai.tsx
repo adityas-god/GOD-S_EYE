@@ -121,10 +121,16 @@ function SitepulseLogo({
 
 const SAMPLE_PROMPTS = [
   {
-    icon: Flame,
-    title: 'Cross-Site Incident Benchmark',
-    desc: 'Compare Sev 1 & Sev 2 incident trends between Sams Club ATL and Walmart Mexico.',
-    prompt: 'Compare Sev 1 and Sev 2 incident counts and downtime between Sams Club ATL and Walmart Mexico for the last 30 days. Highlight key operational deltas.',
+    icon: Activity,
+    title: '24 Hours Alerts Report',
+    desc: 'Fleet-wide live alerts report with priority breakdown (P1-P5) & SLA breach tracking.',
+    prompt: '24 hours alerts report',
+  },
+  {
+    icon: BarChart2,
+    title: 'Fleet-Wide Operations Brief',
+    desc: 'Live summary of open cases, severity distribution, and down sites.',
+    prompt: 'Give me a comprehensive fleet-wide operations summary right now: total open cases, urgent incidents, down sites, and top sites needing attention.',
   },
   {
     icon: ShieldAlert,
@@ -139,10 +145,10 @@ const SAMPLE_PROMPTS = [
     prompt: 'Analyze alert telemetry for GXO-H&M Prod over the past 7 days. What are the top recurring failure signatures and MTTR?',
   },
   {
-    icon: BarChart2,
-    title: 'Fleet-Wide Operations Brief',
-    desc: 'Live summary of open cases, severity distribution, and down sites.',
-    prompt: 'Give me a comprehensive fleet-wide operations summary right now: total open cases, urgent incidents, down sites, and top sites needing attention.',
+    icon: Flame,
+    title: 'Cross-Site Incident Benchmark',
+    desc: 'Compare Sev 1 & Sev 2 incident trends between Sams Club ATL and Walmart Mexico.',
+    prompt: 'Compare Sev 1 and Sev 2 incident counts and downtime between Sams Club ATL and Walmart Mexico for the last 30 days. Highlight key operational deltas.',
   },
 ];
 
@@ -982,9 +988,9 @@ export function PulseAIPage() {
           srcDoc={safeHtml}
           style={{
             width: '100%',
-            height: 520,
+            height: 660,
             border: 'none',
-            background: '#0e1117',
+            background: '#090c12',
             display: 'block',
           }}
           sandbox="allow-scripts allow-modals"
@@ -994,9 +1000,21 @@ export function PulseAIPage() {
     );
   };
 
+  // Sanitizes any leaked chain-of-thought or model monologue
+  const cleanThinkingContent = (text: string): string => {
+    if (!text) return '';
+    let cleaned = text;
+    // Strip <think>...</think>, <thought>...</thought>, etc.
+    cleaned = cleaned.replace(/<(think|thought|reasoning|reflection)>[\s\S]*?<\/\1>/gi, '');
+    cleaned = cleaned.replace(/<(think|thought|reasoning|reflection)>[\s\S]*$/gi, '');
+    // Strip prompt regurgitation / internal planning monologues
+    cleaned = cleaned.replace(/(?:^|\n)(?:The user is asking for|According to the instructions|Let me call the|I need to call the)[\s\S]*?(?=\n\n|```|<div|$)/gi, '');
+    return cleaned.trim();
+  };
+
   // Render Formatted Message Markdown and Interactive Artifacts
   const renderFormattedContent = (content: string) => {
-    let sanitizedContent = content || '';
+    let sanitizedContent = cleanThinkingContent(content || '');
     // Auto-close any unclosed code block (e.g. from stream or token limit) so artifacts always render
     const backtickCount = (sanitizedContent.match(/```/g) || []).length;
     if (backtickCount % 2 !== 0) {
@@ -1672,6 +1690,56 @@ export function PulseAIPage() {
                         </button>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Suggestion Prompts Grid */}
+                  <div style={{
+                    marginTop: 22,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+                    gap: 10,
+                    textAlign: 'left',
+                    maxWidth: 720,
+                    margin: '22px auto 0',
+                  }}>
+                    {SAMPLE_PROMPTS.map((sample, idx) => {
+                      const Icon = sample.icon;
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => handleSendMessage(sample.prompt)}
+                          style={{
+                            padding: '12px 14px',
+                            borderRadius: 10,
+                            background: 'var(--card)',
+                            border: '1px solid var(--border)',
+                            cursor: 'pointer',
+                            transition: 'all 0.18s ease',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 5,
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.borderColor = 'rgba(249, 115, 22, 0.45)';
+                            e.currentTarget.style.transform = 'translateY(-2px)';
+                            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.2)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.borderColor = 'var(--border)';
+                            e.currentTarget.style.transform = 'none';
+                            e.currentTarget.style.boxShadow = 'none';
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 650, color: 'var(--foreground)' }}>
+                            <Icon style={{ width: 14, height: 14, color: 'var(--primary)', flexShrink: 0 }} />
+                            <span>{sample.title}</span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: 11, color: 'var(--muted-foreground)', lineHeight: 1.4 }}>
+                            {sample.desc}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
