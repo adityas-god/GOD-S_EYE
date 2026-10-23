@@ -345,6 +345,7 @@ select option { background: var(--card); }
 .case-status-badge.status-new { border-color: oklch(0.66 0.22 34 / 0.4); background: var(--orange-surface); color: var(--soft-orange); }
 .case-status-badge.status-progress { border-color: oklch(0.73 0.085 232 / 0.4); background: var(--blue-surface); color: var(--blue); }
 .case-status-badge.status-investigating { border-color: #a855f7; background: #3b0764; color: #d8b4fe; }
+.case-status-badge.status-hold { border-color: rgba(245, 158, 11, 0.45); background: rgba(180, 83, 9, 0.2); color: #fbbf24; }
 .case-status-badge.status-other { border-color: var(--border); background: var(--muted); color: var(--foreground); }
 
 /* Column Badge Styles */
@@ -414,6 +415,13 @@ select option { background: var(--card); }
   border-color: #d8b4fe;
   background: #f3e8ff;
   color: #7e22ce;
+}
+
+:root.light .case-status-badge.status-hold,
+[data-theme="light"] .case-status-badge.status-hold {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: #fef3c7;
+  color: #b45309;
 }
 
 .case-product-pill { font-size: 9px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); font-weight: 500; font-family: var(--font-mono); width: fit-content; white-space: nowrap; }
@@ -1540,31 +1548,8 @@ select option { background: var(--card); }
   opacity: 0.9 !important;
 }
 
-/* Bringbold Nineties Retro Display Font */
-@font-face {
-  font-family: "Bringbold Nineties Demo";
-  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.eot");
-  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.eot?#iefix") format("embedded-opentype"),
-       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff2") format("woff2"),
-       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff") format("woff"),
-       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.ttf") format("truetype");
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Bringbold Nineties";
-  src: url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff2") format("woff2"),
-       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.woff") format("woff"),
-       url("https://db.onlinewebfonts.com/t/0d0217928633feb16d61de13f06b411d.ttf") format("truetype");
-  font-weight: normal;
-  font-style: normal;
-  font-display: swap;
-}
-
 .pulse-ai-bonjour-title {
-  font-family: "Bringbold Nineties Demo", "Bringbold Nineties", "Fraunces", "DM Serif Display", serif;
+  font-family: "Fraunces", "DM Serif Display", serif;
   font-style: italic;
   font-weight: 700;
   letter-spacing: -0.015em;

@@ -2292,37 +2292,30 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
   try {
     const url = forceRefresh ? '/api/cases/overview?refresh=true' : '/api/cases/overview';
     const res = await fetch(url, {
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(60000),
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data && data.success) {
-        // Merge with empty site stats so every known site has an initialized object
-        const mergedStats = { ...buildEmptySiteStats(), ...(data.siteStats || {}) };
-        return {
-          totalLiveCases: data.totalLiveCases ?? (data.cases ? data.cases.length : 0),
-          totalLiveAlerts: data.totalLiveAlerts ?? (data.alerts ? data.alerts.length : 0),
-          cases: (data.cases || []) as SFCase[],
-          alerts: (data.alerts || []) as SFCase[],
-          closedAlerts: (data.closedAlerts || []) as SFCase[],
-          siteStats: mergedStats,
-          timestamp: data.timestamp || new Date().toISOString(),
-        };
-      }
+    if (!res.ok) {
+      throw new Error(`Failed to fetch live cases overview (HTTP ${res.status})`);
     }
+    const data = await res.json();
+    if (!data || !data.success) {
+      throw new Error('Invalid response from /api/cases/overview');
+    }
+    // Merge with empty site stats so every known site has an initialized object
+    const mergedStats = { ...buildEmptySiteStats(), ...(data.siteStats || {}) };
+    return {
+      totalLiveCases: data.totalLiveCases ?? (data.cases ? data.cases.length : 0),
+      totalLiveAlerts: data.totalLiveAlerts ?? (data.alerts ? data.alerts.length : 0),
+      cases: (data.cases || []) as SFCase[],
+      alerts: (data.alerts || []) as SFCase[],
+      closedAlerts: (data.closedAlerts || []) as SFCase[],
+      siteStats: mergedStats,
+      timestamp: data.timestamp || new Date().toISOString(),
+    };
   } catch (err) {
-    console.warn('[Salesforce client] Notice querying /api/cases/overview, using fallback:', (err as Error).message);
+    console.warn('[Salesforce client] Notice querying /api/cases/overview:', (err as Error).message);
+    throw err;
   }
-
-  return {
-    totalLiveCases: 0,
-    totalLiveAlerts: 0,
-    cases: [] as SFCase[],
-    alerts: [] as SFCase[],
-    closedAlerts: [] as SFCase[],
-    siteStats: buildEmptySiteStats(),
-    timestamp: new Date().toISOString(),
-  };
 };
 
 /**
@@ -2361,47 +2354,43 @@ export const sfFetchCasesForSite = async (params: {
     const qs = qParams.toString();
     const queryParam = qs ? `?${qs}` : '';
     const res = await fetch(`/api/cases/site/${encodeURIComponent(siteName)}${queryParam}`, {
-      signal: AbortSignal.timeout(25000),
+      signal: AbortSignal.timeout(60000),
     });
-    if (res.ok) {
-      const json = await res.json();
-      if (json && json.success && Array.isArray(json.cases)) {
-        const strictlyFiltered = (json.cases as SFCase[]).filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
-        let alertsFiltered = Array.isArray(json.alerts) ? (json.alerts as SFCase[]) : [];
-        const closedFiltered = Array.isArray(json.closed) ? (json.closed as SFCase[]) : [];
+    if (!res.ok) {
+      throw new Error(`Failed to fetch cases for ${siteName} (HTTP ${res.status})`);
+    }
+    const json = await res.json();
+    if (!json || !json.success || !Array.isArray(json.cases)) {
+      throw new Error(`Invalid response format from /api/cases/site/${siteName}`);
+    }
 
-        // Resilient fallback: if alerts array is empty, search closed and cases lists
-        if (alertsFiltered.length === 0) {
-          if (closedFiltered.length > 0 && closedFiltered.some(isAlertCase)) {
-            alertsFiltered = closedFiltered.filter(isAlertCase);
-          } else if ((json.cases as SFCase[]).some(isAlertForShiftBucket)) {
-            alertsFiltered = (json.cases as SFCase[]).filter(isAlertForShiftBucket);
-          }
-        }
+    const strictlyFiltered = (json.cases as SFCase[]).filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    let alertsFiltered = Array.isArray(json.alerts) ? (json.alerts as SFCase[]) : [];
+    const closedFiltered = Array.isArray(json.closed) ? (json.closed as SFCase[]) : [];
 
-        return {
-          totalSize: strictlyFiltered.length,
-          done: true,
-          records: strictlyFiltered,
-          alerts: alertsFiltered,
-          closed: closedFiltered,
-          product_lines: (json.product_lines as string[]) || (json.site?.product_lines as string[]) || [],
-          product_line: (json.product_line as string) || (json.site?.product_line as string) || null,
-          site: json.site || null,
-        };
+    // Resilient fallback: if alerts array is empty, search closed and cases lists
+    if (alertsFiltered.length === 0) {
+      if (closedFiltered.length > 0 && closedFiltered.some(isAlertCase)) {
+        alertsFiltered = closedFiltered.filter(isAlertCase);
+      } else if ((json.cases as SFCase[]).some(isAlertForShiftBucket)) {
+        alertsFiltered = (json.cases as SFCase[]).filter(isAlertForShiftBucket);
       }
     }
+
+    return {
+      totalSize: strictlyFiltered.length,
+      done: true,
+      records: strictlyFiltered,
+      alerts: alertsFiltered,
+      closed: closedFiltered,
+      product_lines: (json.product_lines as string[]) || (json.site?.product_lines as string[]) || [],
+      product_line: (json.product_line as string) || (json.site?.product_line as string) || null,
+      site: json.site || null,
+    };
   } catch (err) {
     console.warn(`[Salesforce client] Notice querying site cases for ${siteName}:`, (err as Error).message);
+    throw err;
   }
-
-  return {
-    totalSize: 0,
-    done: true,
-    records: [] as SFCase[],
-    alerts: [] as SFCase[],
-    closed: [] as SFCase[],
-  };
 };
 
 /** Discover live sites & accounts from GreyOrange Salesforce org database */

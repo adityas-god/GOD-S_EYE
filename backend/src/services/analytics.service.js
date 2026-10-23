@@ -4,6 +4,7 @@ import {
   findBestSiteForCase,
   isAlertCase,
   isDirTicket,
+  isChangeRequestTicket,
   isImTicket,
   isIncidentTicket,
   getTicketEndTime,
@@ -433,6 +434,7 @@ async function _executeCasesAnalytics(tfConfig, cacheKey) {
     if (!c) return false;
     if (isAlertCase(c)) return false;
     if (isDirTicket(c)) return false;
+    if (isChangeRequestTicket(c)) return false;
     if (isImTicket(c)) return false;
     if (isPmTicket(c)) return false;
     return isIncidentTicket(c);

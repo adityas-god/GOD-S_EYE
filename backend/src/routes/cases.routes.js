@@ -7,6 +7,7 @@ import {
   fetchRedZoneSitesOverview,
   clearRedZoneSiteCache,
   isLiveOpenCase,
+  isChangeRequestTicket,
   hasTicketEndTime,
   getTicketEndTime,
   executeSOQL,
@@ -195,7 +196,7 @@ router.get('/', async (req, res) => {
     }
 
     const openCases = await CaseRepository.findAllOpenCases();
-    const strictlyFiltered = openCases.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    const strictlyFiltered = openCases.filter(c => isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
     res.json({
       success: true,
       count: strictlyFiltered.length,

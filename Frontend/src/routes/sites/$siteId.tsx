@@ -39,6 +39,7 @@ import {
   detectSeverity,
   isImTicket,
   isDirTicket,
+  isChangeRequestTicket,
   isIncidentTicket,
   hasTicketEndTime,
   isLiveOpenCase,
@@ -233,23 +234,62 @@ function SiteDetail() {
     queryKey: ['site-cases', site?.id, site?.name, site?.salesforce_account_id, siteTimeRange, siteTimeRange === 'custom' ? appliedCustomRange : null],
     queryFn: async () => {
       if (!site) return { records: [], alerts: [], totalSize: 0, done: true };
-      return sfFetchCasesForSite({
-        data: {
-          siteName: site.name,
-          accountId: site.salesforce_account_id,
-        },
-        range: siteTimeRange,
-        startDate: appliedCustomRange.startDate,
-        endDate: appliedCustomRange.endDate,
-        startTime: appliedCustomRange.startTime,
-        endTime: appliedCustomRange.endTime,
-      });
+      try {
+        const result = await sfFetchCasesForSite({
+          data: {
+            siteName: site.name,
+            accountId: site.salesforce_account_id,
+          },
+          range: siteTimeRange,
+          startDate: appliedCustomRange.startDate,
+          endDate: appliedCustomRange.endDate,
+          startTime: appliedCustomRange.startTime,
+          endTime: appliedCustomRange.endTime,
+        });
+
+        // Resilient fallback: if the site-specific query returned 0 records, but overview has open cases for this site,
+        // merge/fallback to overview cases so the panel never wipes off!
+        if ((!result.records || result.records.length === 0) && site?.name) {
+          try {
+            const overview = queryClient.getQueryData<any>(['salesforce-overview']);
+            if (overview && Array.isArray(overview.cases)) {
+              const siteLower = site.name.trim().toLowerCase();
+              const compiled = compileSiteIndex(sites || []);
+              const matchesSite = (item: SFCase) => {
+                const best = findBestSiteForCase(item, compiled);
+                if (best && areSameSite(best, site.name)) return true;
+                const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || '').trim().toLowerCase();
+                return loc.includes(siteLower) || siteLower.includes(loc);
+              };
+              const matchedCases = (overview.cases as SFCase[]).filter(matchesSite);
+              const matchedAlerts = Array.isArray(overview.alerts) ? (overview.alerts as SFCase[]) : [];
+              if (matchedCases.length > 0 || matchedAlerts.length > 0) {
+                return {
+                  ...result,
+                  totalSize: matchedCases.length,
+                  records: matchedCases,
+                  alerts: result.alerts && result.alerts.length > 0 ? result.alerts : matchedAlerts,
+                };
+              }
+            }
+          } catch {}
+        }
+
+        return result;
+      } catch (err) {
+        // If query failed (e.g. timeout or server restart), preserve existing query data if available
+        const prev = queryClient.getQueryData<any>(['site-cases', site?.id, site?.name, site?.salesforce_account_id, siteTimeRange, siteTimeRange === 'custom' ? appliedCustomRange : null]);
+        if (prev && prev.records && prev.records.length > 0) {
+          return prev;
+        }
+        throw err;
+      }
     },
     staleTime: 60_000,
     gcTime: 300_000,
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
     placeholderData: (prev) => {
-      if (prev) return prev;
+      if (prev && (prev as any).records && (prev as any).records.length > 0) return prev;
       try {
         const overview = queryClient.getQueryData<any>(['salesforce-overview']);
         if (overview && Array.isArray(overview.cases) && site?.name) {
@@ -395,9 +435,9 @@ function SiteDetail() {
     };
   }, [timeWindow]);
 
-  // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts)
+  // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts, not change requests)
   const allCases = useMemo(() => {
-    const list = rawCases.filter(c => !isAlertCase(c) && isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    const list = rawCases.filter(c => !isAlertCase(c) && isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
     return list.filter(matchesTimeWindow);
   }, [rawCases, matchesTimeWindow]);
 
@@ -1752,6 +1792,8 @@ function SiteDetail() {
                     ? 'status-progress'
                     : stLower.includes('investigat')
                     ? 'status-investigating'
+                    : stLower.includes('hold')
+                    ? 'status-hold'
                     : 'status-other';
 
                   const isAlert = activeBucket === 'alerts' || activeBucket === 'closed' || activeBucket === 'analytics' || isAlertCase(c);
@@ -2158,7 +2200,7 @@ function SiteDetail() {
                   {caseSearch || statusFilter !== 'All' || severityFilter !== 'All' || productFilter !== 'All' || categoryFilter !== 'All'
                     ? 'Try adjusting your search query or column filters.'
                     : activeBucket === 'cases'
-                    ? `All support tickets for ${site.name} are resolved. Excludes alerts and on-hold cases.`
+                    ? `All support tickets for ${site.name} are resolved. Excludes alerts.`
                     : activeBucket === 'analytics'
                     ? `No alert records were logged for ${site.name} within this time window.`
                     : `All alerts for ${site.name} are clear.`}

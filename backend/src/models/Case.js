@@ -54,16 +54,23 @@ export const CaseRepository = {
   },
 
   /**
-   * Find open cases that are NOT on hold for a specific site or account.
+   * Find open cases (including on-hold without end time) for a specific site or account.
    */
   async findOpenCasesForSite({ siteName, accountId, siteAliases = [] }) {
-    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold', 'Resolved', 'resolved'];
+    const notAllowedStatuses = [
+      'Closed', 'closed', 'Resolved', 'resolved',
+      'Pending Customer Approval', 'pending customer approval',
+      'Pending Deployment', 'pending deployment',
+      'Post Deployment Monitoring', 'post deployment monitoring',
+      'Change Approved', 'change approved',
+    ];
 
     if (isDbConnected()) {
       const filter = {
         status: { $nin: notAllowedStatuses },
         closed_date: { $in: [null, undefined] },
         end_time: { $in: [null, undefined] },
+        type: { $nin: ['Change Request', 'change request', 'Change', 'change', 'CR', 'cr'] },
         $or: [],
       };
 
@@ -100,6 +107,12 @@ export const CaseRepository = {
 
     for (const c of inMemoryCases.values()) {
       if (notAllowedStatuses.includes(c.status)) continue;
+      const t = String(c.type || c.Type || c.raw_type || c.rawType || '').toLowerCase();
+      if (t.includes('change') || t === 'cr' || t === 'rfc') continue;
+      const rt = String(c.record_type || c.Record_Type__c || c.Case_Record_Type__c || c.RecordType?.Name || '').toLowerCase();
+      if (rt.includes('change') || rt === 'cr' || rt === 'rfc') continue;
+      const ct = String(c.Change_Type__c || c.change_type || '').toLowerCase();
+      if (ct && ct !== 'null' && ct !== 'none' && ct !== 'undefined') continue;
       // Exclude tickets with end time, closed date, or downtime > 0
       const hasEnd =
         c.end_time ||
@@ -146,12 +159,19 @@ export const CaseRepository = {
   },
 
   async findAllOpenCases() {
-    const notAllowedStatuses = ['Closed', 'On Hold', 'closed', 'on hold', 'Resolved', 'resolved'];
+    const notAllowedStatuses = [
+      'Closed', 'closed', 'Resolved', 'resolved',
+      'Pending Customer Approval', 'pending customer approval',
+      'Pending Deployment', 'pending deployment',
+      'Post Deployment Monitoring', 'post deployment monitoring',
+      'Change Approved', 'change approved',
+    ];
     if (isDbConnected()) {
       return CaseModel.find({
         status: { $nin: notAllowedStatuses },
         closed_date: { $in: [null, undefined] },
         end_time: { $in: [null, undefined] },
+        type: { $nin: ['Change Request', 'change request', 'Change', 'change', 'CR', 'cr'] },
       })
         .sort({ last_modified_date: -1 })
         .limit(100)
@@ -160,6 +180,12 @@ export const CaseRepository = {
     return Array.from(inMemoryCases.values())
       .filter(c => {
         if (notAllowedStatuses.includes(c.status)) return false;
+        const t = String(c.type || c.Type || c.raw_type || c.rawType || '').toLowerCase();
+        if (t.includes('change') || t === 'cr' || t === 'rfc') return false;
+        const rt = String(c.record_type || c.Record_Type__c || c.Case_Record_Type__c || c.RecordType?.Name || '').toLowerCase();
+        if (rt.includes('change') || rt === 'cr' || rt === 'rfc') return false;
+        const ct = String(c.Change_Type__c || c.change_type || '').toLowerCase();
+        if (ct && ct !== 'null' && ct !== 'none' && ct !== 'undefined') return false;
         const hasEnd =
           c.end_time ||
           c.closed_date ||

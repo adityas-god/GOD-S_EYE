@@ -40,6 +40,27 @@ export function getSfConfig() {
 
 export const DEFAULT_ALL_SITE_NAMES = defaultSites.map(s => s.name);
 
+const candidateSitePaths = [
+  path.resolve(process.cwd(), 'src/data/sites.json'),
+  path.resolve(__dirname, '../data/sites.json'),
+  path.resolve(process.cwd(), '../Frontend/src/data/sites.json'),
+];
+
+export function loadAllKnownSites() {
+  for (const p of candidateSitePaths) {
+    if (fs.existsSync(p)) {
+      try {
+        const raw = fs.readFileSync(p, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      } catch {}
+    }
+  }
+  return defaultSites;
+}
+
 let tokenCache = null;
 let _overviewCache = { data: null, cachedAt: 0 };
 const _siteCasesCache = new Map();
@@ -2278,7 +2299,7 @@ export async function getSalesforceToken() {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
-    signal: AbortSignal.timeout(12000),
+    signal: AbortSignal.timeout(25000),
   });
 
   if (!response.ok) {
@@ -2308,7 +2329,7 @@ export async function executeSOQL(soql, { maxRecords = 12000, paginate = true } 
       Authorization: `Bearer ${access_token}`,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(18000),
+    signal: AbortSignal.timeout(30000),
   });
 
   if (!response.ok) {
@@ -2332,7 +2353,7 @@ export async function executeSOQL(soql, { maxRecords = 12000, paginate = true } 
           Authorization: `Bearer ${access_token}`,
           'Content-Type': 'application/json',
         },
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(20000),
       });
       if (!nextRes.ok) break;
       const nextData = await nextRes.json();
@@ -2677,7 +2698,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
-      'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c, RecordType.Name',
+      'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND Status != 'Pending Customer Approval' AND Status != 'Pending Deployment' AND Status != 'Post Deployment Monitoring' AND (Type = null OR (Type != 'Alert' AND Type != 'Problem' AND Type != 'Change Request' AND Type != 'Change'))) OR ClosedDate = TODAY)",
       'ORDER BY LastModifiedDate DESC LIMIT 800',
@@ -2838,6 +2859,9 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     } catch {
       allSites = [];
     }
+    if (!allSites || allSites.length === 0) {
+      allSites = loadAllKnownSites();
+    }
 
     let targetSite = null;
     if (siteId) {
@@ -2845,6 +2869,14 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     }
     if (!targetSite && siteName) {
       try { targetSite = await SiteRepository.findByName(siteName); } catch {}
+    }
+    if (!targetSite && (siteName || siteId)) {
+      const lookup = cleanText(siteName || siteId);
+      targetSite = (allSites || []).find(s => {
+        const sClean = cleanText(s.name || '');
+        const idClean = cleanText(s.id || s._id || '');
+        return sClean === lookup || idClean === lookup || areSameSite(s.name, siteName);
+      }) || null;
     }
 
     const effectiveSiteName = targetSite?.name || siteName || '';
@@ -2855,32 +2887,44 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     const compiledSites = compileSiteIndex(allSites.length > 0 ? allSites : DEFAULT_ALL_SITE_NAMES);
     const targetLower = cleanText(effectiveSiteName);
 
-    let matched = liveCases.filter(c => {
+    const isMatchingSite = (c) => {
+      if (!c) return false;
       const best = findBestSiteForCase(c, compiledSites);
-      return best && areSameSite(best, effectiveSiteName, compiledSites);
-    });
-    let matchedAlerts = liveAlerts.filter(a => {
-      const best = findBestSiteForCase(a, compiledSites);
-      return best && areSameSite(best, effectiveSiteName, compiledSites);
-    });
-    let matchedClosed = liveClosed.filter(c => {
-      const best = findBestSiteForCase(c, compiledSites);
-      return best && areSameSite(best, effectiveSiteName, compiledSites);
-    });
+      if (best && areSameSite(best, effectiveSiteName, compiledSites)) return true;
+
+      const cAccId = c.AccountId || c.account_id || null;
+      if (effectiveAccountId && cAccId && cAccId === effectiveAccountId) {
+        return true;
+      }
+
+      if (targetLower) {
+        const loc = cleanText(
+          String(c.Customer_Location__c || c.customer_location || c.Snow_Sitename__c || c.snow_sitename || c.Site_Name_Customer_Input__c || c.site_name_customer_input || c.Account_Name__c || c.account_name || (c.Account && c.Account.Name) || '')
+        );
+        if (loc && (loc.includes(targetLower) || targetLower.includes(loc))) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    let matched = liveCases.filter(isMatchingSite);
+    let matchedAlerts = liveAlerts.filter(isMatchingSite);
+    let matchedClosed = liveClosed.filter(isMatchingSite);
 
     // Query Salesforce for site-specific cases to guarantee complete live accuracy (e.g. newly created cases, specific accounts)
     if (effectiveSiteName) {
     try {
       const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
       if (siteWhere) {
-        let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled')";
-        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:1 OR CreatedDate = TODAY)";
-        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:2 OR CreatedDate = TODAY)";
-        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:7 OR CreatedDate = TODAY)";
-        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:15 OR CreatedDate = TODAY)";
-        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:30 OR CreatedDate = TODAY)";
-        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:60 OR CreatedDate = TODAY)";
-        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled') OR CreatedDate >= LAST_N_DAYS:90 OR CreatedDate = TODAY)";
+        let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review')";
+        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:1 OR CreatedDate = TODAY)";
+        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:2 OR CreatedDate = TODAY)";
+        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:7 OR CreatedDate = TODAY)";
+        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:15 OR CreatedDate = TODAY)";
+        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:30 OR CreatedDate = TODAY)";
+        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:60 OR CreatedDate = TODAY)";
+        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:90 OR CreatedDate = TODAY)";
         else if (normRange === 'custom' && startDate && endDate) {
           const sIso = new Date(startDate).toISOString();
           const eIso = new Date(endDate).toISOString();
@@ -2891,7 +2935,7 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
           'Type, Product_Type__c, CreatedDate, LastModifiedDate,',
           'ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
           'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
-          'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c, RecordType.Name',
+          'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
           'FROM Case',
           `WHERE ${dateCondition} AND (Type = null OR (Type != 'Alert' AND Type != 'Problem' AND Type != 'Change Request' AND Type != 'Change')) AND Status NOT IN ('Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review')`,
           `AND ${siteWhere}`,
@@ -2903,8 +2947,7 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
         for (const ec of extraCases) {
           if (ec && ec.Id && !seenIds.has(ec.Id)) {
             const mapped = mapRecord(ec);
-            const best = findBestSiteForCase(mapped, compiledSites);
-            if (!best || areSameSite(best, effectiveSiteName, compiledSites)) {
+            if (isMatchingSite(mapped)) {
               seenIds.add(ec.Id);
               matched.push(mapped);
             }
@@ -2913,6 +2956,13 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       }
     } catch (err) {
       console.warn('[fetchOpenCasesForSite] Historical cases query notice:', err.message);
+    }
+
+    if (matched.length === 0 && _backendCasesCache.cases && _backendCasesCache.cases.length > 0) {
+      matched = _backendCasesCache.cases.filter(isMatchingSite);
+    }
+    if (matchedAlerts.length === 0 && _backendCasesCache.alerts && _backendCasesCache.alerts.length > 0) {
+      matchedAlerts = _backendCasesCache.alerts.filter(isMatchingSite);
     }
 
     if (isHistorical) {
@@ -3094,6 +3144,14 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       closed: allMatchedClosed,
       site: targetSite,
     };
+
+    if (casesToStore.length === 0 && _siteCasesCache.has(cacheKey)) {
+      const prevCached = _siteCasesCache.get(cacheKey);
+      if (prevCached?.data?.cases?.length > 0) {
+        result.cases = prevCached.data.cases;
+        result.totalOpenCases = prevCached.data.cases.length;
+      }
+    }
 
     _siteCasesCache.set(cacheKey, {
       data: result,

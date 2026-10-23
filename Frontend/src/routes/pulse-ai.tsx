@@ -1575,7 +1575,7 @@ export function PulseAIPage() {
                     <h1
                       className="pulse-ai-bonjour-title"
                       style={{
-                        fontFamily: '"Bringbold Nineties Demo", "Bringbold Nineties", "Fraunces", "DM Serif Display", serif',
+                        fontFamily: '"Fraunces", "DM Serif Display", serif',
                         fontSize: 38,
                         fontWeight: 700,
                         fontStyle: 'italic',

@@ -44,6 +44,7 @@ import {
   detectSeverity,
   isImTicket,
   isDirTicket,
+  isChangeRequestTicket,
   isIncidentTicket,
   isLiveOpenCase,
   isOpenAlert,
@@ -132,6 +133,7 @@ function Index() {
   } = useQuery({
     queryKey: ['salesforce-overview'],
     queryFn: () => sfFetchLiveCasesOverview(false),
+    placeholderData: (prev) => prev,
     staleTime: 10_000,
     refetchInterval: 30_000, // automatic live background refresh every 30 seconds
     refetchOnWindowFocus: true, // auto-refresh whenever browser tab is focused
@@ -317,6 +319,7 @@ function Index() {
   const openCases = useMemo(() => {
     return (sfOverview?.cases ?? []).filter(c => 
       isLiveOpenCase(c) && 
+      !isChangeRequestTicket(c) &&
       !hasTicketEndTime(c) && 
       !getTicketEndTime(c)
     );
@@ -615,6 +618,8 @@ function Index() {
         ? 'status-progress'
         : stLower.includes('investigat')
         ? 'status-investigating'
+        : stLower.includes('hold')
+        ? 'status-hold'
         : 'status-other';
 
       const isAlert = activeBucket === 'alerts' || isAlertCase(c);
