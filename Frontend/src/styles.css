@@ -351,7 +351,8 @@ select option { background: var(--card); }
 .case-desc-preview { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .case-site-tag { font-size: 10px; color: var(--muted-foreground); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; }
 .case-down-badge { display: inline-flex; align-items: center; font-family: var(--font-mono); font-size: 8.5px; padding: 2px 6px; border-radius: 4px; background: #dc2626; color: #ffffff !important; border: 1px solid #b91c1c; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; box-shadow: none !important; }
-.case-date-cell { font-size: 10px; color: #ffffff; font-family: var(--font-mono); white-space: nowrap; }
+.case-date-cell { font-size: 10px; color: var(--foreground); font-family: var(--font-mono); white-space: nowrap; }
+:root.light .case-date-cell, [data-theme="light"] .case-date-cell { color: var(--foreground); }
 .case-status-badge { padding: 2px 7px; border-radius: 12px; font-size: 9px; font-weight: 500; border: 1px solid var(--border); background: var(--muted); color: var(--foreground); display: inline-flex; align-items: center; justify-content: center; width: fit-content; white-space: nowrap; }
 .case-status-badge.status-new { border-color: oklch(0.66 0.22 34 / 0.4); background: var(--orange-surface); color: var(--soft-orange); }
 .case-status-badge.status-progress { border-color: oklch(0.73 0.085 232 / 0.4); background: var(--blue-surface); color: var(--blue); }

@@ -1899,12 +1899,12 @@ function SiteDetail() {
                           </div>
 
                           {/* Created Time */}
-                          <div className="case-date-cell" style={{ fontSize: 10, color: '#cbd5e1' }}>
+                          <div className="case-date-cell" style={{ fontSize: 10, color: 'var(--foreground)' }}>
                             {formatPreciseTime(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined))}
                           </div>
 
                           {/* Ended Time */}
-                          <div className="case-date-cell" style={{ fontSize: 10, color: alertEndTime ? '#cbd5e1' : '#ef4444' }}>
+                          <div className="case-date-cell" style={{ fontSize: 10, color: alertEndTime ? 'var(--muted-foreground)' : '#ef4444' }}>
                             {alertEndTime ? formatPreciseTime(alertEndTime) : 'Active / Ongoing'}
                           </div>
 
@@ -1999,8 +1999,8 @@ function SiteDetail() {
                             const p = formatDateTimeParts(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
                             return (
                               <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${p.full}`}>
-                                <span style={{ fontSize: 10.5, color: '#f87171', fontWeight: 600 }}>{p.date}</span>
-                                <span style={{ fontSize: 9.5, color: '#fca5a5', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                                <span style={{ fontSize: 10.5, color: '#ef4444', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
                               </div>
                             );
                           })()}
@@ -2063,8 +2063,8 @@ function SiteDetail() {
                             const p = formatDateTimeParts(c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined));
                             return (
                               <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${p.full}`}>
-                                <span style={{ fontSize: 10.5, color: '#cbd5e1', fontWeight: 600 }}>{p.date}</span>
-                                <span style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                                <span style={{ fontSize: 10.5, color: 'var(--foreground)', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
                               </div>
                             );
                           })()}
@@ -2074,8 +2074,8 @@ function SiteDetail() {
                             const p = formatDateTimeParts(alertEndTime);
                             return (
                               <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Ended: ${p.full}`}>
-                                <span style={{ fontSize: 10.5, color: '#34d399', fontWeight: 600 }}>{p.date}</span>
-                                <span style={{ fontSize: 9.5, color: '#6ee7b7', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                                <span style={{ fontSize: 10.5, color: '#10b981', fontWeight: 600 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
                               </div>
                             );
                           })()}
@@ -2192,8 +2192,8 @@ function SiteDetail() {
                                 style={{ display: 'flex', flexDirection: 'column', gap: 1 }}
                                 title={`Created: ${p.full}`}
                               >
-                                <span style={{ color: '#ffffff', fontWeight: 600, fontSize: 10.5 }}>{p.date}</span>
-                                <span style={{ fontSize: 9.5, color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
+                                <span style={{ color: 'var(--foreground)', fontWeight: 600, fontSize: 10.5 }}>{p.date}</span>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>{p.time}</span>
                               </div>
                             );
                           })()}

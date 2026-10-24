@@ -1804,28 +1804,28 @@ function Index() {
                           {/* Date Cells: Created Date & Time displayed prominently in all views */}
                           {activeBucket === 'alerts' ? (
                             <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${createdParts.full}`}>
-                              <span style={{ fontSize: 10.5, color: '#f87171', fontWeight: 600 }}>
+                              <span style={{ fontSize: 10.5, color: '#ef4444', fontWeight: 600 }}>
                                 {createdParts.date}
                               </span>
-                              <span style={{ fontSize: 9.5, color: '#fca5a5', fontFamily: 'var(--font-mono)' }}>
+                              <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                 {createdParts.time}
                               </span>
                             </div>
                           ) : activeBucket === 'closed' ? (
                             <>
                               <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created (Start): ${createdParts.full}`}>
-                                <span style={{ fontSize: 10.5, color: '#cbd5e1', fontWeight: 600 }}>
+                                <span style={{ fontSize: 10.5, color: 'var(--foreground)', fontWeight: 600 }}>
                                   {createdParts.date}
                                 </span>
-                                <span style={{ fontSize: 9.5, color: '#94a3b8', fontFamily: 'var(--font-mono)' }}>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                   {createdParts.time}
                                 </span>
                               </div>
                               <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Ended: ${endParts.full}`}>
-                                <span style={{ fontSize: 10.5, color: '#34d399', fontWeight: 600 }}>
+                                <span style={{ fontSize: 10.5, color: '#10b981', fontWeight: 600 }}>
                                   {endParts.date}
                                 </span>
-                                <span style={{ fontSize: 9.5, color: '#6ee7b7', fontFamily: 'var(--font-mono)' }}>
+                                <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                   {endParts.time}
                                 </span>
                               </div>
@@ -1835,7 +1835,7 @@ function Index() {
                                     fontFamily: 'var(--font-mono)',
                                     fontSize: 10,
                                     fontWeight: 600,
-                                    color: '#34d399',
+                                    color: '#10b981',
                                     background: 'rgba(16, 185, 129, 0.12)',
                                     border: '1px solid rgba(16, 185, 129, 0.25)',
                                     padding: '2px 6px',
@@ -1852,10 +1852,10 @@ function Index() {
                             </>
                           ) : (
                             <div className="case-date-cell" style={{ display: 'flex', flexDirection: 'column', gap: 1 }} title={`Created: ${createdParts.full}`}>
-                              <span style={{ color: '#ffffff', fontWeight: 600, fontSize: 10.5 }}>
+                              <span style={{ color: 'var(--foreground)', fontWeight: 600, fontSize: 10.5 }}>
                                 {createdParts.date}
                               </span>
-                              <span style={{ fontSize: 9.5, color: '#cbd5e1', fontFamily: 'var(--font-mono)' }}>
+                              <span style={{ fontSize: 9.5, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
                                 {createdParts.time}
                               </span>
                             </div>
