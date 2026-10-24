@@ -37,6 +37,7 @@ import {
   sfFetchRedZoneSites,
   isAlertCase,
   detectSeverity,
+  detectCaseCategory,
   isImTicket,
   isDirTicket,
   isChangeRequestTicket,
@@ -639,14 +640,20 @@ function SiteDetail() {
     return Array.from(set).sort();
   }, [activeItems, siteProductLines]);
 
-  const uniqueCategories = useMemo(() => {
-    const set = new Set<string>();
+  const categoryCounts = useMemo(() => {
+    let sw = 0;
+    let hw = 0;
     for (const c of activeItems) {
-      const cat = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
-      if (cat) set.add(cat);
+      if (detectCaseCategory(c) === 'HARDWARE') {
+        hw++;
+      } else {
+        sw++;
+      }
     }
-    return Array.from(set).sort();
+    return { SOFTWARE: sw, HARDWARE: hw };
   }, [activeItems]);
+
+  const uniqueCategories = ['SOFTWARE', 'HARDWARE'];
 
   const uniqueAssignees = useMemo(() => {
     const set = new Set<string>();
@@ -697,8 +704,8 @@ function SiteDetail() {
         prodStr.toLowerCase() === productFilter.toLowerCase() ||
         (prodStr === '' && siteProductLines.some(p => p.toLowerCase() === productFilter.toLowerCase()));
 
-      const catStr = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
-      const matchCategory = activeBucket !== 'cases' || categoryFilter === 'All' || catStr.toLowerCase() === categoryFilter.toLowerCase();
+      const catStr = detectCaseCategory(c);
+      const matchCategory = activeBucket !== 'cases' || categoryFilter === 'All' || catStr.toUpperCase() === categoryFilter.toUpperCase();
 
       const assigneeStr = getAssigneeDisplayName(c);
       const matchAssignee = assigneeFilter === 'All' || assigneeStr.toLowerCase() === assigneeFilter.toLowerCase();
@@ -1663,11 +1670,12 @@ function SiteDetail() {
                           ✕ Clear Filter (Show All)
                         </option>
                       )}
-                      {uniqueCategories.map(cat => (
-                        <option key={cat} value={cat} style={{ background: '#18191e', color: '#fff' }}>
-                          {cat}
-                        </option>
-                      ))}
+                      <option value="SOFTWARE" style={{ background: '#18191e', color: '#fff' }}>
+                        SOFTWARE ({categoryCounts.SOFTWARE})
+                      </option>
+                      <option value="HARDWARE" style={{ background: '#18191e', color: '#fff' }}>
+                        HARDWARE ({categoryCounts.HARDWARE})
+                      </option>
                     </select>
                   </div>
                 )}
@@ -1835,7 +1843,7 @@ function SiteDetail() {
                     : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
 
                   const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || siteProductType);
-                  const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
+                  const categoryDisplay = detectCaseCategory(c);
                   const assignedDisplay = getAssigneeDisplayName(c);
 
                   return (
@@ -2155,9 +2163,11 @@ function SiteDetail() {
                           </div>
 
                           {/* Category */}
-                          <div className="case-category-cell" title={categoryDisplay}>
-                            {categoryDisplay}
-                          </div>
+                          {activeBucket === 'cases' && (
+                            <div className="case-category-cell" title={categoryDisplay}>
+                              {categoryDisplay}
+                            </div>
+                          )}
 
                           {/* Assigned To */}
                           <div className="case-assignee-cell" title={assignedDisplay}>
@@ -2327,7 +2337,7 @@ function SiteDetail() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Category</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {String(selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support')}
+                  {detectCaseCategory(selectedCase)}
                 </p>
               </div>
               <div>

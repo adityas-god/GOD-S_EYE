@@ -70,12 +70,12 @@ export function DashboardShell({
 
   const queryClient = useQueryClient();
 
-  // Active War Rooms Query (polls every 15s for live updates)
+  // Active War Rooms Query (polls every 30s for live updates)
   const { data: activeWarRooms = [] } = useQuery({
     queryKey: ['active-war-rooms'],
     queryFn: fetchActiveWarRooms,
-    staleTime: 5_000,
-    refetchInterval: 15_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
   const activeWarRoomsCount = activeWarRooms.length;
 

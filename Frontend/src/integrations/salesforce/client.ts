@@ -2245,6 +2245,91 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev2_high' | 'sev3
   return 'sev3';
 }
 
+/**
+ * Accurately categorizes a case into 'SOFTWARE' or 'HARDWARE'.
+ * 
+ * Evaluation Order:
+ * 1. Explicit Category or Sub-category containing hardware or software keywords (ignoring generic 'incident' / 'technical support').
+ * 2. Assignee / Owner / Queue signals (e.g. 'HW Support Queue' -> HARDWARE; 'Dev / Engineering' -> SOFTWARE).
+ * 3. Deep Subject and Description analysis:
+ *    - Hardware: bots, rangers, butlers, chargers, battery, docking, wheels, motors, sensors, cables,
+ *      conveyors, plc, mechanical knocking/noise, crash, mtc, pptl buttons, printers, scanners.
+ *    - Software: portal, login, auth, ui, api, endpoints, database, postgres, wms, gtp, inventory,
+ *      algorithms, timeouts, latency, certificates, configurations.
+ * 4. Fallback: Defaults to 'SOFTWARE' for general warehouse system and operational workflow issues.
+ */
+export function detectCaseCategory(c: SFCase | Record<string, unknown> | null | undefined): 'SOFTWARE' | 'HARDWARE' {
+  if (!c) return 'SOFTWARE';
+
+  const raw = c as Record<string, unknown>;
+
+  // 1. Explicit Category / Type field check (if already specifically Hardware or Software)
+  const explicitCat = String(
+    c.Category__c || raw.category || c.Category || c.Snow_Category__c || raw.Sub_Category__c || c.Type || raw.type || ''
+  ).trim().toLowerCase();
+
+  // Guard against generic words like "incident", "technical support", "support", "case"
+  if (explicitCat && !['incident', 'technical support', 'support', 'case', 'null', 'undefined', 'all', 'none', 'n/a'].includes(explicitCat)) {
+    if (/\b(?:hardware|hw|robotics|mechanical|electrical)\b/i.test(explicitCat)) {
+      return 'HARDWARE';
+    }
+    if (/\b(?:software|sw|application|database|platform|cloud|api)\b/i.test(explicitCat)) {
+      return 'SOFTWARE';
+    }
+  }
+
+  // 2. Assignee / Queue / Owner signals
+  const assignee = String(
+    c.Dev_Case_Assignee__c ||
+    raw.assignee ||
+    raw.assigned_to ||
+    (c.Owner && typeof c.Owner === 'object' && 'Name' in c.Owner ? (c.Owner as { Name?: string }).Name : '') ||
+    (raw.owner && typeof raw.owner === 'object' && 'Name' in (raw.owner as Record<string, unknown>) ? ((raw.owner as Record<string, unknown>).Name as string) : '') ||
+    ''
+  ).trim().toLowerCase();
+
+  if (/\b(?:hw|hardware|robotics|field\s*service|maintenance|mechanical|electrical)\b/i.test(assignee)) {
+    return 'HARDWARE';
+  }
+  if (/\b(?:sw|software|dev|engineering|devops|database|cloud|product\s*&\s*engineering)\b/i.test(assignee)) {
+    return 'SOFTWARE';
+  }
+
+  // 3. Subject and Description analysis
+  const subject = String(c.Subject || raw.subject || '').trim();
+  const description = String(c.Description || raw.description || '').trim();
+  const fullText = `${subject} ${description}`.toLowerCase();
+
+  const hardwareKeywords = /\b(?:hardware|hw|robot|robots|bot|bots|ranger|butler|carrier|lift|charger|chargers|charging|dock|docked|undocked|docking|chassis|drive|wheel|wheels|motor|motors|stepper|encoder|mast|sensor|sensors|lidar|laser|camera|cameras|harness|cable|cables|battery|batteries|low\s*battery|dead\s*in\s*(?:the\s*)?field|found\s*dead|mtc|maintenance\s*cage|collision|crash|crashed|knocking|rattling|noise|vibration|overheat|overheating|e-stop|estop|emergency\s*stop|bumper|conveyor|plc|vfd|mhe|station\s*hardware|pedestal|scanner|barcode\s*scanner|printer|label\s*print|aio|pptl|light\s*configuration|physical|damaged|broken|power\s*outage|blackout|ups\s*trip)\b/i;
+
+  const softwareKeywords = /\b(?:software|sw|app|application|login|portal|ui|grafana|dashboard|database|db|postgres|mnesia|redis|kafka|rabbitmq|api|endpoint|http|500|400|404|403|timeout|latency|exception|nullpointer|traceback|crash\s*dump|log|logs|sync|synchronization|wms|wcs|rms|butler\s*os|graymatter|gstore|gtp|inventory|sku|skus|wave|order|orders|allocation|pick\s*list|routing|certificate|ssl|tls|dns|network|wifi|switch|router|ping|ip|vpn|firewall|firmware|patch|deploy|deployment|bug|feature\s*request|service\s*request|query|configuration|config|tote\s*cleanup|movetask|cancel\s*putaway|rack[- ]to[- ]rack|unfulfillable|date\s*&\s*time|field\s*grade)\b/i;
+
+  const hasHw = hardwareKeywords.test(fullText);
+  const hasSw = softwareKeywords.test(fullText);
+
+  if (hasHw && !hasSw) {
+    return 'HARDWARE';
+  }
+  if (hasSw && !hasHw) {
+    return 'SOFTWARE';
+  }
+  if (hasHw && hasSw) {
+    const subLower = subject.toLowerCase();
+    const subHw = hardwareKeywords.test(subLower);
+    const subSw = softwareKeywords.test(subLower);
+    if (subHw && !subSw) return 'HARDWARE';
+    if (subSw && !subHw) return 'SOFTWARE';
+
+    if (/\b(?:bot|bots|charger|hardware|hw|ranger|butler|crash|collision|knocking|motor|wheel|dock|battery|cable|sensor)\b/i.test(subLower)) {
+      return 'HARDWARE';
+    }
+    return 'SOFTWARE';
+  }
+
+  // 4. Default to SOFTWARE for general support/workflow tickets
+  return 'SOFTWARE';
+}
+
 export function matchCaseToSite(
   caseRecord: SFCase,
   targetSiteName: string,

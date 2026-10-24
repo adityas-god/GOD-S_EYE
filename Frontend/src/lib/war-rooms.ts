@@ -39,11 +39,13 @@ export function getStoredWarRooms(): WarRoom[] {
   return DEFAULT_WAR_ROOMS;
 }
 
-export function setStoredWarRooms(rooms: WarRoom[]): void {
+export function setStoredWarRooms(rooms: WarRoom[], notify = true): void {
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(rooms));
-      window.dispatchEvent(new CustomEvent('war-rooms-changed', { detail: rooms }));
+      if (notify) {
+        window.dispatchEvent(new CustomEvent('war-rooms-changed', { detail: rooms }));
+      }
     }
   } catch {}
 }
@@ -62,7 +64,8 @@ export async function fetchActiveWarRooms(): Promise<WarRoom[]> {
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.warRooms)) {
-        setStoredWarRooms(data.warRooms);
+        // Cache locally for offline resilience without dispatching recursive invalidation event
+        setStoredWarRooms(data.warRooms, false);
         return data.warRooms;
       }
     }

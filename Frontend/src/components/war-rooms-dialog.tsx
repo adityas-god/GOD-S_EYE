@@ -51,8 +51,8 @@ export function WarRoomsDialog({ open, onOpenChange }: WarRoomsDialogProps) {
   const { data: warRooms = [], isLoading } = useQuery({
     queryKey: ['active-war-rooms'],
     queryFn: fetchActiveWarRooms,
-    staleTime: 10_000,
-    refetchInterval: 15_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
   // Listen to custom cross-tab / local events

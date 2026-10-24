@@ -42,6 +42,7 @@ import {
   type SFCase,
   isAlertCase,
   detectSeverity,
+  detectCaseCategory,
   isImTicket,
   isDirTicket,
   isChangeRequestTicket,
@@ -503,16 +504,20 @@ function Index() {
     return Array.from(set).sort();
   }, [currentBucketItems]);
 
-  const uniqueCategories = useMemo(() => {
-    const set = new Set<string>();
+  const categoryCounts = useMemo(() => {
+    let sw = 0;
+    let hw = 0;
     for (const c of currentBucketItems) {
-      const cat = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim();
-      if (cat && !['null', 'undefined', 'all', 'none', 'n/a'].includes(cat.toLowerCase())) {
-        set.add(cat);
+      if (detectCaseCategory(c) === 'HARDWARE') {
+        hw++;
+      } else {
+        sw++;
       }
     }
-    return Array.from(set).sort();
+    return { SOFTWARE: sw, HARDWARE: hw };
   }, [currentBucketItems]);
+
+  const uniqueCategories = ['SOFTWARE', 'HARDWARE'];
 
   const uniqueAssignees = useMemo(() => {
     const set = new Set<string>();
@@ -562,8 +567,8 @@ function Index() {
 
       // 3. Category filter (only applicable for cases view)
       if (categoryFilter !== 'All' && activeBucket === 'cases') {
-        const cat = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support').trim().toLowerCase();
-        if (cat !== categoryFilter.toLowerCase()) return false;
+        const cat = detectCaseCategory(c);
+        if (cat.toUpperCase() !== categoryFilter.toUpperCase()) return false;
       }
 
       // 4. Assignee filter
@@ -662,7 +667,7 @@ function Index() {
         : String(c.Highest_Severity__c || c.Priority || 'Severity 3');
 
       const productDisplay = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || 'RMS');
-      const categoryDisplay = String(c.Category__c || c.Snow_Category__c || c.Category || c.Type || 'Technical Support');
+      const categoryDisplay = detectCaseCategory(c);
       const assignedDisplay = getAssigneeDisplayName(c);
       
       const cachedSite = c?.Id ? ticketSiteMap.get(c.Id) : undefined;
@@ -1554,11 +1559,12 @@ function Index() {
                           ✕ Clear Filter (Show All)
                         </option>
                       )}
-                      {uniqueCategories.map(cat => (
-                        <option key={cat} value={cat} style={{ background: '#18191e', color: '#fff' }}>
-                          {cat}
-                        </option>
-                      ))}
+                      <option value="SOFTWARE" style={{ background: '#18191e', color: '#fff' }}>
+                        SOFTWARE ({categoryCounts.SOFTWARE})
+                      </option>
+                      <option value="HARDWARE" style={{ background: '#18191e', color: '#fff' }}>
+                        HARDWARE ({categoryCounts.HARDWARE})
+                      </option>
                     </select>
                   </div>
                 )}
@@ -2224,7 +2230,7 @@ function Index() {
               <div>
                 <span style={{ fontSize: 10, color: 'var(--muted-foreground)' }}>Category</span>
                 <p style={{ margin: '3px 0 0', fontWeight: 500 }}>
-                  {String(selectedCase.Category__c || selectedCase.Snow_Category__c || selectedCase.Category || selectedCase.Type || 'Technical Support')}
+                  {detectCaseCategory(selectedCase)}
                 </p>
               </div>
               <div>
