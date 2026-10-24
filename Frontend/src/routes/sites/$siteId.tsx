@@ -296,6 +296,8 @@ function SiteDetail() {
     },
     staleTime: 60_000,
     gcTime: 300_000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
     placeholderData: (prev) => {
       if (prev && (prev as any).records && (prev as any).records.length > 0) return prev;

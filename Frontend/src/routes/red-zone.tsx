@@ -239,7 +239,10 @@ function RedZonePage() {
   } = useQuery({
     queryKey: ['salesforce-red-zone'],
     queryFn: () => sfFetchRedZoneSites(),
+    placeholderData: (prev) => prev,
     staleTime: 120_000,
+    gcTime: 60 * 60_000,
+    retry: 3,
     refetchInterval: 120_000,
   });
 

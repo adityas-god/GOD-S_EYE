@@ -2303,7 +2303,7 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
     }
     // Merge with empty site stats so every known site has an initialized object
     const mergedStats = { ...buildEmptySiteStats(), ...(data.siteStats || {}) };
-    return {
+    const result = {
       totalLiveCases: data.totalLiveCases ?? (data.cases ? data.cases.length : 0),
       totalLiveAlerts: data.totalLiveAlerts ?? (data.alerts ? data.alerts.length : 0),
       cases: (data.cases || []) as SFCase[],
@@ -2312,9 +2312,49 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
       siteStats: mergedStats,
       timestamp: data.timestamp || new Date().toISOString(),
     };
+
+    // If result has active cases, persist in localStorage so UI never goes blank
+    if (result.cases.length > 0 || result.alerts.length > 0) {
+      try {
+        localStorage.setItem('sitepulse_overview_snapshot', JSON.stringify(result));
+      } catch {}
+    } else {
+      // If server returned 0 cases, check if we have a valid snapshot in localStorage
+      try {
+        const cachedRaw = localStorage.getItem('sitepulse_overview_snapshot');
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw);
+          if (cached && (cached.cases?.length > 0 || cached.alerts?.length > 0)) {
+            console.log('[Salesforce client] Preserving persistent overview snapshot with', cached.cases?.length, 'cases.');
+            return cached;
+          }
+        }
+      } catch {}
+    }
+
+    return result;
   } catch (err) {
     console.warn('[Salesforce client] Notice querying /api/cases/overview:', (err as Error).message);
-    throw err;
+    try {
+      const cachedRaw = localStorage.getItem('sitepulse_overview_snapshot');
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && (cached.cases?.length > 0 || cached.alerts?.length > 0)) {
+          console.log('[Salesforce client] Restored overview snapshot from localStorage after network notice.');
+          return cached;
+        }
+      }
+    } catch {}
+
+    return {
+      totalLiveCases: 0,
+      totalLiveAlerts: 0,
+      cases: [] as SFCase[],
+      alerts: [] as SFCase[],
+      closedAlerts: [] as SFCase[],
+      siteStats: buildEmptySiteStats(),
+      timestamp: new Date().toISOString(),
+    };
   }
 };
 

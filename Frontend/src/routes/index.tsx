@@ -112,7 +112,7 @@ function Index() {
   const [connections, setConnections] = useState(false);
   const [deleteSite, setDeleteSite] = useState<Site | null>(null);
   const [syncingOrg, setSyncingOrg] = useState(false);
-  const [showAllOperational, setShowAllOperational] = useState(false);
+  const [showAllOperational, setShowAllOperational] = useState(true);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed'>('cases');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [ticketsCollapsed, setTicketsCollapsed] = useState(false);
@@ -134,7 +134,10 @@ function Index() {
     queryKey: ['salesforce-overview'],
     queryFn: () => sfFetchLiveCasesOverview(false),
     placeholderData: (prev) => prev,
-    staleTime: 10_000,
+    staleTime: 30_000,
+    gcTime: 60 * 60_000,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
     refetchInterval: 30_000, // automatic live background refresh every 30 seconds
     refetchOnWindowFocus: true, // auto-refresh whenever browser tab is focused
   });

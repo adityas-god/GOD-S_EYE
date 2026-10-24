@@ -124,8 +124,10 @@ export function AnalyticsPage() {
   } = useQuery<CasesAnalyticsResult>({
     queryKey: ['analytics-cases', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
     queryFn: () => fetchCasesAnalytics(selectedTimeframe, false, selectedTimeframe === 'custom' ? appliedCustomRange : null),
+    placeholderData: (prev) => prev,
     staleTime: 60_000,
-    gcTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: 3,
     refetchOnWindowFocus: false,
   });
 
@@ -138,8 +140,10 @@ export function AnalyticsPage() {
   } = useQuery<AlertsAnalyticsResult>({
     queryKey: ['analytics-alerts', selectedTimeframe, selectedTimeframe === 'custom' ? appliedCustomRange : null],
     queryFn: () => fetchAlertsAnalytics(selectedTimeframe, false, selectedTimeframe === 'custom' ? appliedCustomRange : null),
+    placeholderData: (prev) => prev,
     staleTime: 60_000,
-    gcTime: 10 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: 3,
     refetchOnWindowFocus: false,
     enabled: activeTab === 'alerts',
   });

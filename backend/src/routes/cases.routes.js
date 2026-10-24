@@ -3,6 +3,7 @@ import { CaseRepository } from '../models/Case.js';
 import {
   fetchOpenCasesForSite,
   fetchLiveCasesOverview,
+  getFallbackOverview,
   getAlertAnalyticsForSite,
   fetchRedZoneSitesOverview,
   clearRedZoneSiteCache,
@@ -220,8 +221,13 @@ router.get('/overview', async (req, res) => {
       ...overview,
     });
   } catch (error) {
-    console.error('[Cases API] Error in /overview:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[Cases API] Error in /overview, serving fallback snapshot:', error.message);
+    const fallback = getFallbackOverview();
+    res.json({
+      success: true,
+      ...fallback,
+      warning: 'Serving cached snapshot: ' + error.message,
+    });
   }
 });
 

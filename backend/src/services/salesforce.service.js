@@ -69,6 +69,76 @@ const _historicalAlertsCache = new Map();
 const _inFlightHistoricalAlertsPromises = new Map();
 const _inFlightAlertAnalyticsPromises = new Map();
 
+const SNAPSHOT_FILE = path.resolve(__dirname, '../data/overview_snapshot.json');
+const CASES_SNAPSHOT_FILE = path.resolve(__dirname, '../data/cases_snapshot.json');
+
+function saveOverviewSnapshotToDisk(data) {
+  try {
+    if (data && Array.isArray(data.cases) && data.cases.length > 0) {
+      fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(data), 'utf8');
+    }
+  } catch (err) {
+    console.warn('[Overview Snapshot] Error saving disk snapshot:', err.message);
+  }
+}
+
+function loadOverviewSnapshotFromDisk() {
+  try {
+    if (fs.existsSync(SNAPSHOT_FILE)) {
+      const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.cases) && parsed.cases.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[Overview Snapshot] Error reading disk snapshot:', err.message);
+  }
+  return null;
+}
+
+function saveCasesSnapshotToDisk(data) {
+  try {
+    if (data && Array.isArray(data.cases) && data.cases.length > 0) {
+      fs.writeFileSync(CASES_SNAPSHOT_FILE, JSON.stringify(data), 'utf8');
+    }
+  } catch (err) {
+    console.warn('[Cases Snapshot] Error saving disk snapshot:', err.message);
+  }
+}
+
+function loadCasesSnapshotFromDisk() {
+  try {
+    if (fs.existsSync(CASES_SNAPSHOT_FILE)) {
+      const raw = fs.readFileSync(CASES_SNAPSHOT_FILE, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.cases) && parsed.cases.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    console.warn('[Cases Snapshot] Error reading disk snapshot:', err.message);
+  }
+  return null;
+}
+
+export function getFallbackOverview() {
+  if (_overviewCache.data && _overviewCache.data.cases && _overviewCache.data.cases.length > 0) {
+    return _overviewCache.data;
+  }
+  const disk = loadOverviewSnapshotFromDisk();
+  if (disk) return disk;
+  return {
+    totalLiveCases: 0,
+    totalLiveAlerts: 0,
+    cases: [],
+    alerts: [],
+    closedAlerts: [],
+    siteStats: {},
+    timestamp: new Date().toISOString(),
+  };
+}
+
 export function invalidateSiteCasesCache(siteName = '') {
   if (!siteName) {
     _siteCasesCache.clear();
@@ -2317,22 +2387,31 @@ export async function getSalesforceToken() {
 }
 
 /**
- * Execute SOQL Query against Salesforce REST API.
+ * Execute SOQL Query against Salesforce REST API with auto-recovery on 401 Unauthorized.
  */
-export async function executeSOQL(soql, { maxRecords = 12000, paginate = true } = {}) {
-  const { access_token, instance_url } = await getSalesforceToken();
+export async function executeSOQL(soql, { maxRecords = 12000, paginate = true, isRetry = false } = {}) {
+  let tokenData = await getSalesforceToken();
   const { apiVersion } = getSfConfig();
-  const endpoint = `${instance_url}/services/data/${apiVersion}/query?q=${encodeURIComponent(soql)}`;
+  const endpoint = `${tokenData.instance_url}/services/data/${apiVersion}/query?q=${encodeURIComponent(soql)}`;
 
-  const response = await fetch(endpoint, {
+  let response = await fetch(endpoint, {
     headers: {
-      Authorization: `Bearer ${access_token}`,
+      Authorization: `Bearer ${tokenData.access_token}`,
       'Content-Type': 'application/json',
     },
     signal: AbortSignal.timeout(30000),
   });
 
+  if (response.status === 401 && !isRetry) {
+    console.warn('[Salesforce] Received 401 Unauthorized, clearing token cache and retrying...');
+    tokenCache = null;
+    return executeSOQL(soql, { maxRecords, paginate, isRetry: true });
+  }
+
   if (!response.ok) {
+    if (response.status === 401) {
+      tokenCache = null;
+    }
     const errorText = await response.text();
     throw new Error(`SOQL query failed (${response.status}): ${errorText}`);
   }
@@ -2347,10 +2426,10 @@ export async function executeSOQL(soql, { maxRecords = 12000, paginate = true } 
 
   while (nextUrl && records.length < maxRecords) {
     try {
-      const nextEndpoint = `${instance_url}${nextUrl}`;
+      const nextEndpoint = `${tokenData.instance_url}${nextUrl}`;
       const nextRes = await fetch(nextEndpoint, {
         headers: {
-          Authorization: `Bearer ${access_token}`,
+          Authorization: `Bearer ${tokenData.access_token}`,
           'Content-Type': 'application/json',
         },
         signal: AbortSignal.timeout(20000),
@@ -2769,7 +2848,13 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
             _lastSalesforceError = errUltra.message;
             console.error('[Salesforce] All SOQL queries failed:', errUltra.message);
             if (_backendCasesCache.cases.length > 0) return _backendCasesCache;
-            return { cases: [], alerts: [] };
+            const diskCases = loadCasesSnapshotFromDisk();
+            if (diskCases && diskCases.cases && diskCases.cases.length > 0) {
+              console.log('[Salesforce] Restored cases cache from disk snapshot.');
+              _backendCasesCache = diskCases;
+              return _backendCasesCache;
+            }
+            return { cases: [], alerts: [], openAlerts: [], closedAlerts: [], allAlerts: [], closed: [] };
           }
         }
       }
@@ -2801,6 +2886,9 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     } catch {}
 
     _backendCasesCache = { cases, alerts: openAlerts, openAlerts, closedAlerts, allAlerts, closed, fetchedAt: Date.now() };
+    if (cases.length > 0) {
+      saveCasesSnapshotToDisk(_backendCasesCache);
+    }
     _overviewCache = { data: null, cachedAt: 0 };
     return { cases, alerts: openAlerts, openAlerts, closedAlerts, allAlerts, closed };
   })();
@@ -3294,6 +3382,27 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
     timestamp: new Date().toISOString(),
     error: _lastSalesforceError || null,
   };
+
+  // Critical resilience against data disappearing:
+  // If this query returned 0 cases, but we already have an active overview with cases in cache,
+  // do NOT wipe out the dashboard! Keep the valid overview.
+  if (strictlyOpenCases.length === 0 && _overviewCache.data && _overviewCache.data.cases && _overviewCache.data.cases.length > 0) {
+    console.warn('[fetchLiveCasesOverview] Live query returned 0 cases (possible network/SOQL notice). Preserving previous active overview snapshot.');
+    return _overviewCache.data;
+  }
+
+  // If we have active cases, persist to disk snapshot
+  if (strictlyOpenCases.length > 0) {
+    saveOverviewSnapshotToDisk(result);
+  } else {
+    // If cache is empty and result is empty, attempt to load disk snapshot
+    const diskSnapshot = loadOverviewSnapshotFromDisk();
+    if (diskSnapshot && diskSnapshot.cases && diskSnapshot.cases.length > 0) {
+      console.log('[fetchLiveCasesOverview] Loaded resilient overview snapshot from disk.');
+      _overviewCache = { data: diskSnapshot, cachedAt: Date.now() };
+      return diskSnapshot;
+    }
+  }
 
   _overviewCache = { data: result, cachedAt: Date.now() };
   return result;

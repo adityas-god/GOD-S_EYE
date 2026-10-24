@@ -119,14 +119,23 @@ router.get('/', async (req, res) => {
   try {
     const forceReset = req.query.reset === 'true';
     await ensureInitialSites(forceReset);
-    const sites = await SiteRepository.findAll();
+    let sites = await SiteRepository.findAll();
+    if (!sites || sites.length === 0) {
+      sites = defaultSites;
+    }
     res.json({
       success: true,
       count: sites.length,
       sites,
     });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.warn(`[Sites] Fallback to defaultSites due to error: ${error.message}`);
+    res.json({
+      success: true,
+      count: defaultSites.length,
+      sites: defaultSites,
+      warning: error.message,
+    });
   }
 });
 
