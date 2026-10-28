@@ -28,7 +28,6 @@ import { PulseAiOrb } from './pulse-ai-orb';
 import { GoEventsIcon } from './go-events-icon';
 import { GoRosterIcon } from './go-roster-icon';
 import { ZoomIcon } from './zoom-icon';
-import { WarRoomsDialog } from './war-rooms-dialog';
 import { fetchActiveWarRooms } from '@/lib/war-rooms';
 
 import { ConnectionsDialog } from './dashboard-dialogs';
@@ -56,6 +55,7 @@ export function DashboardShell({
   const isRedZoneActive = currentPath === '/red-zone';
   const isAnalyticsActive = currentPath === '/analytics';
   const isPulseAiActive = currentPath === '/pulse-ai' || currentPath.startsWith('/pulse-ai');
+  const isWarRoomsActive = currentPath === '/war-rooms' || currentPath.startsWith('/war-rooms');
 
   const { data: sites } = useQuery(sitesQueryOptions());
   const actualSitesCount = sites?.length ?? 78;
@@ -89,7 +89,6 @@ export function DashboardShell({
   }, [queryClient]);
 
   const [connections, setConnections] = useState(false);
-  const [warRoomsOpen, setWarRoomsOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -148,7 +147,7 @@ export function DashboardShell({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          <Button variant="nav" asChild className={!detail && !isRedZoneActive && !isAnalyticsActive && activeTab === 'all' ? 'active' : ''}>
+          <Button variant="nav" asChild className={!detail && !isRedZoneActive && !isAnalyticsActive && !isWarRoomsActive && activeTab === 'all' ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
               All sites
@@ -226,18 +225,20 @@ export function DashboardShell({
             </a>
           </Button>
 
-          {/* Active War Rooms Panel Button */}
+          {/* Active War Rooms Page Link (Renders directly right to sidebar as a dedicated page) */}
           <Button
             variant="nav"
-            onClick={() => setWarRoomsOpen(true)}
-            className={`war-rooms-nav-btn ${warRoomsOpen ? 'active' : ''}`}
+            asChild
+            className={isWarRoomsActive ? 'active' : ''}
             title="Active War Rooms & Incident Bridges"
           >
-            <ZoomIcon size={16} />
-            <span>Active war rooms</span>
-            <span className="nav-count">
-              {activeWarRoomsCount > 0 ? `${activeWarRoomsCount} LIVE` : '0'}
-            </span>
+            <Link to="/war-rooms">
+              <ZoomIcon size={16} />
+              <span>Active war rooms</span>
+              <span className="nav-count">
+                {activeWarRoomsCount > 0 ? `${activeWarRoomsCount} LIVE` : '0'}
+              </span>
+            </Link>
           </Button>
 
           {/* Site Monitoring (The 2 buckets: Salesforce cases & Opsgenie alerts) */}
@@ -495,7 +496,6 @@ export function DashboardShell({
         )}
       </div>
       <ConnectionsDialog open={connections} onOpenChange={setConnections} />
-      <WarRoomsDialog open={warRoomsOpen} onOpenChange={setWarRoomsOpen} />
     </div>
   );
 }

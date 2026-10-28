@@ -358,7 +358,13 @@ select option { background: var(--card); }
 .case-status-badge.status-progress { border-color: oklch(0.73 0.085 232 / 0.4); background: var(--blue-surface); color: var(--blue); }
 .case-status-badge.status-investigating { border-color: #a855f7; background: #3b0764; color: #d8b4fe; }
 .case-status-badge.status-hold { border-color: rgba(245, 158, 11, 0.45); background: rgba(180, 83, 9, 0.2); color: #fbbf24; }
+.case-status-badge.status-resolved { border-color: oklch(0.7 0.15 140 / 0.4); background: oklch(0.7 0.15 140 / 0.15); color: #22c55e; }
 .case-status-badge.status-other { border-color: var(--border); background: var(--muted); color: var(--foreground); }
+
+:root.light .case-status-badge.status-resolved, [data-theme="light"] .case-status-badge.status-resolved { border-color: #86efac; background: #f0fdf4; color: #16a34a; }
+:root.light .case-status-badge.status-hold, [data-theme="light"] .case-status-badge.status-hold { border-color: #fde68a; background: #fffbeb; color: #d97706; }
+:root.light .case-status-badge.status-progress, [data-theme="light"] .case-status-badge.status-progress { border-color: #bfdbfe; background: #eff6ff; color: #2563eb; }
+:root.light .case-status-badge.status-new, [data-theme="light"] .case-status-badge.status-new { border-color: #fed7aa; background: #fff7ed; color: #ea580c; }
 
 /* Column Badge Styles */
 .case-priority-badge { padding: 2px 6px; border-radius: 4px; font-size: 9px; font-family: var(--font-mono); font-weight: 600; display: inline-flex; align-items: center; gap: 3px; width: fit-content; white-space: nowrap; }

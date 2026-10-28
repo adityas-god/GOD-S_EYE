@@ -8,6 +8,8 @@ export interface WarRoom {
   lead?: string | null;
   notes?: string | null;
   startedAt: string;
+  startDate: string;
+  endDate: string;
 }
 
 const STORAGE_KEY = 'gods_eye_active_war_rooms_v1';
@@ -23,6 +25,8 @@ const DEFAULT_WAR_ROOMS: WarRoom[] = [
     lead: 'On-Call Incident Lead',
     notes: 'P0 Incident triage: conveyor sortation communication failure.',
     startedAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    startDate: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    endDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
   },
 ];
 
@@ -32,7 +36,18 @@ export function getStoredWarRooms(): WarRoom[] {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          return parsed.map((r: any) => {
+            const startDate = r.startDate || r.startedAt || new Date().toISOString();
+            const endDate = r.endDate || new Date(new Date(startDate).getTime() + 24 * 60 * 60 * 1000).toISOString();
+            return {
+              ...r,
+              startedAt: r.startedAt || startDate,
+              startDate,
+              endDate,
+            };
+          });
+        }
       }
     }
   } catch {}
@@ -86,7 +101,12 @@ export async function createActiveWarRoom(room: {
   severity?: string;
   lead?: string | null;
   notes?: string | null;
+  startDate: string;
+  endDate: string;
 }): Promise<WarRoom> {
+  const startDateStr = room.startDate ? new Date(room.startDate).toISOString() : new Date().toISOString();
+  const endDateStr = room.endDate ? new Date(room.endDate).toISOString() : new Date(new Date(startDateStr).getTime() + 24 * 60 * 60 * 1000).toISOString();
+
   const newRoom: WarRoom = {
     id: `wr-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
     name: room.name.trim(),
@@ -96,7 +116,9 @@ export async function createActiveWarRoom(room: {
     severity: room.severity?.trim() || 'SEV 1',
     lead: room.lead?.trim() || null,
     notes: room.notes?.trim() || null,
-    startedAt: new Date().toISOString(),
+    startedAt: startDateStr,
+    startDate: startDateStr,
+    endDate: endDateStr,
   };
 
   // Instant local storage update (0ms latency)
@@ -156,4 +178,54 @@ export async function removeActiveWarRoom(id: string): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Update active war room (dates, notes, etc.) with instant local storage write and non-blocking backend sync
+ */
+export async function updateActiveWarRoom(
+  id: string,
+  updates: Partial<WarRoom>
+): Promise<WarRoom | null> {
+  const current = getStoredWarRooms();
+  const idx = current.findIndex(r => r.id === id);
+  let updatedRoom: WarRoom | null = null;
+
+  const normalizedUpdates: Partial<WarRoom> = { ...updates };
+  if (normalizedUpdates.startDate) {
+    normalizedUpdates.startDate = new Date(normalizedUpdates.startDate).toISOString();
+    normalizedUpdates.startedAt = normalizedUpdates.startDate;
+  }
+  if (normalizedUpdates.endDate) {
+    normalizedUpdates.endDate = new Date(normalizedUpdates.endDate).toISOString();
+  }
+
+  if (idx !== -1 && current[idx]) {
+    current[idx] = { ...current[idx]!, ...normalizedUpdates };
+    updatedRoom = current[idx]!;
+    setStoredWarRooms([...current]);
+  }
+
+  // Sync to backend in parallel
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(`/api/war-rooms/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(normalizedUpdates),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.warRoom) {
+        return data.warRoom;
+      }
+    }
+  } catch {}
+
+  return updatedRoom;
 }

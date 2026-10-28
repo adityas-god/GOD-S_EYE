@@ -16,9 +16,12 @@ router.get('/', async (req, res) => {
 // POST a new active war room (saved into MongoDB)
 router.post('/', async (req, res) => {
   try {
-    const { name, url, siteName, siteId, severity, lead, notes } = req.body;
+    const { name, url, siteName, siteId, severity, lead, notes, startDate, endDate } = req.body;
     if (!name || !url) {
       return res.status(400).json({ success: false, error: 'Name and URL are required' });
+    }
+    if (!startDate || !endDate) {
+      return res.status(400).json({ success: false, error: 'Start Date and End Date are required' });
     }
 
     const warRoom = await WarRoomRepository.create({
@@ -29,6 +32,8 @@ router.post('/', async (req, res) => {
       severity,
       lead,
       notes,
+      startDate,
+      endDate,
     });
 
     res.status(201).json({ success: true, warRoom });
@@ -48,11 +53,19 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// PATCH / update a war room (updates in MongoDB)
-router.patch('/:id', async (req, res) => {
+// PATCH / PUT / update a war room (updates in MongoDB)
+const handleUpdate = async (req, res) => {
   try {
     const { id } = req.params;
-    const warRoom = await WarRoomRepository.update(id, req.body);
+    const updates = { ...req.body };
+    if (updates.startDate) {
+      updates.startDate = new Date(updates.startDate).toISOString();
+      updates.startedAt = updates.startDate;
+    }
+    if (updates.endDate) {
+      updates.endDate = new Date(updates.endDate).toISOString();
+    }
+    const warRoom = await WarRoomRepository.update(id, updates);
     if (!warRoom) {
       return res.status(404).json({ success: false, error: 'War room not found' });
     }
@@ -60,6 +73,9 @@ router.patch('/:id', async (req, res) => {
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
-});
+};
+
+router.patch('/:id', handleUpdate);
+router.put('/:id', handleUpdate);
 
 export default router;

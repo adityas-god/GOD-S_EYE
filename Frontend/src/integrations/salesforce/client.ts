@@ -304,11 +304,18 @@ export function isClosedToday(c: SFCase): boolean {
 
 export function isAlertForShiftBucket(c: SFCase): boolean {
   if (!isAlertCase(c)) return false;
-  const endTime = getTicketEndTime(c);
   const status = String(c.Status || '').toLowerCase();
+  // User requirement: all alert tickets with on-hold status should show up even if having end time!
+  if (status.includes('hold')) {
+    for (const pattern of CLOSED_STATUS_PATTERNS) {
+      if (status.includes(pattern)) return false;
+    }
+    return true;
+  }
+  const endTime = getTicketEndTime(c);
   const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (!isClosed) {
-    if (status.includes('hold') || status.includes('pending confirmation')) return false;
+    if (status.includes('pending confirmation')) return false;
     return true; // Live open alert
   }
   return isClosedToday(c); // Closed alert of today's date
@@ -316,14 +323,12 @@ export function isAlertForShiftBucket(c: SFCase): boolean {
 
 /**
  * Live open alert predicate: strictly open alerts with end time logic applied.
- * Excludes tickets with an End Time, Closed Date, or closed/hold status.
+ * Excludes tickets with an End Time, Closed Date, or closed status.
+ * User requirement: "all the alert ticket with on-hold status should also show up even its having end time like on hold and endtime"
  */
 export function isOpenAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
-
-  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
-  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
 
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
@@ -332,6 +337,16 @@ export function isOpenAlert(c: SFCase): boolean {
   for (const pattern of CLOSED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
+
+  // User requirement: all alert tickets with on-hold status show up even if having end time!
+  const isHoldAlert = status.includes('hold');
+  if (isHoldAlert) {
+    return true;
+  }
+
+  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
+  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
+
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
@@ -341,11 +356,14 @@ export function isOpenAlert(c: SFCase): boolean {
 
 /**
  * Closed alert predicate: strictly alert tickets that have an End Time, Closed Date, or closed status.
+ * On-hold alerts are open, so they are not closed even with end time.
  */
 export function isClosedAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
   const status = String(c.Status || '').toLowerCase();
+  if (status.includes('hold')) return false;
+
   const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (isClosedStatus) return true;
 

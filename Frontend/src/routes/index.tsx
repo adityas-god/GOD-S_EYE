@@ -626,17 +626,22 @@ function Index() {
       const raw = c as Record<string, unknown>;
       const alertEndTime = getTicketEndTime(c) || c.ended_at || (raw['ended_at'] as string | undefined) || c.ClosedDate;
       const stLower = (c.Status || '').toLowerCase();
-      const isClosedTodayAlert = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved') || Boolean(alertEndTime);
-      const statusClass = isClosedTodayAlert
+      const isClosedStatus = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved');
+      const isHold = stLower.includes('hold');
+      const isProgress = stLower.includes('progress') || stLower.includes('assigned');
+      const isNew = stLower.includes('new');
+      const isInvestigating = stLower.includes('investigat');
+      const isClosedTodayAlert = !isHold && !isProgress && (isClosedStatus || (activeBucket === 'closed' || (Boolean(alertEndTime) && !isNew && !stLower.includes('open'))));
+      const statusClass = (activeBucket === 'closed' || isClosedStatus || isClosedTodayAlert)
         ? 'status-resolved'
-        : stLower.includes('new')
-        ? 'status-new'
-        : stLower.includes('progress')
-        ? 'status-progress'
-        : stLower.includes('investigat')
-        ? 'status-investigating'
-        : stLower.includes('hold')
+        : isHold
         ? 'status-hold'
+        : isNew
+        ? 'status-new'
+        : isProgress
+        ? 'status-progress'
+        : isInvestigating
+        ? 'status-investigating'
         : 'status-other';
 
       const isAlert = activeBucket === 'alerts' || isAlertCase(c);
@@ -694,6 +699,7 @@ function Index() {
         isAlert,
         raw,
         alertEndTime,
+        isClosedStatus,
         isClosedTodayAlert,
         statusClass,
         sevType,
@@ -1675,6 +1681,7 @@ function Index() {
                         c,
                         isAlert,
                         alertEndTime,
+                        isClosedStatus,
                         isClosedTodayAlert,
                         statusClass,
                         isSev1Urgent,
@@ -1782,9 +1789,9 @@ function Index() {
                           <div>
                             <span
                               className={`case-status-badge ${statusClass}`}
-                              style={activeBucket === 'closed' || isClosedTodayAlert ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
+                              style={activeBucket === 'closed' || isClosedStatus || isClosedTodayAlert ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
                             >
-                              {activeBucket === 'closed' ? 'Closed' : activeBucket === 'alerts' ? 'Active Open' : isClosedTodayAlert ? 'Closed (Today)' : c.Status}
+                              {activeBucket === 'closed' ? (c.Status || 'Closed') : isClosedTodayAlert ? (c.Status || 'Closed (Today)') : (c.Status || 'Open')}
                             </span>
                           </div>
 

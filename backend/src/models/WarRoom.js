@@ -19,6 +19,8 @@ const warRoomSchema = new mongoose.Schema(
     lead: { type: String, default: null },
     notes: { type: String, default: null },
     startedAt: { type: Date, default: Date.now },
+    startDate: { type: Date, default: Date.now },
+    endDate: { type: Date, default: () => new Date(Date.now() + 24 * 60 * 60 * 1000) },
     is_active: { type: Boolean, default: true },
   },
   {
@@ -38,7 +40,18 @@ function readFromFile() {
     if (fs.existsSync(WAR_ROOMS_FILE)) {
       const data = fs.readFileSync(WAR_ROOMS_FILE, 'utf8');
       const parsed = JSON.parse(data);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.map(r => {
+          const startDate = r.startDate || r.startedAt || new Date().toISOString();
+          const endDate = r.endDate || new Date(new Date(startDate).getTime() + 24 * 60 * 60 * 1000).toISOString();
+          return {
+            ...r,
+            startedAt: r.startedAt || startDate,
+            startDate,
+            endDate,
+          };
+        });
+      }
     }
   } catch (err) {
     console.error('[WarRoomModel] Error reading file:', err.message);
@@ -73,17 +86,23 @@ export const WarRoomRepository = {
           new Promise((_, reject) => setTimeout(() => reject(new Error('Mongo timeout')), 1000)),
         ]);
         if (Array.isArray(rooms)) {
-          const formatted = rooms.map(r => ({
-            id: r.id,
-            name: r.name,
-            url: r.url,
-            siteName: r.siteName,
-            siteId: r.siteId,
-            severity: r.severity,
-            lead: r.lead,
-            notes: r.notes,
-            startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : new Date().toISOString(),
-          }));
+          const formatted = rooms.map(r => {
+            const startDate = r.startDate ? new Date(r.startDate).toISOString() : (r.startedAt ? new Date(r.startedAt).toISOString() : new Date().toISOString());
+            const endDate = r.endDate ? new Date(r.endDate).toISOString() : new Date(new Date(startDate).getTime() + 24 * 60 * 60 * 1000).toISOString();
+            return {
+              id: r.id,
+              name: r.name,
+              url: r.url,
+              siteName: r.siteName,
+              siteId: r.siteId,
+              severity: r.severity,
+              lead: r.lead,
+              notes: r.notes,
+              startedAt: startDate,
+              startDate,
+              endDate,
+            };
+          });
           _memoryRooms = formatted;
           writeToFile(formatted);
           return formatted;
@@ -96,6 +115,11 @@ export const WarRoomRepository = {
   },
 
   async create(roomData) {
+    const rawStart = roomData.startDate || roomData.startedAt;
+    const startDateObj = rawStart ? new Date(rawStart) : new Date();
+    const rawEnd = roomData.endDate;
+    const endDateObj = rawEnd ? new Date(rawEnd) : new Date(startDateObj.getTime() + 24 * 60 * 60 * 1000);
+
     const newRoom = {
       id: roomData.id || `wr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: String(roomData.name).trim(),
@@ -105,13 +129,17 @@ export const WarRoomRepository = {
       severity: roomData.severity ? String(roomData.severity).trim() : 'SEV 1',
       lead: roomData.lead ? String(roomData.lead).trim() : null,
       notes: roomData.notes ? String(roomData.notes).trim() : null,
-      startedAt: roomData.startedAt ? new Date(roomData.startedAt) : new Date(),
+      startedAt: startDateObj,
+      startDate: startDateObj,
+      endDate: endDateObj,
       is_active: true,
     };
 
     const formattedRoom = {
       ...newRoom,
       startedAt: newRoom.startedAt.toISOString(),
+      startDate: newRoom.startDate.toISOString(),
+      endDate: newRoom.endDate.toISOString(),
     };
 
     // Instant update in-memory and write to file (< 1ms latency)

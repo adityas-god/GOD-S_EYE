@@ -1178,11 +1178,18 @@ export function isClosedToday(c) {
 
 export function isAlertForShiftBucket(c) {
   if (!isAlertCase(c)) return false;
-  const endTime = getTicketEndTime(c);
   const status = String(c.Status || c.status || '').toLowerCase();
+  // User requirement: all alert tickets with on-hold status should show up even if having end time!
+  if (status.includes('hold')) {
+    for (const pattern of CLOSED_STATUS_PATTERNS) {
+      if (status.includes(pattern)) return false;
+    }
+    return true;
+  }
+  const endTime = getTicketEndTime(c);
   const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (!isClosed) {
-    if (status.includes('hold') || status.includes('pending confirmation')) return false;
+    if (status.includes('pending confirmation')) return false;
     return true; // Opened alert
   }
   return isClosedToday(c); // Only closed alert of today's date
@@ -1190,14 +1197,12 @@ export function isAlertForShiftBucket(c) {
 
 /**
  * Live open alert predicate: strictly open alerts with end time logic applied.
- * Excludes tickets with an End Time, Closed Date, or closed/hold status.
+ * Excludes tickets with an End Time, Closed Date, or closed status.
+ * User requirement: "all the alert ticket with on-hold status should also show up even its having end time like on hold and endtime"
  */
 export function isOpenAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
-
-  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
-  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
 
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
@@ -1206,6 +1211,16 @@ export function isOpenAlert(c) {
   for (const pattern of CLOSED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
+
+  // User requirement: all alert tickets with on-hold status show up even if having end time!
+  const isHoldAlert = status.includes('hold');
+  if (isHoldAlert) {
+    return true;
+  }
+
+  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
+  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
+
   for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
@@ -1215,11 +1230,14 @@ export function isOpenAlert(c) {
 
 /**
  * Closed alert predicate: strictly alert tickets that have an End Time, Closed Date, or closed status.
+ * On-hold alerts are open, so they are not closed even with end time.
  */
 export function isClosedAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
   const status = String(c.Status || c.status || '').toLowerCase();
+  if (status.includes('hold')) return false;
+
   const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (isClosedStatus) return true;
 
@@ -2717,9 +2735,11 @@ export function mapRecord(c) {
   const desc = c.Description ? (c.Description.length > 2000 ? c.Description.slice(0, 2000) + '...' : c.Description) : null;
   const endTime = getTicketEndTime(c);
   const isAlert = isAlertCase(c);
-  const isClosedByEndTime = Boolean(endTime) && !isAlert;
+  const statusStr = String(c.Status || '').toLowerCase();
+  const isHoldAlert = isAlert && statusStr.includes('hold');
+  const isClosedByEndTime = Boolean(endTime) && !isAlert && !isHoldAlert;
   let finalStatus = c.Status;
-  if (isClosedByEndTime && !CLOSED_STATUS_PATTERNS.some(p => String(c.Status || '').toLowerCase().includes(p))) {
+  if (!isHoldAlert && isClosedByEndTime && !CLOSED_STATUS_PATTERNS.some(p => statusStr.includes(p))) {
     finalStatus = 'Closed';
   }
 
@@ -2924,6 +2944,9 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     }
 
     const isClosedTicket = (c) => {
+      if (isAlertCase(c) && String(c.Status || c.status || '').toLowerCase().includes('hold')) {
+        return false;
+      }
       const endTime = getTicketEndTime(c);
       const status = String(c.Status || c.status || '').toLowerCase();
       return Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));

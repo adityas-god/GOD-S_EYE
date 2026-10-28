@@ -1,27 +1,5 @@
 [
   {
-    "id": "wr-1792793024168-aycfw",
-    "name": "Ryder Maryland War Room",
-    "url": "https://greyorange.zoom.us/j/84456844987?pwd=7yn82z6FhmOGiIUh6ZomkoN7FjRnqV.1",
-    "siteName": "Ryder Maryland",
-    "siteId": "sf-site-ryder-maryland",
-    "severity": "SEV 1",
-    "lead": "CAC",
-    "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T22:03:44.168Z"
-  },
-  {
-    "id": "wr-1792792966565-j2dts",
-    "name": "DHL Figs War Room",
-    "url": "https://greyorange.zoom.us/j/83912126593?pwd=RhSR5Q1Iae1EO10NlDw7at46rcz3Zb.1",
-    "siteName": "DHL- Figs",
-    "siteId": "sf-site-dhl-figs",
-    "severity": "SEV 1",
-    "lead": "CAC",
-    "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T22:02:46.565Z"
-  },
-  {
     "id": "wr-1792792827683-o9hxj",
     "name": "Walmart Mexico War Room",
     "url": "https://greyorange.zoom.us/j/81427755139?pwd=wbr2KWbkA5hDta2wSXYyahJGv8NWmw.1",
@@ -30,7 +8,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T22:00:27.683Z"
+    "startedAt": "2026-10-23T22:00:27.683Z",
+    "startDate": "2026-10-23T22:00:27.683Z",
+    "endDate": "2026-10-24T22:00:27.683Z"
   },
   {
     "id": "wr-1792792756412-gn0sh",
@@ -41,7 +21,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:59:16.412Z"
+    "startedAt": "2026-10-23T21:59:16.412Z",
+    "startDate": "2026-10-23T21:59:16.412Z",
+    "endDate": "2026-10-24T21:59:16.412Z"
   },
   {
     "id": "wr-1792792698059-c9d1s",
@@ -52,7 +34,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:58:18.059Z"
+    "startedAt": "2026-10-23T21:58:18.059Z",
+    "startDate": "2026-10-23T21:58:18.059Z",
+    "endDate": "2026-10-24T21:58:18.059Z"
   },
   {
     "id": "wr-1792792381025-hdllk",
@@ -63,7 +47,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:53:01.025Z"
+    "startedAt": "2026-10-23T21:53:01.025Z",
+    "startDate": "2026-10-23T21:53:01.025Z",
+    "endDate": "2026-10-24T21:53:01.025Z"
   },
   {
     "id": "wr-1792792276548-0qj61",
@@ -74,7 +60,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:51:16.548Z"
+    "startedAt": "2026-10-23T21:51:16.548Z",
+    "startDate": "2026-10-23T21:51:16.548Z",
+    "endDate": "2026-10-24T21:51:16.548Z"
   },
   {
     "id": "wr-1792792211272-vk6uy",
@@ -85,7 +73,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:50:11.272Z"
+    "startedAt": "2026-10-23T21:50:11.272Z",
+    "startDate": "2026-10-23T21:50:11.272Z",
+    "endDate": "2026-10-24T21:50:11.272Z"
   },
   {
     "id": "wr-1792791603983-y8fbs",
@@ -96,6 +86,8 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY SUPPORT",
-    "startedAt": "2026-10-23T21:40:03.983Z"
+    "startedAt": "2026-10-23T21:40:03.983Z",
+    "startDate": "2026-10-23T21:40:03.983Z",
+    "endDate": "2026-10-24T21:40:03.983Z"
   }
 ]

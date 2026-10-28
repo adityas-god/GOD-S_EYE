@@ -1797,22 +1797,27 @@ function SiteDetail() {
                   const alertEndTime = getTicketEndTime(c) || c.ended_at || (raw['ended_at'] as string | undefined) || c.ClosedDate;
                   const hasEndTime = Boolean(alertEndTime);
                   const stLower = (c.Status || '').toLowerCase();
-                  const isClosedTodayAlert = hasEndTime || stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved');
+                  const isClosedStatus = stLower.includes('closed') || stLower.includes('solved') || stLower.includes('resolved');
+                  const isHold = stLower.includes('hold');
+                  const isProgress = stLower.includes('progress') || stLower.includes('assigned');
+                  const isNew = stLower.includes('new');
+                  const isInvestigating = stLower.includes('investigat');
+                  const isClosedTodayAlert = !isHold && !isProgress && (isClosedStatus || (activeBucket === 'closed' || (hasEndTime && !isNew && !stLower.includes('open'))));
                   const durationInfo = calculateAlertDuration(
                     c.CreatedDate || c.created_at || (raw['created_at'] as string | undefined),
                     alertEndTime,
                     !isClosedTodayAlert
                   );
-                  const statusClass = isClosedTodayAlert
+                  const statusClass = (activeBucket === 'closed' || isClosedStatus || isClosedTodayAlert)
                     ? 'status-resolved'
-                    : stLower.includes('new')
-                    ? 'status-new'
-                    : stLower.includes('progress')
-                    ? 'status-progress'
-                    : stLower.includes('investigat')
-                    ? 'status-investigating'
-                    : stLower.includes('hold')
+                    : isHold
                     ? 'status-hold'
+                    : isNew
+                    ? 'status-new'
+                    : isProgress
+                    ? 'status-progress'
+                    : isInvestigating
+                    ? 'status-investigating'
                     : 'status-other';
 
                   const isAlert = activeBucket === 'alerts' || activeBucket === 'closed' || activeBucket === 'analytics' || isAlertCase(c);
@@ -1897,12 +1902,12 @@ function SiteDetail() {
                             <span
                               className={`case-status-badge ${statusClass}`}
                               style={
-                                isClosedTodayAlert
+                                isClosedTodayAlert || isClosedStatus
                                   ? { color: '#22c55e', borderColor: 'rgba(34, 197, 94, 0.4)', background: 'rgba(34, 197, 94, 0.12)' }
-                                  : { color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.12)' }
+                                  : undefined
                               }
                             >
-                              {isClosedTodayAlert ? 'Resolved' : 'Active Open'}
+                              {activeBucket === 'closed' ? (c.Status || 'Closed') : (c.Status || 'Open')}
                             </span>
                           </div>
 
@@ -1989,8 +1994,11 @@ function SiteDetail() {
 
                           {/* Status */}
                           <div>
-                            <span className={`case-status-badge ${statusClass}`}>
-                              {c.Status || 'Active Open'}
+                            <span
+                              className={`case-status-badge ${statusClass}`}
+                              style={isClosedTodayAlert || isClosedStatus ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
+                            >
+                              {c.Status || 'Open'}
                             </span>
                           </div>
 
@@ -2062,7 +2070,7 @@ function SiteDetail() {
                               className={`case-status-badge ${statusClass}`}
                               style={{ color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' }}
                             >
-                              Closed
+                              {c.Status || 'Closed'}
                             </span>
                           </div>
 
@@ -2179,9 +2187,9 @@ function SiteDetail() {
                           <div>
                             <span
                               className={`case-status-badge ${statusClass}`}
-                              style={isClosedTodayAlert ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
+                              style={isClosedTodayAlert || isClosedStatus ? { color: '#22c55e', borderColor: 'oklch(0.7 0.15 140 / 0.4)', background: 'oklch(0.7 0.15 140 / 0.15)' } : undefined}
                             >
-                              {isClosedTodayAlert ? 'Closed (Today)' : c.Status}
+                              {isClosedTodayAlert ? (c.Status || 'Closed (Today)') : (c.Status || 'Open')}
                             </span>
                           </div>
 
