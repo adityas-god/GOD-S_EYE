@@ -2462,6 +2462,33 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
 };
 
 /**
+ * Instant synchronous retrieval of the cached Salesforce overview snapshot from localStorage.
+ * Used as initialData in React Query to render dashboards and war rooms instantly with 0ms blank lag.
+ */
+export function getCachedOverviewSnapshot(): {
+  totalLiveCases: number;
+  totalLiveAlerts: number;
+  cases: SFCase[];
+  alerts: SFCase[];
+  closedAlerts: SFCase[];
+  siteStats: Record<string, SiteCaseStat>;
+  timestamp: string;
+} | undefined {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const cachedRaw = localStorage.getItem('sitepulse_overview_snapshot');
+      if (cachedRaw) {
+        const cached = JSON.parse(cachedRaw);
+        if (cached && (Array.isArray(cached.cases) || Array.isArray(cached.alerts))) {
+          return cached;
+        }
+      }
+    }
+  } catch {}
+  return undefined;
+}
+
+/**
  * Fetch all LIVE OPEN cases for a specific site (excluding Alerts and Solved/Closed/On Hold).
  * Accepts both { data: { siteName, accountId } } and direct { siteName, accountId } parameters.
  */

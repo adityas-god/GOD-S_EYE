@@ -71,7 +71,7 @@ export function setStoredWarRooms(rooms: WarRoom[], notify = true): void {
 export async function fetchActiveWarRooms(): Promise<WarRoom[]> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
+    const timeoutId = setTimeout(() => controller.abort(), 1500);
 
     const res = await fetch('/api/war-rooms', { signal: controller.signal });
     clearTimeout(timeoutId);
@@ -79,9 +79,15 @@ export async function fetchActiveWarRooms(): Promise<WarRoom[]> {
     if (res.ok) {
       const data = await res.json();
       if (data && Array.isArray(data.warRooms)) {
-        // Cache locally for offline resilience without dispatching recursive invalidation event
-        setStoredWarRooms(data.warRooms, false);
-        return data.warRooms;
+        if (data.warRooms.length > 0) {
+          // Cache locally for offline resilience without dispatching recursive invalidation event
+          setStoredWarRooms(data.warRooms, false);
+          return data.warRooms;
+        } else {
+          const stored = getStoredWarRooms();
+          if (stored.length > 0) return stored;
+          return [];
+        }
       }
     }
   } catch {

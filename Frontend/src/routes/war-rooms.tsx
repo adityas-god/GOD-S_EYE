@@ -49,6 +49,7 @@ import {
 import { ZoomIcon } from '@/components/zoom-icon';
 import {
   fetchActiveWarRooms,
+  getStoredWarRooms,
   createActiveWarRoom,
   removeActiveWarRoom,
   updateActiveWarRoom,
@@ -57,6 +58,7 @@ import {
 import { sitesQueryOptions, type Site } from '@/lib/sites';
 import {
   sfFetchLiveCasesOverview,
+  getCachedOverviewSnapshot,
   type SFCase,
   detectSeverity,
   detectCaseCategory,
@@ -191,11 +193,13 @@ export function WarRoomsPage() {
   const { data: sites = [] } = useQuery(sitesQueryOptions());
   const compiledSitesList = useMemo(() => compileSites(sites), [sites]);
 
-  // Fetch active war rooms
+  // Fetch active war rooms (instant initialData from localStorage + background sync)
   const { data: warRooms = [], isLoading: warRoomsLoading, isFetching: warRoomsFetching, refetch: refetchWarRooms } = useQuery({
     queryKey: ['active-war-rooms'],
     queryFn: fetchActiveWarRooms,
-    staleTime: 30_000,
+    initialData: getStoredWarRooms,
+    placeholderData: (prev) => prev,
+    staleTime: 60_000,
     refetchInterval: 30_000,
   });
 
@@ -218,14 +222,16 @@ export function WarRoomsPage() {
     return () => window.removeEventListener('war-rooms-changed', handleChanged);
   }, [queryClient]);
 
-  // Fetch live Salesforce overview tickets (cached across the app)
+  // Fetch live Salesforce overview tickets (instant initialData from persistent snapshot)
   const { data: sfOverview, refetch: refetchOverview } = useQuery({
     queryKey: ['salesforce-overview'],
     queryFn: () => sfFetchLiveCasesOverview(false),
-    staleTime: 30_000,
+    initialData: getCachedOverviewSnapshot,
+    placeholderData: (prev) => prev,
+    staleTime: 60_000,
   });
 
-  // If a war room has a site name, also query site-specific cases
+  // If a war room has a site name, also query site-specific cases (cached per-site in sessionStorage)
   const { data: siteCasesData } = useQuery({
     queryKey: ['cases-site', selectedWarRoom?.siteName],
     queryFn: async () => {
@@ -234,13 +240,24 @@ export function WarRoomsPage() {
         const res = await fetch(`/api/cases/site/${encodeURIComponent(selectedWarRoom.siteName)}`);
         if (res.ok) {
           const data = await res.json();
+          try {
+            sessionStorage.setItem(`site_cases_${selectedWarRoom.siteName}`, JSON.stringify(data));
+          } catch {}
           return data;
         }
       } catch {}
       return null;
     },
+    initialData: () => {
+      if (!selectedWarRoom?.siteName) return null;
+      try {
+        const raw = sessionStorage.getItem(`site_cases_${selectedWarRoom.siteName}`);
+        if (raw) return JSON.parse(raw);
+      } catch {}
+      return null;
+    },
     enabled: Boolean(selectedWarRoom?.siteName),
-    staleTime: 30_000,
+    staleTime: 60_000,
   });
 
   // Create Mutation with Instant Optimistic Update
@@ -522,6 +539,9 @@ export function WarRoomsPage() {
     }
     if (sfOverview?.alerts && Array.isArray(sfOverview.alerts)) {
       sfOverview.alerts.forEach(addCase);
+    }
+    if (sfOverview?.closedAlerts && Array.isArray(sfOverview.closedAlerts)) {
+      sfOverview.closedAlerts.forEach(addCase);
     }
 
     // If selected war room specifies a siteName, filter candidates to that site
@@ -1324,7 +1344,7 @@ export function WarRoomsPage() {
               </div>
 
               {/* Sites Grid / List */}
-              {warRoomsLoading ? (
+              {warRooms.length === 0 && warRoomsLoading ? (
                 <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--muted-foreground)', fontSize: 13, fontFamily: 'var(--font-sans)' }}>
                   Loading active war rooms…
                 </div>

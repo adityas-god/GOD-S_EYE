@@ -8,9 +8,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T22:00:27.683Z",
-    "startDate": "2026-10-23T22:00:27.683Z",
-    "endDate": "2026-10-24T22:00:27.683Z"
+    "startedAt": "2026-10-23T22:00:00.000Z",
+    "startDate": "2026-10-23T22:00:00.000Z",
+    "endDate": "2026-11-06T22:00:00.000Z"
   },
   {
     "id": "wr-1792792756412-gn0sh",
@@ -21,9 +21,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:59:16.412Z",
-    "startDate": "2026-10-23T21:59:16.412Z",
-    "endDate": "2026-10-24T21:59:16.412Z"
+    "startedAt": "2026-10-23T21:59:00.000Z",
+    "startDate": "2026-10-23T21:59:00.000Z",
+    "endDate": "2026-11-06T21:59:00.000Z"
   },
   {
     "id": "wr-1792792698059-c9d1s",
@@ -34,9 +34,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:58:18.059Z",
-    "startDate": "2026-10-23T21:58:18.059Z",
-    "endDate": "2026-10-24T21:58:18.059Z"
+    "startedAt": "2026-10-23T21:58:00.000Z",
+    "startDate": "2026-10-23T21:58:00.000Z",
+    "endDate": "2026-11-04T21:58:00.000Z"
   },
   {
     "id": "wr-1792792381025-hdllk",
@@ -47,9 +47,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:53:01.025Z",
-    "startDate": "2026-10-23T21:53:01.025Z",
-    "endDate": "2026-10-24T21:53:01.025Z"
+    "startedAt": "2026-10-23T21:53:00.000Z",
+    "startDate": "2026-10-23T21:53:00.000Z",
+    "endDate": "2026-11-04T21:53:00.000Z"
   },
   {
     "id": "wr-1792792276548-0qj61",
@@ -60,9 +60,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:51:16.548Z",
-    "startDate": "2026-10-23T21:51:16.548Z",
-    "endDate": "2026-10-24T21:51:16.548Z"
+    "startedAt": "2026-10-23T21:51:00.000Z",
+    "startDate": "2026-10-23T21:51:00.000Z",
+    "endDate": "2026-11-04T21:51:00.000Z"
   },
   {
     "id": "wr-1792792211272-vk6uy",
@@ -73,9 +73,9 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T21:50:11.272Z",
-    "startDate": "2026-10-23T21:50:11.272Z",
-    "endDate": "2026-10-24T21:50:11.272Z"
+    "startedAt": "2026-10-23T21:50:00.000Z",
+    "startDate": "2026-10-23T21:50:00.000Z",
+    "endDate": "2026-11-04T21:50:00.000Z"
   },
   {
     "id": "wr-1792791603983-y8fbs",
@@ -86,8 +86,8 @@
     "severity": "SEV 1",
     "lead": "CAC",
     "notes": "DAILY SUPPORT",
-    "startedAt": "2026-10-23T21:40:03.983Z",
-    "startDate": "2026-10-23T21:40:03.983Z",
-    "endDate": "2026-10-24T21:40:03.983Z"
+    "startedAt": "2026-10-23T21:40:00.000Z",
+    "startDate": "2026-10-23T21:40:00.000Z",
+    "endDate": "2026-11-06T21:40:00.000Z"
   }
 ]
