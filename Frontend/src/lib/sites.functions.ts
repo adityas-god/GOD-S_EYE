@@ -13,9 +13,12 @@ export type SiteRow = {
   is_down?: boolean;
 };
 
-// Give each entry a stable deterministic ID based on position
-function makeId(position: number): string {
-  return `local-site-${String(position).padStart(4, '0')}`;
+// Give each entry a stable deterministic ID based on position and name to guarantee uniqueness
+function makeId(position: number, name?: string): string {
+  const base = `local-site-${String(position).padStart(4, '0')}`;
+  if (!name) return base;
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  return slug ? `${base}-${slug}` : base;
 }
 
 /**
@@ -38,7 +41,7 @@ export const getSites = async (): Promise<SiteRow[]> => {
         name: s.name.trim(),
         product_line: s.product_line || (pLines.length > 0 ? pLines.join(', ') : null),
         product_lines: pLines,
-        id: makeId(s.position),
+        id: makeId(s.position, s.name),
         created_at: new Date().toISOString(),
       });
     }
@@ -88,7 +91,7 @@ export const getSites = async (): Promise<SiteRow[]> => {
             });
           } else {
             unique.set(key, {
-              id: s.id || makeId(s.position ?? unique.size + 1),
+              id: s.id || makeId(s.position ?? unique.size + 1, s.name),
               name: s.name.trim(),
               product_line: s.product_line ?? (pLines.length > 0 ? pLines.join(', ') : null),
               product_lines: pLines,

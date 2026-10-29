@@ -197,7 +197,13 @@ router.get('/', async (req, res) => {
     }
 
     const openCases = await CaseRepository.findAllOpenCases();
-    const strictlyFiltered = openCases.filter(c => isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    const strictlyFiltered = openCases.filter(c => {
+      if (c.CreatedDate) {
+        const yr = new Date(c.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) return false;
+      }
+      return isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c);
+    });
     res.json({
       success: true,
       count: strictlyFiltered.length,

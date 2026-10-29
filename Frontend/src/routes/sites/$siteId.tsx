@@ -123,7 +123,55 @@ export const Route = createFileRoute('/sites/$siteId')({
     const sites = await context.queryClient.ensureQueryData(sitesQueryOptions());
     const site = resolveSite(sites, params.siteId);
     if (site) {
-      // Non-blocking prefetch so the page opens instantly without freezing
+      // Instantly seed site cases & alerts from existing salesforce-overview data so panel opens with 0ms delay
+      const overview = context.queryClient.getQueryData<any>(['salesforce-overview']);
+      if (overview && site.name) {
+        const compiled = compileSiteIndex(sites);
+        const matchesThisSite = (item: SFCase) => {
+          if (!item) return false;
+          const best = findBestSiteForCase(item, compiled);
+          if (best && areSameSite(best, site.name, compiled)) return true;
+          const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || (item as any).Account?.Name || '').trim().toLowerCase();
+          const sLower = site.name.trim().toLowerCase();
+          if (loc && loc.length >= 3 && sLower.length >= 3 && (loc.includes(sLower) || areSameSite(loc, site.name, compiled))) return true;
+          return false;
+        };
+
+        const siteCases = (overview.cases || []).filter(matchesThisSite).filter(c => {
+          if (c.CreatedDate) {
+            const yr = new Date(c.CreatedDate).getFullYear();
+            if (!isNaN(yr) && yr < 2026) return false;
+          }
+          return !isAlertCase(c);
+        });
+        const siteAlerts = (overview.alerts || []).filter(matchesThisSite).filter(a => {
+          if (a.CreatedDate) {
+            const yr = new Date(a.CreatedDate).getFullYear();
+            if (!isNaN(yr) && yr < 2026) return false;
+          }
+          return isAlertCase(a) && isOpenAlert(a);
+        });
+        const siteClosed = (overview.closedAlerts || []).filter(matchesThisSite);
+
+        context.queryClient.setQueryData(
+          ['site-cases', site.id, site.name, site.salesforce_account_id, 'all', null],
+          (prev: any) => {
+            if (prev && Array.isArray(prev.records) && prev.records.length > 0) return prev;
+            return {
+              totalSize: siteCases.length,
+              done: true,
+              records: siteCases,
+              alerts: siteAlerts,
+              closed: siteClosed,
+              product_lines: (site.product_lines as string[]) || [],
+              product_line: site.product_line || null,
+              site: site,
+            };
+          }
+        );
+      }
+
+      // Non-blocking prefetch so fresh backend data streams in without freezing
       void context.queryClient.prefetchQuery({
         queryKey: ['site-cases', site.id, site.name, site.salesforce_account_id, 'all', null],
         queryFn: () =>
@@ -173,6 +221,7 @@ function SiteDetail() {
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [selectedCase, setSelectedCase] = useState<SFCase | null>(null);
   const [activeBucket, setActiveBucket] = useState<'cases' | 'alerts' | 'closed' | 'analytics'>('cases');
+  const [displayLimit, setDisplayLimit] = useState(40);
   const [siteTimeRange, setSiteTimeRange] = useState<SiteTimeRangeKey>('all');
   const getDefaultStartDate = () => new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
   const getDefaultEndDate = () => new Date().toISOString().slice(0, 10);
@@ -238,6 +287,7 @@ function SiteDetail() {
   const {
     data: sfData,
     isFetching: sfFetching,
+    isPlaceholderData: sfIsPlaceholder,
     refetch: refetchSf,
     error: sfError,
   } = useQuery({
@@ -266,10 +316,12 @@ function SiteDetail() {
               const siteLower = site.name.trim().toLowerCase();
               const compiled = compileSiteIndex(sites || []);
               const matchesSite = (item: SFCase) => {
+                if (!item) return false;
                 const best = findBestSiteForCase(item, compiled);
-                if (best && areSameSite(best, site.name)) return true;
+                if (best && areSameSite(best, site.name, compiled)) return true;
                 const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || (item as any).Account?.Name || '').trim().toLowerCase();
-                return loc.includes(siteLower) || siteLower.includes(loc);
+                if (loc && loc.length >= 3 && siteLower.length >= 3 && (loc.includes(siteLower) || areSameSite(loc, site.name, compiled))) return true;
+                return false;
               };
               const fallbackCases = (!result.records || result.records.length === 0) && Array.isArray(overview.cases)
                 ? (overview.cases as SFCase[]).filter(matchesSite)
@@ -312,41 +364,60 @@ function SiteDetail() {
     retry: 3,
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
-    placeholderData: (prev) => {
-      if (prev && (prev as any).records && (prev as any).records.length > 0 && (prev as any).alerts && (prev as any).alerts.length > 0) return prev;
+    initialData: () => {
+      if (siteTimeRange !== 'all') return undefined;
       try {
         const overview = queryClient.getQueryData<any>(['salesforce-overview']);
         if (overview && site?.name) {
-          const siteLower = site.name.trim().toLowerCase();
           const compiled = compileSiteIndex(sites || []);
+          const siteLower = site.name.trim().toLowerCase();
           const matchesSite = (item: SFCase) => {
+            if (!item) return false;
             const best = findBestSiteForCase(item, compiled);
-            if (best && areSameSite(best, site.name)) return true;
+            if (best && areSameSite(best, site.name, compiled)) return true;
             const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || (item as any).Account?.Name || '').trim().toLowerCase();
-            return loc.includes(siteLower) || siteLower.includes(loc);
+            if (loc && loc.length >= 3 && siteLower.length >= 3 && (loc.includes(siteLower) || areSameSite(loc, site.name, compiled))) return true;
+            return false;
           };
-          const matchedCases = Array.isArray(overview.cases) ? (overview.cases as SFCase[]).filter(matchesSite) : [];
-          const matchedAlerts = Array.isArray(overview.alerts)
-            ? (overview.alerts as SFCase[]).filter(matchesSite)
-            : [];
-          if (matchedCases.length > 0 || matchedAlerts.length > 0) {
-            return {
-              totalSize: matchedCases.length,
-              done: true,
-              records: matchedCases,
-              alerts: matchedAlerts,
-              closed: [],
-              product_lines: (site.product_lines as string[]) || [],
-              product_line: site.product_line || null,
-              site: site,
-            };
-          }
+          const matchedCases = (overview.cases || []).filter(matchesSite).filter((c: SFCase) => {
+            if (c.CreatedDate) {
+              const yr = new Date(c.CreatedDate).getFullYear();
+              if (!isNaN(yr) && yr < 2026) return false;
+            }
+            return !isAlertCase(c);
+          });
+          const matchedAlerts = (overview.alerts || []).filter(matchesSite).filter((a: SFCase) => {
+            if (a.CreatedDate) {
+              const yr = new Date(a.CreatedDate).getFullYear();
+              if (!isNaN(yr) && yr < 2026) return false;
+            }
+            return isAlertCase(a) && isOpenAlert(a);
+          });
+          const matchedClosed = (overview.closedAlerts || []).filter(matchesSite);
+          return {
+            totalSize: matchedCases.length,
+            done: true,
+            records: matchedCases,
+            alerts: matchedAlerts,
+            closed: matchedClosed,
+            product_lines: (site.product_lines as string[]) || [],
+            product_line: site.product_line || null,
+            site: site,
+          };
         }
       } catch {}
       return undefined;
     },
+    placeholderData: (prev) => {
+      if (prev && (prev as any).site && ((prev as any).site.id === site?.id || (prev as any).site.name === site?.name)) {
+        return prev;
+      }
+      return undefined;
+    },
   });
-  const sfLoading = !sfData;
+  // sfLoading: true only on first load (no real data yet, or placeholder being shown during initial fetch)
+  // NOT true during background 30s refreshes (sfFetching=true but sfIsPlaceholder=false means we have real data)
+  const sfLoading = !sfData || (sfFetching && sfIsPlaceholder);
 
   // Check if site is in Red Zone so dedicated Red Zone solid tag and breach info can be displayed
   const { data: redZoneOverview } = useQuery({
@@ -469,48 +540,96 @@ function SiteDetail() {
       return (overview.alerts as SFCase[]).filter(a => {
         if (!isAlertCase(a)) return false;
         const best = findBestSiteForCase(a, compiled);
-        if (best && areSameSite(best, site.name)) return true;
+        if (best && areSameSite(best, site.name, compiled)) return true;
         const loc = String(a.Customer_Location__c || a.Snow_Sitename__c || a.Site_Name_Customer_Input__c || a.Account_Name__c || (a as any).Account?.Name || '').trim().toLowerCase();
-        return loc.includes(siteLower) || siteLower.includes(loc);
+        if (loc && loc.length >= 3 && siteLower.length >= 3 && (loc.includes(siteLower) || areSameSite(loc, site.name, compiled))) return true;
+        return false;
       });
     } catch {
       return [];
     }
   }, [queryClient, site?.name, sites]);
 
-  // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts, not change requests)
+  // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts, not change requests, strictly year >= 2026)
   const allCases = useMemo(() => {
-    const list = rawCases.filter(c => !isAlertCase(c) && isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+    const list = rawCases.filter(c => {
+      if (c.CreatedDate) {
+        const yr = new Date(c.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) return false;
+      }
+      return !isAlertCase(c) && isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c);
+    });
     return list.filter(matchesTimeWindow);
   }, [rawCases, matchesTimeWindow]);
 
-  // 2. Live Open Alerts: strictly open alert tickets (no end time, not closed)
+  // 2. Live Open Alerts: strictly open alert tickets (no end time, not closed, strictly year >= 2026)
   const openAlerts = useMemo(() => {
     const map = new Map<string, SFCase>();
+    const isYear2026 = (item: SFCase) => {
+      if (!item || !item.CreatedDate) return true;
+      const yr = new Date(item.CreatedDate).getFullYear();
+      return isNaN(yr) || yr >= 2026;
+    };
     for (const a of rawAlerts) {
-      if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
+      if (isYear2026(a) && isAlertCase(a) && isOpenAlert(a) && a.Id) {
         map.set(a.Id, a);
       }
     }
     for (const c of rawCases) {
-      if (isAlertCase(c) && isOpenAlert(c) && c.Id) {
+      if (isYear2026(c) && isAlertCase(c) && isOpenAlert(c) && c.Id) {
         map.set(c.Id, c);
       }
     }
     for (const a of overviewAlertsForSite) {
-      if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
+      if (isYear2026(a) && isAlertCase(a) && isOpenAlert(a) && a.Id) {
         map.set(a.Id, a);
       }
     }
     if (analyticsData?.alerts && Array.isArray(analyticsData.alerts)) {
       for (const a of analyticsData.alerts) {
-        if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
+        if (isYear2026(a) && isAlertCase(a) && isOpenAlert(a) && a.Id) {
           map.set(a.Id, a);
         }
       }
     }
     return Array.from(map.values()).filter(matchesTimeWindow);
   }, [rawAlerts, rawCases, overviewAlertsForSite, analyticsData?.alerts, matchesTimeWindow]);
+
+  // Synchronize counts immediately into global React Query salesforce-overview & sites caches
+  // so the site card on the main dashboard panel immediately matches this site workspace
+  useEffect(() => {
+    if (sfLoading || !site?.name) return;
+    try {
+      const sKey = site.name.trim().toLowerCase();
+      queryClient.setQueryData(['salesforce-overview'], (prev: any) => {
+        if (!prev || !prev.siteStats) return prev;
+        const existing = prev.siteStats[sKey] || {};
+        if (existing.count === allCases.length && existing.alertCount === openAlerts.length) return prev;
+        return {
+          ...prev,
+          siteStats: {
+            ...prev.siteStats,
+            [sKey]: {
+              ...existing,
+              count: Math.max(existing.count || 0, allCases.length),
+              alertCount: Math.max(existing.alertCount || 0, openAlerts.length),
+            },
+          },
+        };
+      });
+
+      queryClient.setQueryData(['sites'], (prevSites: any) => {
+        if (!Array.isArray(prevSites)) return prevSites;
+        return prevSites.map((s: Site) => {
+          if (s.name?.trim().toLowerCase() === sKey) {
+            if ((s.open_cases_count ?? 0) >= allCases.length) return s;
+            return { ...s, open_cases_count: allCases.length };
+          }
+          return s;
+        });
+      });
+    } catch {}
+  }, [allCases.length, openAlerts.length, site?.name, sfLoading, queryClient]);
 
   // 3. Closed Alerts: strictly closed alerts (by default ONLY past 24 hours; expands when timeframe selected)
   const closedAlerts = useMemo(() => {
@@ -754,6 +873,16 @@ function SiteDetail() {
       return matchSearch && matchStatus && matchSeverity && matchProduct && matchCategory && matchAssignee;
     });
   }, [activeItems, caseSearch, statusFilter, severityFilter, productFilter, categoryFilter, assigneeFilter, siteProductLines, activeBucket]);
+
+  // Reset display limit when switching bucket or applying filters for snappy O(1) response
+  useEffect(() => {
+    setDisplayLimit(40);
+  }, [activeBucket, statusFilter, severityFilter, productFilter, categoryFilter, assigneeFilter, caseSearch, siteTimeRange]);
+
+  // Windowed rendering slice: only mount initial 40 rows into DOM for instant responsiveness
+  const visibleCases = useMemo(() => {
+    return filteredCases.slice(0, displayLimit);
+  }, [filteredCases, displayLimit]);
 
   if (!site) {
     return (
@@ -1101,7 +1230,7 @@ function SiteDetail() {
                     minWidth: 18,
                   }}
                 >
-                  {allCases.length}
+                  {sfLoading ? '…' : allCases.length}
                 </span>
                 <span
                   style={{
@@ -1160,7 +1289,7 @@ function SiteDetail() {
                     minWidth: 18,
                   }}
                 >
-                  {openAlerts.length}
+                  {sfLoading ? '…' : openAlerts.length}
                 </span>
                 <span
                   style={{
@@ -1823,8 +1952,16 @@ function SiteDetail() {
                 className="panel-scroll"
                 tabIndex={0}
                 aria-label="Salesforce cases scrollable panel"
+                onScroll={e => {
+                  const target = e.currentTarget;
+                  if (target.scrollHeight - target.scrollTop <= target.clientHeight + 80) {
+                    if (displayLimit < filteredCases.length) {
+                      setDisplayLimit(prev => Math.min(prev + 40, filteredCases.length));
+                    }
+                  }
+                }}
               >
-                {sfLoading && allCases.length === 0 ? (
+                {sfLoading ? (
                   <div className="source-empty">
                     <RefreshCw className="animate-spin" style={{ width: 28, height: 28, color: 'var(--blue)' }} />
                     <h3 style={{ marginTop: 14 }}>Fetching Salesforce cases…</h3>
@@ -1832,7 +1969,7 @@ function SiteDetail() {
                   </div>
             ) : filteredCases.length > 0 ? (
               <div>
-                {filteredCases.map(c => {
+                {visibleCases.map(c => {
                   const isDown = Boolean(c.Is_Site_100_Down__c);
                   const raw = c as Record<string, unknown>;
                   const alertEndTime = getTicketEndTime(c) || c.ended_at || (raw['ended_at'] as string | undefined) || c.ClosedDate;
@@ -2261,6 +2398,25 @@ function SiteDetail() {
                     </div>
                   );
                 })}
+                {displayLimit < filteredCases.length && (
+                  <div style={{ textAlign: 'center', padding: '10px 0' }}>
+                    <button
+                      type="button"
+                      onClick={() => setDisplayLimit(prev => Math.min(prev + 40, filteredCases.length))}
+                      style={{
+                        background: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 4,
+                        padding: '4px 12px',
+                        fontSize: 11,
+                        color: 'var(--muted-foreground)',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Load more ({filteredCases.length - displayLimit} remaining)
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="source-empty">
@@ -2329,13 +2485,13 @@ function SiteDetail() {
             ) : (
               <>
                 <span>
-                  {filteredCases.length} of {activeItems.length}{' '}
+                  {Math.min(displayLimit, filteredCases.length)} of {filteredCases.length}{' '}
                   {activeBucket === 'cases'
                     ? 'open cases'
                     : activeBucket === 'alerts'
                     ? 'open alerts'
                     : 'closed alerts'}{' '}
-                  displayed
+                  displayed {filteredCases.length > displayLimit ? '• scroll to load more' : ''}
                 </span>
                 <span>Source: Salesforce Org (Live)</span>
               </>

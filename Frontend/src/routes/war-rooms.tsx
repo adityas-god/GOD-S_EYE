@@ -49,7 +49,6 @@ import {
 import { ZoomIcon } from '@/components/zoom-icon';
 import {
   fetchActiveWarRooms,
-  getStoredWarRooms,
   createActiveWarRoom,
   removeActiveWarRoom,
   updateActiveWarRoom,
@@ -58,7 +57,6 @@ import {
 import { sitesQueryOptions, type Site } from '@/lib/sites';
 import {
   sfFetchLiveCasesOverview,
-  getCachedOverviewSnapshot,
   type SFCase,
   detectSeverity,
   detectCaseCategory,
@@ -193,13 +191,11 @@ export function WarRoomsPage() {
   const { data: sites = [] } = useQuery(sitesQueryOptions());
   const compiledSitesList = useMemo(() => compileSites(sites), [sites]);
 
-  // Fetch active war rooms (instant initialData from localStorage + background sync)
+  // Fetch active war rooms
   const { data: warRooms = [], isLoading: warRoomsLoading, isFetching: warRoomsFetching, refetch: refetchWarRooms } = useQuery({
     queryKey: ['active-war-rooms'],
     queryFn: fetchActiveWarRooms,
-    initialData: getStoredWarRooms,
-    placeholderData: (prev) => prev,
-    staleTime: 60_000,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   });
 
@@ -222,16 +218,14 @@ export function WarRoomsPage() {
     return () => window.removeEventListener('war-rooms-changed', handleChanged);
   }, [queryClient]);
 
-  // Fetch live Salesforce overview tickets (instant initialData from persistent snapshot)
+  // Fetch live Salesforce overview tickets
   const { data: sfOverview, refetch: refetchOverview } = useQuery({
     queryKey: ['salesforce-overview'],
-    queryFn: () => sfFetchLiveCasesOverview(false),
-    initialData: getCachedOverviewSnapshot,
-    placeholderData: (prev) => prev,
+    queryFn: () => sfFetchLiveCasesOverview(),
     staleTime: 60_000,
   });
 
-  // If a war room has a site name, also query site-specific cases (cached per-site in sessionStorage)
+  // If a war room has a site name, also query site-specific cases
   const { data: siteCasesData } = useQuery({
     queryKey: ['cases-site', selectedWarRoom?.siteName],
     queryFn: async () => {
@@ -239,20 +233,8 @@ export function WarRoomsPage() {
       try {
         const res = await fetch(`/api/cases/site/${encodeURIComponent(selectedWarRoom.siteName)}`);
         if (res.ok) {
-          const data = await res.json();
-          try {
-            sessionStorage.setItem(`site_cases_${selectedWarRoom.siteName}`, JSON.stringify(data));
-          } catch {}
-          return data;
+          return await res.json();
         }
-      } catch {}
-      return null;
-    },
-    initialData: () => {
-      if (!selectedWarRoom?.siteName) return null;
-      try {
-        const raw = sessionStorage.getItem(`site_cases_${selectedWarRoom.siteName}`);
-        if (raw) return JSON.parse(raw);
       } catch {}
       return null;
     },
@@ -684,32 +666,29 @@ export function WarRoomsPage() {
     const allWarRoomSiteNames = new Set(
       warRooms.map(r => r.siteName).filter(Boolean) as string[]
     );
+    const siteNamesList = Array.from(allWarRoomSiteNames);
 
     let totalOpen = 0;
     let sev1Open = 0;
     let sev2Open = 0;
+    let last24hTotal = 0;
+    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
 
     if (sfOverview?.cases && Array.isArray(sfOverview.cases)) {
       for (const c of sfOverview.cases) {
+        const d = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
+        if (d >= cutoffMs) last24hTotal++;
+
         if (!isLiveOpenCase(c)) continue;
         const mapped = findBestSiteForCase(c, compiledSitesList);
-        const isMatched = Array.from(allWarRoomSiteNames).some(sn => mapped && areSameSite(mapped, sn));
-        if (isMatched || allWarRoomSiteNames.size === 0) {
+        const isMatched = siteNamesList.some(sn => mapped && areSameSite(mapped, sn));
+        if (isMatched || siteNamesList.length === 0) {
           totalOpen++;
           const s = detectSeverity(c);
           if (s === 'sev1') sev1Open++;
           else if (s === 'sev2' || (s as string) === 'sev2_urgent' || s === 'sev2_high') sev2Open++;
         }
       }
-    }
-
-    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-    let last24hTotal = 0;
-    if (sfOverview?.cases && Array.isArray(sfOverview.cases)) {
-      last24hTotal = sfOverview.cases.filter(c => {
-        const d = c.CreatedDate ? new Date(c.CreatedDate).getTime() : 0;
-        return d >= cutoffMs;
-      }).length;
     }
 
     return {

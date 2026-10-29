@@ -143,54 +143,52 @@ export function isAlertCase(c: SFCase): boolean {
   const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
   const sub = String(c.Subject || raw.subject || '').trim();
 
-  // 1. Service Requests are customer/internal service requests, NEVER automated alerts:
+  // 1. Explicit Type or Category is Alert
+  if (typeStr === 'alert' || catStr === 'alert') return true;
+
+  // 2. Strong Automated Alert Subject Signatures (Checked FIRST so automated monitoring tickets are NEVER wrongly dismissed as service requests)
+  if (sub) {
+    if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
+      return true;
+    }
+
+    // Automated monitoring rule signatures (case-insensitive substring/word matching)
+    if (
+      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
+        sub
+      )
+    ) {
+      return true;
+    }
+
+    if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
+      return true;
+    }
+
+    // Host / Site prefix with alert pattern: e.g. "hnm-canada: ProcessExecutionsFailed...", "xpo-hnm: DiskUtilHigh...", "samprod: Postgres..."
+    if (/^[a-z0-9._-]+:\s*/i.test(sub) && /(?:low|high|failed|failure|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata|util|error|down|alert|warning|critical|executions)/i.test(sub)) {
+      return true;
+    }
+  }
+
+  // 3. Service Requests are customer/internal service requests, NEVER automated alerts:
   // User requirement: "its Service requet and it is in alert queue"
   const isServiceRequest =
-    typeStr.includes('request') ||
-    typeStr.includes('service') ||
-    catStr.includes('request') ||
-    catStr.includes('service') ||
+    typeStr === 'service request' ||
     typeStr === 'sr' ||
+    catStr === 'service request' ||
     catStr === 'sr' ||
     /^go\s+alert:/i.test(sub) ||
-    /^(\[?sr\]?|service\s*request)/i.test(sub);
+    /^(\[?sr\]?|service\s*request\b)/i.test(sub);
 
   if (isServiceRequest) {
     return false;
   }
 
-  // 2. Explicit Type or Category is Alert
-  if (typeStr === 'alert' || catStr === 'alert') return true;
-
-  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
+  // 4. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
   // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
   if (isImTicket(c)) {
     return false;
-  }
-
-  if (!sub) return false;
-
-  // 4. Strong Automated Alert Subject Signatures:
-  if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
-    return true;
-  }
-
-  // Automated monitoring rule signatures (case-insensitive substring/word matching)
-  if (
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
-      sub
-    )
-  ) {
-    return true;
-  }
-
-  if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
-    return true;
-  }
-
-  // Host prefix with alert pattern: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "flexo-hnm-canada: ..."
-  if (/^[a-z0-9._-]+prod:\s*/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
-    return true;
   }
 
   // 5. Fallback check on description ONLY if automated alert signatures exist
@@ -330,6 +328,12 @@ export function isOpenAlert(c: SFCase): boolean {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
+  // User requirement: strictly only cases/alerts from 2026 onwards
+  if (c.CreatedDate) {
+    const yr = new Date(c.CreatedDate).getFullYear();
+    if (!isNaN(yr) && yr < 2026) return false;
+  }
+
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
 
@@ -392,6 +396,12 @@ export function isClosedAlert(c: SFCase): boolean {
  */
 export function isLiveOpenCase(c: SFCase): boolean {
   if (!c) return false;
+
+  // User requirement: strictly only cases from 2026 onwards
+  if (c.CreatedDate) {
+    const yr = new Date(c.CreatedDate).getFullYear();
+    if (!isNaN(yr) && yr < 2026) return false;
+  }
 
   // 1. If ticket has an End Time, Closed Date, or downtime completed -> strictly omit from live cases!
   if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
@@ -1304,6 +1314,11 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   "Casey's Joplin": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg", "uscstg1-caseystg", "kafka-caseyprod-prod", "kafka-caseyprod", "casey-prod", "caseys-prod", "casey-joplin"],
   "Casey's": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg"],
   'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)', 'flexo-hnm-canada', 'flexo-hnm', 'hnm-canada-prod', 'h&m-canada (ajax)', 'h&m-canada', 'hm-canada', 'ajaxprod'],
+  'GXO-H&M Prod': [
+    'gxo hm prod', 'gxo-h&m prod', 'gxo h&m', 'gxo hm', 'gxo hnm',
+    'xpo hnm', 'xpo-hnm', 'xpo -hnm', 'xpo - hnm', 'xpo_hnm', 'xpo hm', 'xpo-hm', 'xpo -hm',
+    'gxo hm perris', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'gxo perris', 'xpo perris', 'gxo-hm-prod'
+  ],
   'H&M P1': ['hm p1', 'h&m p1', 'hm robbinsville', 'hm robbinsville project 1', 'h&m(project1)-robbinsville(newjersey)'],
   'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms', 'h&m (project1) _ rms'],
   'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilorluxottica-fhr(california)', 'fhr luxottica', 'fhr'],
@@ -1314,7 +1329,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat', 'hjartat', 'hjärtat', 'stockholm', 'apotek stockholm', 'hjartat stockholm', 'apotek hjartat'],
   'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
@@ -1891,6 +1906,13 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
       if (fhr) return fhr.originalName;
       return 'Essilor Luxottica';
     }
+  }
+
+  // Apotek resolution:
+  if (/\b(?:apotek|hj[aä]rtat|stockholm)\b/i.test(combinedContext) || /apotek/i.test(combinedContext)) {
+    const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
+    if (ap) return ap.originalName;
+    return 'Apotek';
   }
 
   // Sams Club multi-site resolution:

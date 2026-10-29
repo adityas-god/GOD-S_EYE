@@ -97,6 +97,8 @@ export const CaseRepository = {
         delete filter.$or;
       }
 
+      filter.created_date = { $gte: new Date('2026-01-01T00:00:00Z') };
+
       return CaseModel.find(filter).sort({ last_modified_date: -1 }).lean();
     }
 
@@ -106,6 +108,8 @@ export const CaseRepository = {
     const lowerAliases = siteAliases.map(a => (a || '').toLowerCase()).filter(Boolean);
 
     for (const c of inMemoryCases.values()) {
+      const cDate = c.created_date || c.CreatedDate;
+      if (cDate && new Date(cDate).getFullYear() < 2026) continue;
       if (notAllowedStatuses.includes(c.status)) continue;
       const t = String(c.type || c.Type || c.raw_type || c.rawType || '').toLowerCase();
       if (t.includes('change') || t === 'cr' || t === 'rfc') continue;

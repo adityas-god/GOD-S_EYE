@@ -438,18 +438,19 @@ export const SiteRepository = {
 
   async updateOpenCasesCount(siteIdentifier, count, isDown = false) {
     if (isDbConnected()) {
-      await SiteModel.updateOne(
-        buildSiteFilter(siteIdentifier),
-        { $set: { open_cases_count: count, is_down: isDown, last_synced_at: new Date() } }
-      );
-    } else {
-      const site = findInMemorySite(siteIdentifier);
-      if (site) {
-        site.open_cases_count = count;
-        site.is_down = isDown;
-        site.last_synced_at = new Date();
-        inMemorySites.set(site.id, site);
-      }
+      try {
+        await SiteModel.updateOne(
+          buildSiteFilter(siteIdentifier),
+          { $set: { open_cases_count: count, is_down: isDown, last_synced_at: new Date() } }
+        );
+      } catch {}
+    }
+    const site = findInMemorySite(siteIdentifier);
+    if (site) {
+      site.open_cases_count = count;
+      site.is_down = isDown;
+      site.last_synced_at = new Date();
+      inMemorySites.set(site.id, site);
     }
   },
 

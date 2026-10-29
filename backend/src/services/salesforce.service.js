@@ -88,6 +88,51 @@ function loadOverviewSnapshotFromDisk() {
       const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.cases) && parsed.cases.length > 0) {
+        parsed.cases = parsed.cases.filter(c => {
+          if (!c || !c.CreatedDate) return true;
+          const yr = new Date(c.CreatedDate).getFullYear();
+          return isNaN(yr) || yr >= 2026;
+        });
+        if (Array.isArray(parsed.alerts)) {
+          parsed.alerts = parsed.alerts.filter(a => {
+            if (!a || !a.CreatedDate) return true;
+            const yr = new Date(a.CreatedDate).getFullYear();
+            return isNaN(yr) || yr >= 2026;
+          });
+        }
+        parsed.totalLiveCases = parsed.cases.length;
+        parsed.totalLiveAlerts = (parsed.alerts || []).length;
+
+        if (parsed.siteStats && typeof parsed.siteStats === 'object') {
+          for (const k of Object.keys(parsed.siteStats)) {
+            parsed.siteStats[k].count = 0;
+            parsed.siteStats[k].alertCount = 0;
+            parsed.siteStats[k].caseNumbers = [];
+          }
+          const allSites = loadAuthoritativeSitesSnapshot();
+          const compiledSites = compileSiteIndex(allSites);
+          for (const c of parsed.cases) {
+            const best = findBestSiteForCase(c, compiledSites);
+            if (best) {
+              const k = best.toLowerCase();
+              if (parsed.siteStats[k]) {
+                parsed.siteStats[k].count++;
+                if (c.CaseNumber && !parsed.siteStats[k].caseNumbers.includes(c.CaseNumber)) {
+                  parsed.siteStats[k].caseNumbers.push(c.CaseNumber);
+                }
+              }
+            }
+          }
+          for (const a of (parsed.alerts || [])) {
+            const best = findBestSiteForCase(a, compiledSites);
+            if (best) {
+              const k = best.toLowerCase();
+              if (parsed.siteStats[k]) {
+                parsed.siteStats[k].alertCount = (parsed.siteStats[k].alertCount || 0) + 1;
+              }
+            }
+          }
+        }
         return parsed;
       }
     }
@@ -113,6 +158,25 @@ function loadCasesSnapshotFromDisk() {
       const raw = fs.readFileSync(CASES_SNAPSHOT_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.cases) && parsed.cases.length > 0) {
+        parsed.cases = parsed.cases.filter(c => {
+          if (!c || !c.CreatedDate) return true;
+          const yr = new Date(c.CreatedDate).getFullYear();
+          return isNaN(yr) || yr >= 2026;
+        });
+        if (Array.isArray(parsed.alerts)) {
+          parsed.alerts = parsed.alerts.filter(a => {
+            if (!a || !a.CreatedDate) return true;
+            const yr = new Date(a.CreatedDate).getFullYear();
+            return isNaN(yr) || yr >= 2026;
+          });
+        }
+        if (Array.isArray(parsed.openAlerts)) {
+          parsed.openAlerts = parsed.openAlerts.filter(a => {
+            if (!a || !a.CreatedDate) return true;
+            const yr = new Date(a.CreatedDate).getFullYear();
+            return isNaN(yr) || yr >= 2026;
+          });
+        }
         return parsed;
       }
     }
@@ -222,54 +286,52 @@ export function isAlertCase(c) {
   const catStr = String(raw.Category__c || raw.category || raw.Snow_Category__c || '').trim().toLowerCase();
   const sub = String(raw.Subject || raw.subject || '').trim();
 
-  // 1. Service Requests are customer/internal service requests, NEVER automated alerts:
+  // 1. Explicit Type or Category is Alert
+  if (typeStr === 'alert' || catStr === 'alert') return true;
+
+  // 2. Strong Automated Alert Subject Signatures (Checked FIRST so automated monitoring tickets are NEVER wrongly dismissed as service requests)
+  if (sub) {
+    if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
+      return true;
+    }
+
+    // Automated monitoring rule signatures (case-insensitive substring/word matching)
+    if (
+      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
+        sub
+      )
+    ) {
+      return true;
+    }
+
+    if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
+      return true;
+    }
+
+    // Host / Site prefix with alert pattern: e.g. "hnm-canada: ProcessExecutionsFailed...", "xpo-hnm: DiskUtilHigh...", "samprod: Postgres..."
+    if (/^[a-z0-9._-]+:\s*/i.test(sub) && /(?:low|high|failed|failure|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata|util|error|down|alert|warning|critical|executions)/i.test(sub)) {
+      return true;
+    }
+  }
+
+  // 3. Service Requests are customer/internal service requests, NEVER automated alerts:
   // User requirement: "its Service requet and it is in alert queue"
   const isServiceRequest =
-    typeStr.includes('request') ||
-    typeStr.includes('service') ||
-    catStr.includes('request') ||
-    catStr.includes('service') ||
+    typeStr === 'service request' ||
     typeStr === 'sr' ||
+    catStr === 'service request' ||
     catStr === 'sr' ||
     /^go\s+alert:/i.test(sub) ||
-    /^(\[?sr\]?|service\s*request)/i.test(sub);
+    /^(\[?sr\]?|service\s*request\b)/i.test(sub);
 
   if (isServiceRequest) {
     return false;
   }
 
-  // 2. Explicit Type or Category is Alert
-  if (typeStr === 'alert' || catStr === 'alert') return true;
-
-  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
+  // 4. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
   // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
   if (isImTicket(c)) {
     return false;
-  }
-
-  if (!sub) return false;
-
-  // 4. Strong Automated Alert Subject Signatures:
-  if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
-    return true;
-  }
-
-  // Automated monitoring rule signatures (case-insensitive substring/word matching)
-  if (
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
-      sub
-    )
-  ) {
-    return true;
-  }
-
-  if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
-    return true;
-  }
-
-  // Host prefix with alert pattern: e.g. "samprod: Postgres...", "owensminorprod: Disk...", "flexo-hnm-canada: ..."
-  if (/^[a-z0-9._-]+prod:\s*/i.test(sub) && /(?:low|high|failed|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata)/i.test(sub)) {
-    return true;
   }
 
   // 5. Fallback check on description ONLY if automated alert signatures exist
@@ -327,6 +389,12 @@ export function hasTicketEndTime(c) {
 
 export function isLiveOpenCase(c) {
   if (!c) return false;
+
+  // User requirement: strictly only cases from 2026 onwards
+  if (c.CreatedDate) {
+    const yr = new Date(c.CreatedDate).getFullYear();
+    if (!isNaN(yr) && yr < 2026) return false;
+  }
 
   // 1. If there is an End Time on the ticket, or downtime is completed -> strictly omit from live cases!
   if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
@@ -1204,6 +1272,12 @@ export function isOpenAlert(c) {
   if (!c) return false;
   if (!isAlertCase(c)) return false;
 
+  // User requirement: strictly only cases/alerts from 2026 onwards
+  if (c.CreatedDate) {
+    const yr = new Date(c.CreatedDate).getFullYear();
+    if (!isNaN(yr) && yr < 2026) return false;
+  }
+
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
 
@@ -1461,7 +1535,7 @@ export const KNOWN_SITE_ALIASES = {
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat', 'hjartat', 'hjärtat', 'stockholm', 'apotek stockholm', 'hjartat stockholm', 'apotek hjartat'],
   'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
@@ -1934,6 +2008,13 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
       const gxo = compiledSites.find(x => /gxo.*af/i.test(x.originalName));
       return gxo ? gxo.originalName : 'GXO-AF';
     }
+  }
+
+  // Apotek resolution:
+  if (/\b(?:apotek|hj[aä]rtat|stockholm)\b/i.test(combinedContext) || /apotek/i.test(combinedContext)) {
+    const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
+    if (ap) return ap.originalName;
+    return 'Apotek';
   }
 
   // Sams Club multi-site resolution (evaluate before generic city matching):
@@ -2861,9 +2942,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
-      "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%')",
+      "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%ProcessExecution%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%Postgres%' OR Subject LIKE '%Lag%' OR Subject LIKE '%Runbook%')",
       "AND ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved') OR ClosedDate = TODAY)",
-      'ORDER BY LastModifiedDate DESC LIMIT 500',
+      "AND CreatedDate >= 2026-01-01T00:00:00Z",
+      'ORDER BY LastModifiedDate DESC LIMIT 2000',
     ].join(' ');
 
     const casesPrimarySoql = [
@@ -2873,7 +2955,8 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved' AND Status != 'Pending Customer Approval' AND Status != 'Pending Deployment' AND Status != 'Post Deployment Monitoring' AND (Type = null OR (Type != 'Alert' AND Type != 'Problem' AND Type != 'Change Request' AND Type != 'Change'))) OR ClosedDate = TODAY)",
-      'ORDER BY LastModifiedDate DESC LIMIT 800',
+      "AND CreatedDate >= 2026-01-01T00:00:00Z",
+      'ORDER BY LastModifiedDate DESC LIMIT 3000',
     ].join(' ');
 
     const fallbackSoql = [
@@ -2882,7 +2965,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
+      "WHERE (Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3) AND CreatedDate >= 2026-01-01T00:00:00Z",
       'ORDER BY LastModifiedDate DESC LIMIT 800',
     ].join(' ');
 
@@ -2890,7 +2973,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
+      "WHERE (Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3) AND CreatedDate >= 2026-01-01T00:00:00Z",
       'ORDER BY LastModifiedDate DESC LIMIT 600',
     ].join(' ');
 
@@ -2898,7 +2981,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Snow_Sitename__c, Owner.Name',
       'FROM Case',
-      "WHERE Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3",
+      "WHERE (Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3) AND CreatedDate >= 2026-01-01T00:00:00Z",
       'ORDER BY LastModifiedDate DESC LIMIT 500',
     ].join(' ');
 
@@ -3101,18 +3184,18 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     try {
       const siteWhere = buildSiteIncidentSOQLWhereClause(effectiveSiteName, compiledSites);
       if (siteWhere) {
-        let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review')";
-        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:1 OR CreatedDate = TODAY)";
-        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:2 OR CreatedDate = TODAY)";
-        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:7 OR CreatedDate = TODAY)";
-        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:15 OR CreatedDate = TODAY)";
-        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:30 OR CreatedDate = TODAY)";
-        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:60 OR CreatedDate = TODAY)";
-        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:90 OR CreatedDate = TODAY)";
+        let dateCondition = "Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review') AND CreatedDate >= 2026-01-01T00:00:00Z";
+        if (normRange === '24h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:1 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '48h') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:2 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '7d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:7 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '15d') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:15 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '1m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:30 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '2m') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:60 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
+        else if (normRange === '3m' || normRange === 'all') dateCondition = "(Status NOT IN ('Closed', 'Solved', 'Cancelled', 'Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring') OR CreatedDate >= LAST_N_DAYS:90 OR CreatedDate = TODAY) AND CreatedDate >= 2026-01-01T00:00:00Z";
         else if (normRange === 'custom' && startDate && endDate) {
           const sIso = new Date(startDate).toISOString();
           const eIso = new Date(endDate).toISOString();
-          dateCondition = `CreatedDate >= ${sIso} AND CreatedDate <= ${eIso}`;
+          dateCondition = `CreatedDate >= ${sIso} AND CreatedDate <= ${eIso} AND CreatedDate >= 2026-01-01T00:00:00Z`;
         }
         const siteSoql = [
           'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c,',
@@ -3121,19 +3204,31 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
           'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Impact_Percentage__c,',
           'DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
           'FROM Case',
-          `WHERE ${dateCondition} AND (Type = null OR (Type != 'Alert' AND Type != 'Problem' AND Type != 'Change Request' AND Type != 'Change')) AND Status NOT IN ('Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review')`,
+          `WHERE ${dateCondition} AND (Type = null OR (Type != 'Problem' AND Type != 'Change Request' AND Type != 'Change')) AND Status NOT IN ('Pending Customer Approval', 'Pending Deployment', 'Post Deployment Monitoring', 'Deployment in Progress', 'Ready for Deployment', 'Change Approved', 'CAB Approval', 'Pending CAB', 'Change Review')`,
           `AND ${siteWhere}`,
           'ORDER BY CreatedDate DESC LIMIT 1000'
         ].join(' ');
         const siteRes = await executeSOQL(siteSoql);
         const extraCases = siteRes.records || [];
-        const seenIds = new Set(matched.map(c => c.Id));
+        const seenCaseIds = new Set(matched.map(c => c.Id));
+        const seenAlertIds = new Set(matchedAlerts.map(a => a.Id));
+        const seenClosedIds = new Set(matchedClosed.map(c => c.Id));
         for (const ec of extraCases) {
-          if (ec && ec.Id && !seenIds.has(ec.Id)) {
+          if (ec && ec.Id) {
             const mapped = mapRecord(ec);
             if (isMatchingSite(mapped)) {
-              seenIds.add(ec.Id);
-              matched.push(mapped);
+              if (isAlertCase(mapped)) {
+                if (isOpenAlert(mapped) && !seenAlertIds.has(mapped.Id)) {
+                  seenAlertIds.add(mapped.Id);
+                  matchedAlerts.push(mapped);
+                } else if (isClosedAlert(mapped) && !seenClosedIds.has(mapped.Id)) {
+                  seenClosedIds.add(mapped.Id);
+                  matchedClosed.push(mapped);
+                }
+              } else if (!seenCaseIds.has(mapped.Id)) {
+                seenCaseIds.add(mapped.Id);
+                matched.push(mapped);
+              }
             }
           }
         }
@@ -3176,8 +3271,22 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     }
   }
 
-  // Strictly open cases: omit any ticket having an end time or downtime!
-  const strictlyOpenCases = matched.filter(c => isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
+  // Strictly open cases: omit any ticket having an end time or downtime, strictly year >= 2026!
+  const strictlyOpenCases = matched.filter(c => {
+    if (c.CreatedDate) {
+      const yr = new Date(c.CreatedDate).getFullYear();
+      if (!isNaN(yr) && yr < 2026) return false;
+    }
+    return isLiveOpenCase(c) && !hasTicketEndTime(c) && !getTicketEndTime(c);
+  });
+
+  matchedAlerts = matchedAlerts.filter(a => {
+    if (a.CreatedDate) {
+      const yr = new Date(a.CreatedDate).getFullYear();
+      if (!isNaN(yr) && yr < 2026) return false;
+    }
+    return true;
+  });
 
   // Any case that has an end time or was closed belongs in closed tickets
   const endTimedCases = matched.filter(c => hasTicketEndTime(c) || Boolean(getTicketEndTime(c)));
@@ -3342,6 +3451,21 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
       cachedAt: Date.now(),
     });
 
+    // Synchronize overview cache immediately so dashboard site cards reflect accurate cases without waiting
+    if (_overviewCache.data?.siteStats) {
+      const sKey = (effectiveSiteName || '').toLowerCase().trim();
+      if (sKey && _overviewCache.data.siteStats[sKey]) {
+        _overviewCache.data.siteStats[sKey].count = Math.max(
+          _overviewCache.data.siteStats[sKey].count || 0,
+          casesToStore.length
+        );
+        _overviewCache.data.siteStats[sKey].alertCount = Math.max(
+          _overviewCache.data.siteStats[sKey].alertCount || 0,
+          matchedAlerts.length
+        );
+      }
+    }
+
     return result;
   })();
 
@@ -3444,6 +3568,31 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
       if (a.Parent_Product_Type__c) recordSiteProduct(bestSite, a.Parent_Product_Type__c);
 
       // User requirement: IM tickets and monitoring alerts are shown in alert views, but do NOT add to Sev 1 / Sev 2 urgent count in the panels
+    }
+  }
+
+  // Synchronize with any site-specific cases already fetched in _siteCasesCache so site card count matches site workspace panel exactly
+  for (const [cacheKey, cachedEntry] of _siteCasesCache.entries()) {
+    if (cachedEntry?.data?.cases) {
+      const sName = cachedEntry.data.siteName || '';
+      const key = sName.toLowerCase();
+      if (key && siteStats[key]) {
+        const cachedCount = cachedEntry.data.cases.length;
+        if (cachedCount > siteStats[key].count) {
+          siteStats[key].count = cachedCount;
+          for (const c of cachedEntry.data.cases) {
+            if (c.CaseNumber && !siteStats[key].caseNumbers.includes(c.CaseNumber)) {
+              siteStats[key].caseNumbers.push(c.CaseNumber);
+            }
+          }
+          const { sev1Count, sev2Count } = calculateSiteUrgentCounts(cachedEntry.data.cases);
+          siteStats[key].sev1Count = Math.max(siteStats[key].sev1Count, sev1Count);
+          siteStats[key].sev2Count = Math.max(siteStats[key].sev2Count, sev2Count);
+        }
+        if (cachedEntry.data.alerts && cachedEntry.data.alerts.length > siteStats[key].alertCount) {
+          siteStats[key].alertCount = cachedEntry.data.alerts.length;
+        }
+      }
     }
   }
 
@@ -3642,13 +3791,19 @@ export function getSiteMatchSOQLParts(siteName) {
       "Subject LIKE '%hnm-canada%'",
       "Subject LIKE '%hm-canada%'",
       "Subject LIKE '%ajax%'",
+      "Snow_Sitename__c LIKE '%hnm-canada%'",
+      "Snow_Sitename__c LIKE '%hm-canada%'",
+      "Snow_Sitename__c LIKE '%Ajax%'",
+      "Site_Name_Customer_Input__c LIKE '%hnm-canada%'",
+      "Site_Name_Customer_Input__c LIKE '%hm-canada%'",
+      "Site_Name_Customer_Input__c LIKE '%Ajax%'",
+      "Customer_Location__c LIKE '%hnm-canada%'",
       "Account_Name__c LIKE '%Ajax%'",
       "Account_Name__c LIKE '%H&M%Canada%'",
       "Account_Name__c LIKE '%HM%Canada%'",
       "Account.Name LIKE '%H&M%Canada%'",
       "Account.Name LIKE '%HM%Canada%'",
-      "Customer_Location__c LIKE '%Ajax%'",
-      "Snow_Sitename__c LIKE '%Ajax%'"
+      "Customer_Location__c LIKE '%Ajax%'"
     );
   } else if ((clean.includes('essilor') || clean.includes('luxottica') || clean.includes('elatl') || clean.includes('el-atl')) || (clean.includes('atlanta') && !clean.includes('sam'))) {
     parts.push(
@@ -3709,9 +3864,18 @@ export function getSiteMatchSOQLParts(siteName) {
       "Subject LIKE '%xpo - hnm%'",
       "Subject LIKE '%xpo_hnm%'",
       "Subject LIKE '%xpo-hm%'",
+      "Snow_Sitename__c LIKE '%xpo-hnm%'",
+      "Snow_Sitename__c LIKE '%gxo-hm%'",
+      "Snow_Sitename__c LIKE '%gxo-hnm%'",
+      "Snow_Sitename__c LIKE '%Perris%'",
+      "Site_Name_Customer_Input__c LIKE '%xpo-hnm%'",
+      "Site_Name_Customer_Input__c LIKE '%gxo-hm%'",
+      "Site_Name_Customer_Input__c LIKE '%gxo-hnm%'",
+      "Site_Name_Customer_Input__c LIKE '%Perris%'",
+      "Customer_Location__c LIKE '%xpo-hnm%'",
+      "Customer_Location__c LIKE '%Perris%'",
       "Account_Name__c LIKE '%Perris%'",
-      "Account_Name__c LIKE '%GXO%H&M%'",
-      "Snow_Sitename__c LIKE '%Perris%'"
+      "Account_Name__c LIKE '%GXO%H&M%'"
     );
   } else if ((clean.includes('gxo') || clean.includes('xpo')) && clean.includes('lacoste')) {
     parts.push(

@@ -54,6 +54,7 @@ import {
   hasTicketEndTime,
   isTodayDate,
   compileSites,
+  compileSiteIndex,
   findBestSiteForCase,
   areSameSite,
   calculateAlertDuration,
@@ -122,9 +123,15 @@ function Index() {
   const [categoryFilter, setCategoryFilter] = useState('All');
   const [assigneeFilter, setAssigneeFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [displayLimit, setDisplayLimit] = useState(40);
   const [activeAddSite, setActiveAddSite] = useState<EnrichedSite | null>(null);
   const [popoverCoords, setPopoverCoords] = useState<{ top: number; right: number } | null>(null);
   const [customProductInput, setCustomProductInput] = useState('');
+
+  // Reset display limit when switching bucket or applying filters for instantaneous UI responsiveness
+  useEffect(() => {
+    setDisplayLimit(40);
+  }, [activeBucket, severityFilter, productFilter, categoryFilter, assigneeFilter, statusFilter]);
 
   // Fetch live cases stats across the entire org (excludes alerts & solved/on-hold)
   const {
@@ -196,41 +203,112 @@ function Index() {
       return (v.count || 0) > 0 || (v.alertCount || 0) > 0 || Boolean(v.isDown) || (v.caseNumbers && v.caseNumbers.length > 0);
     });
 
+    // Fast pre-group: match each active stat entry to its site once (stops checking remaining sites upon match)
+    const extraStatsBySite = new Map<string, SiteCaseStat[]>();
+    for (const [k, rawV] of activeStatsEntries) {
+      const v = rawV as SiteCaseStat;
+      for (const s of uniqueSites) {
+        const sLower = s.name.trim().toLowerCase();
+        if (k !== sLower && areSameSite(k, s.name)) {
+          const list = extraStatsBySite.get(sLower) || [];
+          list.push(v);
+          extraStatsBySite.set(sLower, list);
+          break; // Matched this entry to its site, skip remaining sites
+        }
+      }
+    }
+
+    // Fast pre-extract: any site cases/alerts already cached in queryClient
+    const cachedCasesBySite = new Map<string, number>();
+    const cachedAlertsBySite = new Map<string, number>();
+    try {
+      const siteCasesQueries = queryClient.getQueriesData<any>({ queryKey: ['site-cases'] });
+      for (const [qKey, qData] of siteCasesQueries) {
+        if (qData) {
+          const records = Array.isArray(qData.records) ? qData.records : (Array.isArray(qData.cases) ? qData.cases : []);
+          const alerts = Array.isArray(qData.alerts) ? qData.alerts : [];
+          const sName = String(qData.site?.name || (Array.isArray(qKey) ? qKey[2] || qKey[1] : '') || '').trim().toLowerCase();
+          if (sName) {
+            cachedCasesBySite.set(sName, Math.max(cachedCasesBySite.get(sName) || 0, records.length));
+            cachedAlertsBySite.set(sName, Math.max(cachedAlertsBySite.get(sName) || 0, alerts.length));
+          }
+        }
+      }
+    } catch {}
+
+    // Direct match from live cases & alerts in sfOverview
+    const directLiveCasesBySite = new Map<string, number>();
+    const directLiveAlertsBySite = new Map<string, number>();
+    const compiled = compileSiteIndex(uniqueSites);
+    for (const c of (sfOverview?.cases || [])) {
+      if (c.CreatedDate) {
+        const yr = new Date(c.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) continue;
+      }
+      if (isAlertCase(c) || !isLiveOpenCase(c) || isChangeRequestTicket(c) || hasTicketEndTime(c) || getTicketEndTime(c)) continue;
+      const best = findBestSiteForCase(c, compiled);
+      if (best) {
+        const k = best.trim().toLowerCase();
+        directLiveCasesBySite.set(k, (directLiveCasesBySite.get(k) || 0) + 1);
+      }
+    }
+    for (const a of (sfOverview?.alerts || [])) {
+      if (a.CreatedDate) {
+        const yr = new Date(a.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) continue;
+      }
+      if (!isAlertCase(a) || !isOpenAlert(a)) continue;
+      const best = findBestSiteForCase(a, compiled);
+      if (best) {
+        const k = best.trim().toLowerCase();
+        directLiveAlertsBySite.set(k, (directLiveAlertsBySite.get(k) || 0) + 1);
+      }
+    }
+
     const enriched: EnrichedSite[] = uniqueSites.map(site => {
       const siteLower = site.name.trim().toLowerCase();
       let stats: SiteCaseStat | undefined = statsMap[siteLower];
-      if (sfOverview?.siteStats) {
-        // Collect and merge all matching stats entries for this site (handles aliases and host names)
-        let mergedStats: SiteCaseStat | null = stats ? { ...stats, caseNumbers: [...(stats.caseNumbers || [])] } : null;
-        for (const [k, rawV] of activeStatsEntries) {
-          const v = rawV as SiteCaseStat;
-          if (k !== siteLower && areSameSite(k, site.name)) {
-            if (!mergedStats) {
-              mergedStats = { ...v, caseNumbers: [...(v.caseNumbers || [])] };
-            } else {
-              mergedStats.count = (mergedStats.count || 0) + (v.count || 0);
-              mergedStats.alertCount = (mergedStats.alertCount || 0) + (v.alertCount || 0);
-              mergedStats.isDown = Boolean(mergedStats.isDown || v.isDown);
-              mergedStats.sev1Count = Math.max(mergedStats.sev1Count || 0, v.sev1Count || 0);
-              mergedStats.sev2Count = Math.max(mergedStats.sev2Count || 0, v.sev2Count || 0);
-              mergedStats.sev3Count = (mergedStats.sev3Count || 0) + (v.sev3Count || 0);
-              for (const cn of v.caseNumbers || []) {
-                if (!mergedStats.caseNumbers.includes(cn)) {
-                  mergedStats.caseNumbers.push(cn);
-                }
-              }
-              if (v.product_lines && v.product_lines.length > 0) {
-                const combined = new Set([...(mergedStats.product_lines || []), ...v.product_lines]);
-                mergedStats.product_lines = Array.from(combined);
-              }
+      const extras = extraStatsBySite.get(siteLower);
+      if (extras && extras.length > 0) {
+        let mergedStats: SiteCaseStat = stats
+          ? { ...stats, caseNumbers: [...(stats.caseNumbers || [])] }
+          : { count: 0, alertCount: 0, caseNumbers: [], isDown: false, sev1Count: 0, sev2Count: 0, sev3Count: 0 };
+        for (const v of extras) {
+          mergedStats.count = (mergedStats.count || 0) + (v.count || 0);
+          mergedStats.alertCount = (mergedStats.alertCount || 0) + (v.alertCount || 0);
+          mergedStats.isDown = Boolean(mergedStats.isDown || v.isDown);
+          mergedStats.sev1Count = Math.max(mergedStats.sev1Count || 0, v.sev1Count || 0);
+          mergedStats.sev2Count = Math.max(mergedStats.sev2Count || 0, v.sev2Count || 0);
+          mergedStats.sev3Count = (mergedStats.sev3Count || 0) + (v.sev3Count || 0);
+          for (const cn of v.caseNumbers || []) {
+            if (!mergedStats.caseNumbers.includes(cn)) {
+              mergedStats.caseNumbers.push(cn);
             }
           }
+          if (v.product_lines && v.product_lines.length > 0) {
+            const combined = new Set([...(mergedStats.product_lines || []), ...v.product_lines]);
+            mergedStats.product_lines = Array.from(combined);
+          }
         }
-        if (mergedStats) stats = mergedStats;
+        stats = mergedStats;
       }
 
-      const openCount = stats ? stats.count : (site.open_cases_count ?? 0);
-      const alertCount = stats ? (stats.alertCount ?? 0) : 0;
+      const cachedCases = cachedCasesBySite.get(siteLower) ?? 0;
+      const cachedAlerts = cachedAlertsBySite.get(siteLower) ?? 0;
+      const directCases = directLiveCasesBySite.get(siteLower) ?? 0;
+      const directAlerts = directLiveAlertsBySite.get(siteLower) ?? 0;
+
+      const openCount = Math.max(
+        stats?.count ?? 0,
+        site.open_cases_count ?? 0,
+        directCases,
+        cachedCases
+      );
+      const alertCount = Math.max(
+        stats?.alertCount ?? 0,
+        directAlerts,
+        cachedAlerts
+      );
       const isDown = stats ? stats.isDown : (site.is_down ?? false);
       const caseNumbers = stats?.caseNumbers ?? [];
       const sev1Count = stats ? (stats.sev1Count ?? 0) : 0;
@@ -278,7 +356,7 @@ function Index() {
     });
 
     return enriched;
-  }, [baseSites, sfOverview]);
+  }, [baseSites, sfOverview, queryClient]);
 
   // Deferred search value allows 60fps responsive typing on low-spec VMs
   const deferredSearch = useDeferredValue(search);
@@ -318,18 +396,24 @@ function Index() {
     }
   }
 
-  // Strictly filter cases with end-time logic (no end time, no closed/hold status, no alerts, no DIR)
+  // Strictly filter cases with end-time logic (no end time, no closed/hold status, no alerts, no DIR, strictly year >= 2026)
   // Aligns with site workspace panel: counts all live open cases
   const openCases = useMemo(() => {
-    return (sfOverview?.cases ?? []).filter(c => 
-      isLiveOpenCase(c) && 
-      !isChangeRequestTicket(c) &&
-      !hasTicketEndTime(c) && 
-      !getTicketEndTime(c)
-    );
+    return (sfOverview?.cases ?? []).filter(c => {
+      if (c.CreatedDate) {
+        const yr = new Date(c.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) return false;
+      }
+      return (
+        isLiveOpenCase(c) && 
+        !isChangeRequestTicket(c) &&
+        !hasTicketEndTime(c) && 
+        !getTicketEndTime(c)
+      );
+    });
   }, [sfOverview?.cases]);
 
-  // Strictly filter alerts: only open alerts (no end time, no closed/hold status)
+  // Strictly filter alerts: only open alerts (no end time, no closed/hold status, strictly year >= 2026)
   const openAlerts = useMemo(() => {
     const list = [
       ...(sfOverview?.alerts ?? []),
@@ -337,6 +421,10 @@ function Index() {
     ];
     const map = new Map<string, SFCase>();
     for (const a of list) {
+      if (a.CreatedDate) {
+        const yr = new Date(a.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) continue;
+      }
       if (a && a.Id) map.set(a.Id, a);
     }
     return Array.from(map.values());
@@ -449,96 +537,84 @@ function Index() {
     return map;
   }, [currentBucketItems, compiledSitesList, siteNameToId]);
 
-  const uniqueSeverities = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of currentBucketItems) {
-      const p = (activeBucket === 'alerts'
-        ? (c.Alert_Priority__c || c.Highest_Severity__c || c.Priority || '')
-        : (c.Highest_Severity__c || c.Priority || '')).trim();
-      if (p) set.add(p);
-    }
-    return Array.from(set).sort();
-  }, [currentBucketItems, activeBucket]);
-
-  const sev1CountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => detectSeverity(c) === 'sev1').length;
-  }, [currentBucketItems]);
-
-  const sev2CountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => {
-      const s = detectSeverity(c);
-      return s === 'sev2' || (s as string) === 'sev2_urgent';
-    }).length;
-  }, [currentBucketItems]);
-
-  const sev2HighCountInBucket = useMemo(() => {
-    return currentBucketItems.filter(c => detectSeverity(c) === 'sev2_high').length;
-  }, [currentBucketItems]);
-
-  const severityCountsMap = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const sev of uniqueSeverities) {
-      const sfLower = sev.toLowerCase();
-      let count = 0;
-      for (const c of currentBucketItems) {
-        const p1 = (c.Highest_Severity__c || '').trim().toLowerCase();
-        const p2 = (c.Priority || '').trim().toLowerCase();
-        const p3 = (c.Alert_Priority__c || '').trim().toLowerCase();
-        if (p1 === sfLower || p2 === sfLower || p3 === sfLower) {
-          count++;
-        }
-      }
-      map.set(sev, count);
-    }
-    return map;
-  }, [uniqueSeverities, currentBucketItems]);
-
-  const uniqueProducts = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of currentBucketItems) {
-      const p = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
-      if (p && !['null', 'undefined', 'all', 'none', 'n/a'].includes(p.toLowerCase())) {
-        set.add(p);
-      }
-    }
-    return Array.from(set).sort();
-  }, [currentBucketItems]);
-
-  const categoryCounts = useMemo(() => {
+  // Single-pass O(N) extraction of all bucket telemetry: severities, products, categories, assignees, and statuses
+  const {
+    uniqueSeverities,
+    sev1CountInBucket,
+    sev2CountInBucket,
+    sev2HighCountInBucket,
+    severityCountsMap,
+    uniqueProducts,
+    categoryCounts,
+    uniqueAssignees,
+    uniqueStatuses,
+  } = useMemo(() => {
+    const severitiesSet = new Set<string>();
+    const productsSet = new Set<string>();
+    const assigneesSet = new Set<string>();
+    const statusesSet = new Set<string>();
+    const severityCounts = new Map<string, number>();
+    let sev1 = 0;
+    let sev2 = 0;
+    let sev2High = 0;
     let sw = 0;
     let hw = 0;
-    for (const c of currentBucketItems) {
+
+    for (let i = 0; i < currentBucketItems.length; i++) {
+      const c = currentBucketItems[i];
+      const p1 = (c.Highest_Severity__c || '').trim();
+      const p2 = (c.Priority || '').trim();
+      const p3 = (c.Alert_Priority__c || '').trim();
+      const p = (activeBucket === 'alerts' ? (p3 || p1 || p2) : (p1 || p2)).trim();
+      if (p) {
+        severitiesSet.add(p);
+        severityCounts.set(p, (severityCounts.get(p) || 0) + 1);
+        const pLower = p.toLowerCase();
+        if (pLower !== p) {
+          severityCounts.set(pLower, (severityCounts.get(pLower) || 0) + 1);
+        }
+      }
+
+      const detectedSev = detectSeverity(c);
+      if (detectedSev === 'sev1') sev1++;
+      else if (detectedSev === 'sev2' || (detectedSev as string) === 'sev2_urgent') sev2++;
+      else if (detectedSev === 'sev2_high') sev2High++;
+
+      const prod = String(c.Product_Type__c || c.product_line || c.Parent_Product_Type__c || '').trim();
+      if (prod && !['null', 'undefined', 'all', 'none', 'n/a'].includes(prod.toLowerCase())) {
+        productsSet.add(prod);
+      }
+
       if (detectCaseCategory(c) === 'HARDWARE') {
         hw++;
       } else {
         sw++;
       }
+
+      assigneesSet.add(getAssigneeDisplayName(c));
+
+      const st = String(c.Status || '').trim();
+      if (st) statusesSet.add(st);
     }
-    return { SOFTWARE: sw, HARDWARE: hw };
-  }, [currentBucketItems]);
+
+    return {
+      uniqueSeverities: Array.from(severitiesSet).sort(),
+      sev1CountInBucket: sev1,
+      sev2CountInBucket: sev2,
+      sev2HighCountInBucket: sev2High,
+      severityCountsMap: severityCounts,
+      uniqueProducts: Array.from(productsSet).sort(),
+      categoryCounts: { SOFTWARE: sw, HARDWARE: hw },
+      uniqueAssignees: Array.from(assigneesSet).sort((a, b) => {
+        if (a === 'Unassigned') return 1;
+        if (b === 'Unassigned') return -1;
+        return a.localeCompare(b);
+      }),
+      uniqueStatuses: Array.from(statusesSet).sort(),
+    };
+  }, [currentBucketItems, activeBucket]);
 
   const uniqueCategories = ['SOFTWARE', 'HARDWARE'];
-
-  const uniqueAssignees = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of currentBucketItems) {
-      set.add(getAssigneeDisplayName(c));
-    }
-    return Array.from(set).sort((a, b) => {
-      if (a === 'Unassigned') return 1;
-      if (b === 'Unassigned') return -1;
-      return a.localeCompare(b);
-    });
-  }, [currentBucketItems]);
-
-  const uniqueStatuses = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of currentBucketItems) {
-      const s = String(c.Status || '').trim();
-      if (s) set.add(s);
-    }
-    return Array.from(set).sort();
-  }, [currentBucketItems]);
 
   // Filter tickets with severity, product, category, assignee, and status filters
   const currentOrgTickets: SFCase[] = useMemo(() => {
@@ -724,6 +800,11 @@ function Index() {
     });
   }, [currentOrgTickets, ticketSiteMap, compiledSitesList, siteNameToId, activeBucket]);
 
+  // Windowed rendering slice: only mount initial 40 rows into DOM for instant 60fps responsiveness
+  const visibleViewModels = useMemo(() => {
+    return ticketViewModels.slice(0, displayLimit);
+  }, [ticketViewModels, displayLimit]);
+
   const handleRemoveProduct = async (site: EnrichedSite, prodToRemove: string) => {
     const currentLines = (site.product_lines && site.product_lines.length > 0)
       ? site.product_lines
@@ -859,7 +940,7 @@ function Index() {
     return (
       <article
         className={`site-card ${isUrgentThresholdMet ? 'site-card-paper site-card-highlight-red' : ''} ${activeAddSite?.id === site.id ? 'active-popover' : ''}`}
-        key={site.id}
+        key={`${site.id}-${site.name}`}
       >
         <Button asChild variant="site">
           <Link to="/sites/$siteId" params={{ siteId: site.id }} preload={false}>
@@ -1673,10 +1754,18 @@ function Index() {
                 tabIndex={0}
                 aria-label="Salesforce tickets scrollable table"
                 style={{ maxHeight: 285, overflowY: 'auto' }}
+                onScroll={e => {
+                  const target = e.currentTarget;
+                  if (target.scrollHeight - target.scrollTop <= target.clientHeight + 80) {
+                    if (displayLimit < ticketViewModels.length) {
+                      setDisplayLimit(prev => Math.min(prev + 40, ticketViewModels.length));
+                    }
+                  }
+                }}
               >
                 {currentOrgTickets.length > 0 ? (
                   <div>
-                    {ticketViewModels.map(item => {
+                    {visibleViewModels.map(item => {
                       const {
                         c,
                         isAlert,
@@ -1876,6 +1965,25 @@ function Index() {
                         </div>
                       );
                     })}
+                    {displayLimit < ticketViewModels.length && (
+                      <div style={{ textAlign: 'center', padding: '8px 0' }}>
+                        <button
+                          type="button"
+                          onClick={() => setDisplayLimit(prev => Math.min(prev + 50, ticketViewModels.length))}
+                          style={{
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 4,
+                            padding: '4px 12px',
+                            fontSize: 11,
+                            color: 'var(--muted-foreground)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Load more ({ticketViewModels.length - displayLimit} remaining)
+                        </button>
+                      </div>
+                    )}
               </div>
             ) : (
               <div className="source-empty" style={{ padding: '24px 16px' }}>
@@ -1914,7 +2022,7 @@ function Index() {
             }}
           >
             <span>
-              Showing {currentOrgTickets.length} current day's {activeBucket} {currentOrgTickets.length > 5 ? '• 5 visible, scroll for more' : ''}
+              Showing {Math.min(displayLimit, currentOrgTickets.length)} of {currentOrgTickets.length} current day's {activeBucket} {currentOrgTickets.length > displayLimit ? '• scroll to load more' : ''}
             </span>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Clock style={{ width: 10, height: 10 }} />
