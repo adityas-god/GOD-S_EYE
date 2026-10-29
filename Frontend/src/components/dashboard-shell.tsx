@@ -147,7 +147,7 @@ export function DashboardShell({
         </div>
         <div className="nav-label">WORKSPACE</div>
         <nav>
-          <Button variant="nav" asChild className={!detail && !isRedZoneActive && !isAnalyticsActive && !isWarRoomsActive && activeTab === 'all' ? 'active' : ''}>
+          <Button variant="nav" asChild className={!detail && !isRedZoneActive && !isAnalyticsActive && !isWarRoomsActive && !isPulseAiActive ? 'active' : ''}>
             <Link to="/">
               <LayoutGrid />
               All sites

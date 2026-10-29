@@ -222,8 +222,6 @@ export function AlertAnalyticsPanel({
 
     const windowStart = selectedRange === 'custom' && !isNaN(customStart)
       ? customStart
-      : selectedRange === 'today'
-      ? (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); })()
       : (now - (rangeObj.hours || 2160) * 60 * 60 * 1000);
     const windowEnd = selectedRange === 'custom' && !isNaN(customEnd)
       ? customEnd

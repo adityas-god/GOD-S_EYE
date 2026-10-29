@@ -34,6 +34,8 @@ import {
   ChevronDown,
   RefreshCw,
   Edit2,
+  Bell,
+  Link as LinkIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { DashboardShell } from '@/components/dashboard-shell';
@@ -66,6 +68,7 @@ import {
   getAssigneeDisplayName,
   isLiveOpenCase,
   isOpenAlert,
+  isAlertCase,
 } from '@/integrations/salesforce/client';
 
 export const Route = createFileRoute('/war-rooms')({
@@ -143,11 +146,88 @@ function getCaseCreatedMs(c: SFCase): number {
   return isNaN(t) ? 0 : t;
 }
 
+// Compute velocity trend statistics and chart time buckets for incidents or alerts
+function computeTrendData(
+  tickets: SFCase[],
+  warRoom: WarRoom | null,
+  primaryColor: string
+) {
+  if (!warRoom || tickets.length === 0) {
+    return {
+      trend: 'STEADY' as 'UPTREND' | 'DOWNTREND' | 'STEADY',
+      trendLabel: 'STABLE / NO INFLOW',
+      trendColor: '#22c55e',
+      firstHalfCount: 0,
+      secondHalfCount: 0,
+      chartBuckets: [] as { label: string; count: number; timestamp: number }[],
+    };
+  }
+
+  const startIso = warRoom.startDate || warRoom.startedAt;
+  const startMs = startIso ? new Date(startIso).getTime() : Date.now() - 24 * 3600000;
+  const nowMs = Date.now();
+  const durationMs = Math.max(1000 * 60 * 60, nowMs - startMs);
+
+  const BUCKET_COUNT = 6;
+  const bucketInterval = durationMs / BUCKET_COUNT;
+  const buckets: { label: string; count: number; timestamp: number }[] = [];
+
+  for (let i = 0; i < BUCKET_COUNT; i++) {
+    const bStart = startMs + i * bucketInterval;
+    const bEnd = bStart + bucketInterval;
+    const midTime = new Date(bStart + bucketInterval / 2);
+
+    const label = midTime.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+    });
+
+    const count = tickets.filter(c => {
+      const t = getCaseCreatedMs(c);
+      if (t === 0) return false;
+      return t >= bStart && (i === BUCKET_COUNT - 1 ? t <= bEnd : t < bEnd);
+    }).length;
+
+    buckets.push({ label, count, timestamp: bStart });
+  }
+
+  const half = Math.floor(BUCKET_COUNT / 2);
+  const firstHalfCount = buckets.slice(0, half).reduce((sum, b) => sum + b.count, 0);
+  const secondHalfCount = buckets.slice(half).reduce((sum, b) => sum + b.count, 0);
+
+  let trend: 'UPTREND' | 'DOWNTREND' | 'STEADY' = 'STEADY';
+  let trendLabel = 'STEADY INFLOW';
+  let trendColor = '#3b82f6';
+
+  if (secondHalfCount > firstHalfCount) {
+    trend = 'UPTREND';
+    trendLabel = 'UPTREND (INCREASING)';
+    trendColor = primaryColor;
+  } else if (secondHalfCount < firstHalfCount) {
+    trend = 'DOWNTREND';
+    trendLabel = 'DOWN TREND (STABILIZING)';
+    trendColor = '#22c55e';
+  }
+
+  return {
+    trend,
+    trendLabel,
+    trendColor,
+    firstHalfCount,
+    secondHalfCount,
+    chartBuckets: buckets,
+  };
+}
+
 export function WarRoomsPage() {
   const queryClient = useQueryClient();
 
   // Navigation state: null = Overview site panels view; non-null = War Room detail view
   const [selectedWarRoom, setSelectedWarRoom] = useState<WarRoom | null>(null);
+
+  // Active bucket in War Room detail view: 'incidents' | 'alerts'
+  const [activeBucket, setActiveBucket] = useState<'incidents' | 'alerts'>('incidents');
 
   // Form toggle & copy feedback
   const [isAdding, setIsAdding] = useState(false);
@@ -309,42 +389,79 @@ export function WarRoomsPage() {
     },
   });
 
-  // Editing War Room Dates Modal State
+  // Editing War Room Details Modal State (Dates, Call Link URL, Name, Notes)
   const [editingRoom, setEditingRoom] = useState<WarRoom | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editUrl, setEditUrl] = useState('');
   const [editStartDate, setEditStartDate] = useState('');
   const [editEndDate, setEditEndDate] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
-  const openEditDatesModal = (room: WarRoom) => {
+  const openEditModal = (room: WarRoom) => {
     setEditingRoom(room);
+    setEditName(room.name || '');
+    setEditUrl(room.url || '');
     setEditStartDate(toLocalDatetimeString(new Date(room.startDate || room.startedAt)));
     setEditEndDate(toLocalDatetimeString(new Date(room.endDate)));
+    setEditNotes(room.notes || '');
   };
 
-  const closeEditDatesModal = () => {
+  const closeEditModal = () => {
     setEditingRoom(null);
   };
 
-  // Update Dates Mutation with Instant Optimistic Update
-  const updateDatesMutation = useMutation({
-    mutationFn: async ({ id, startDate, endDate }: { id: string; startDate: string; endDate: string }) => {
+  const openEditDatesModal = openEditModal;
+  const closeEditDatesModal = closeEditModal;
+
+  // Update Details & Call Link Mutation with Instant Optimistic Update
+  const updateRoomMutation = useMutation({
+    mutationFn: async ({
+      id,
+      name,
+      url,
+      startDate,
+      endDate,
+      notes,
+    }: {
+      id: string;
+      name?: string;
+      url?: string;
+      startDate: string;
+      endDate: string;
+      notes?: string;
+    }) => {
+      let finalUrl = url?.trim();
+      if (finalUrl && !/^https?:\/\//i.test(finalUrl)) {
+        finalUrl = `https://${finalUrl}`;
+      }
       return updateActiveWarRoom(id, {
+        name: name?.trim(),
+        url: finalUrl,
         startDate: new Date(startDate).toISOString(),
         endDate: new Date(endDate).toISOString(),
         startedAt: new Date(startDate).toISOString(),
+        notes: notes?.trim() !== undefined ? notes.trim() : undefined,
       });
     },
-    onMutate: async ({ id, startDate, endDate }) => {
+    onMutate: async ({ id, name, url, startDate, endDate, notes }) => {
       await queryClient.cancelQueries({ queryKey: ['active-war-rooms'] });
       const previous = queryClient.getQueryData<WarRoom[]>(['active-war-rooms']) || [];
       const updatedStartIso = new Date(startDate).toISOString();
       const updatedEndIso = new Date(endDate).toISOString();
+      let finalUrl = url?.trim();
+      if (finalUrl && !/^https?:\/\//i.test(finalUrl)) {
+        finalUrl = `https://${finalUrl}`;
+      }
       const updated = previous.map(r => {
         if (r.id === id) {
           return {
             ...r,
+            name: name?.trim() || r.name,
+            url: finalUrl || r.url,
             startDate: updatedStartIso,
             endDate: updatedEndIso,
             startedAt: updatedStartIso,
+            notes: notes !== undefined ? notes : r.notes,
           };
         }
         return r;
@@ -353,29 +470,38 @@ export function WarRoomsPage() {
       if (selectedWarRoom?.id === id) {
         setSelectedWarRoom(prev => prev ? {
           ...prev,
+          name: name?.trim() || prev.name,
+          url: finalUrl || prev.url,
           startDate: updatedStartIso,
           endDate: updatedEndIso,
           startedAt: updatedStartIso,
+          notes: notes !== undefined ? notes : prev.notes,
         } : null);
       }
-      closeEditDatesModal();
-      toast.success('War room dates updated successfully');
+      closeEditModal();
+      toast.success('War room call link & details updated successfully');
       return { previous };
     },
     onError: (_err, _vars, context) => {
       if (context?.previous) {
         queryClient.setQueryData(['active-war-rooms'], context.previous);
       }
-      toast.error('Failed to update war room dates');
+      toast.error('Failed to update war room');
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ['active-war-rooms'] });
     },
   });
 
-  const handleSaveDates = (e: React.FormEvent) => {
+  const updateDatesMutation = updateRoomMutation;
+
+  const handleSaveDetails = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRoom) return;
+    if (!editUrl.trim()) {
+      toast.error('War room meeting call link / URL is required');
+      return;
+    }
     if (!editStartDate || !editEndDate) {
       toast.error('Both Start Date and End Date are required');
       return;
@@ -390,12 +516,17 @@ export function WarRoomsPage() {
       toast.error('End Date cannot be earlier than Start Date');
       return;
     }
-    updateDatesMutation.mutate({
+    updateRoomMutation.mutate({
       id: editingRoom.id,
+      name: editName.trim() || editingRoom.name,
+      url: editUrl.trim(),
       startDate: editStartDate,
       endDate: editEndDate,
+      notes: editNotes.trim(),
     });
   };
+
+  const handleSaveDates = handleSaveDetails;
 
   const handleCopy = (link: string, id: string) => {
     try {
@@ -545,49 +676,106 @@ export function WarRoomsPage() {
     return list;
   }, [siteCasesData, sfOverview, selectedWarRoom, compiledSitesList]);
 
-  // 1. Live Open Cases strictly for selected war room (from all open dates, including on-hold alerts with end time)
-  const liveOpenCasesForSelected = useMemo(() => {
-    return allCandidateCases
-      .filter(c => isLiveOpenCase(c) || isOpenAlert(c))
-      .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
+  // --------------------------------------------------------------------------
+  // BUCKETING: STRICT SEPARATION OF INCIDENTS VS ALERTS
+  // --------------------------------------------------------------------------
+  const candidateIncidents = useMemo(() => {
+    return allCandidateCases.filter(c => !isAlertCase(c));
   }, [allCandidateCases]);
 
-  // 2. All tickets from War Room Start Date onwards (all tickets included from start date)
-  const ticketsSinceStart = useMemo(() => {
+  const candidateAlerts = useMemo(() => {
+    return allCandidateCases.filter(c => isAlertCase(c));
+  }, [allCandidateCases]);
+
+  // 1. Incidents Timeframe Subsets
+  const liveOpenIncidents = useMemo(() => {
+    return candidateIncidents
+      .filter(isLiveOpenCase)
+      .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
+  }, [candidateIncidents]);
+
+  const incidentsSinceStart = useMemo(() => {
     if (!selectedWarRoom) return [];
     const startIso = selectedWarRoom.startDate || selectedWarRoom.startedAt;
     const startMs = startIso ? new Date(startIso).getTime() : 0;
-
-    return allCandidateCases
+    return candidateIncidents
       .filter(c => {
         if (!startMs || isNaN(startMs)) return true;
         const createdMs = getCaseCreatedMs(c);
         if (createdMs === 0) return false;
-        // From start date: include all tickets created on or after start date
         return createdMs >= startMs;
       })
       .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
-  }, [allCandidateCases, selectedWarRoom]);
+  }, [candidateIncidents, selectedWarRoom]);
 
-  // 3. Tickets in the Last 24 Hours (strictly within last 24h)
-  const ticketsLast24h = useMemo(() => {
+  const incidentsLast24h = useMemo(() => {
     const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-    return allCandidateCases
+    return candidateIncidents
       .filter(c => {
         const createdMs = getCaseCreatedMs(c);
         if (createdMs === 0) return false;
-        // Only tickets created within the last 24 hours
         return createdMs >= cutoffMs;
       })
       .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
-  }, [allCandidateCases]);
+  }, [candidateIncidents]);
 
-  // Active tickets to display depending on tab
+  // 2. Alerts Timeframe Subsets
+  const liveOpenAlerts = useMemo(() => {
+    return candidateAlerts
+      .filter(isOpenAlert)
+      .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
+  }, [candidateAlerts]);
+
+  const alertsSinceStart = useMemo(() => {
+    if (!selectedWarRoom) return [];
+    const startIso = selectedWarRoom.startDate || selectedWarRoom.startedAt;
+    const startMs = startIso ? new Date(startIso).getTime() : 0;
+    return candidateAlerts
+      .filter(c => {
+        if (!startMs || isNaN(startMs)) return true;
+        const createdMs = getCaseCreatedMs(c);
+        if (createdMs === 0) return false;
+        return createdMs >= startMs;
+      })
+      .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
+  }, [candidateAlerts, selectedWarRoom]);
+
+  const alertsLast24h = useMemo(() => {
+    const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+    return candidateAlerts
+      .filter(c => {
+        const createdMs = getCaseCreatedMs(c);
+        if (createdMs === 0) return false;
+        return createdMs >= cutoffMs;
+      })
+      .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
+  }, [candidateAlerts]);
+
+  // Combined for top summary indicators
+  const liveOpenCasesForSelected = useMemo(() => {
+    return [...liveOpenIncidents, ...liveOpenAlerts];
+  }, [liveOpenIncidents, liveOpenAlerts]);
+
+  const ticketsSinceStart = useMemo(() => {
+    return [...incidentsSinceStart, ...alertsSinceStart];
+  }, [incidentsSinceStart, alertsSinceStart]);
+
+  const ticketsLast24h = useMemo(() => {
+    return [...incidentsLast24h, ...alertsLast24h];
+  }, [incidentsLast24h, alertsLast24h]);
+
+  // Active tickets to display depending on current bucket and tab
   const activeTicketList = useMemo(() => {
-    if (activeTicketTab === 'open') return liveOpenCasesForSelected;
-    if (activeTicketTab === 'war_room') return ticketsSinceStart;
-    return ticketsLast24h;
-  }, [activeTicketTab, liveOpenCasesForSelected, ticketsSinceStart, ticketsLast24h]);
+    if (activeBucket === 'incidents') {
+      if (activeTicketTab === 'open') return liveOpenIncidents;
+      if (activeTicketTab === 'war_room') return incidentsSinceStart;
+      return incidentsLast24h;
+    } else {
+      if (activeTicketTab === 'open') return liveOpenAlerts;
+      if (activeTicketTab === 'war_room') return alertsSinceStart;
+      return alertsLast24h;
+    }
+  }, [activeBucket, activeTicketTab, liveOpenIncidents, incidentsSinceStart, incidentsLast24h, liveOpenAlerts, alertsSinceStart, alertsLast24h]);
 
   // Filtered tickets based on search and sub-severity filter
   const filteredTickets = useMemo(() => {
@@ -621,16 +809,14 @@ export function WarRoomsPage() {
   }, [activeTicketList, ticketSearch, ticketSeveritySubFilter]);
 
   // --------------------------------------------------------------------------
-  // Overview Analytics (Site Performance & Severity Counts)
+  // Analytics for Incidents Bucket
   // --------------------------------------------------------------------------
-  const analyticsData = useMemo(() => {
-    const baseTickets = ticketsSinceStart;
-
+  const incidentAnalytics = useMemo(() => {
     let sev1 = 0;
     let sev2Urgent = 0;
     let sev2High = 0;
 
-    for (const c of baseTickets) {
+    for (const c of liveOpenIncidents) {
       const sev = detectSeverity(c);
       if (sev === 'sev1') {
         sev1++;
@@ -654,10 +840,26 @@ export function WarRoomsPage() {
       sev2Urgent,
       sev2High,
       totalUrgent,
-      totalTickets: baseTickets.length,
+      totalTickets: incidentsSinceStart.length,
       siteHealth,
     };
-  }, [ticketsSinceStart]);
+  }, [liveOpenIncidents, incidentsSinceStart]);
+
+  // --------------------------------------------------------------------------
+  // Analytics for Alerts Bucket
+  // --------------------------------------------------------------------------
+  const alertAnalytics = useMemo(() => {
+    const onHold = liveOpenAlerts.filter(c => String(c.Status || '').toLowerCase().includes('hold')).length;
+    return {
+      totalOpen: liveOpenAlerts.length,
+      sinceStart: alertsSinceStart.length,
+      last24h: alertsLast24h.length,
+      onHold,
+      activeRunning: liveOpenAlerts.length - onHold,
+    };
+  }, [liveOpenAlerts, alertsSinceStart, alertsLast24h]);
+
+  const analyticsData = incidentAnalytics;
 
   // --------------------------------------------------------------------------
   // Global Metrics across all active war room sites
@@ -700,85 +902,37 @@ export function WarRoomsPage() {
   }, [warRooms, sfOverview, compiledSitesList]);
 
   // --------------------------------------------------------------------------
-  // Incident Flow Trend Analytics & Bucketed Graph Data
+  // Respective Trend Analytics & Bucketed Graph Data for Incidents & Alerts
   // --------------------------------------------------------------------------
-  const trendData = useMemo(() => {
-    if (!selectedWarRoom || ticketsSinceStart.length === 0) {
-      return {
-        trend: 'STEADY' as 'UPTREND' | 'DOWNTREND' | 'STEADY',
-        trendLabel: 'STABLE / NO INFLOW',
-        trendColor: '#22c55e',
-        firstHalfCount: 0,
-        secondHalfCount: 0,
-        chartBuckets: [] as { label: string; count: number; timestamp: number }[],
-      };
-    }
+  const incidentTrendData = useMemo(() => {
+    return computeTrendData(incidentsSinceStart, selectedWarRoom, 'var(--primary)');
+  }, [incidentsSinceStart, selectedWarRoom]);
 
-    const startIso = selectedWarRoom.startDate || selectedWarRoom.startedAt;
-    const startMs = startIso ? new Date(startIso).getTime() : Date.now() - 24 * 3600000;
-    const nowMs = Date.now();
-    const durationMs = Math.max(1000 * 60 * 60, nowMs - startMs);
+  const alertTrendData = useMemo(() => {
+    return computeTrendData(alertsSinceStart, selectedWarRoom, '#38bdf8');
+  }, [alertsSinceStart, selectedWarRoom]);
 
-    const BUCKET_COUNT = 6;
-    const bucketInterval = durationMs / BUCKET_COUNT;
-    const buckets: { label: string; count: number; timestamp: number }[] = [];
-
-    for (let i = 0; i < BUCKET_COUNT; i++) {
-      const bStart = startMs + i * bucketInterval;
-      const bEnd = bStart + bucketInterval;
-      const midTime = new Date(bStart + bucketInterval / 2);
-
-      const label = midTime.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-      });
-
-      const count = ticketsSinceStart.filter(c => {
-        const t = getCaseCreatedMs(c);
-        if (t === 0) return false;
-        return t >= bStart && (i === BUCKET_COUNT - 1 ? t <= bEnd : t < bEnd);
-      }).length;
-
-      buckets.push({ label, count, timestamp: bStart });
-    }
-
-    const half = Math.floor(BUCKET_COUNT / 2);
-    const firstHalfCount = buckets.slice(0, half).reduce((sum, b) => sum + b.count, 0);
-    const secondHalfCount = buckets.slice(half).reduce((sum, b) => sum + b.count, 0);
-
-    let trend: 'UPTREND' | 'DOWNTREND' | 'STEADY' = 'STEADY';
-    let trendLabel = 'STEADY INFLOW';
-    let trendColor = '#3b82f6';
-
-    if (secondHalfCount > firstHalfCount) {
-      trend = 'UPTREND';
-      trendLabel = 'UPTREND (INCREASING)';
-      trendColor = 'var(--primary)';
-    } else if (secondHalfCount < firstHalfCount) {
-      trend = 'DOWNTREND';
-      trendLabel = 'DOWN TREND (STABILIZING)';
-      trendColor = '#22c55e';
-    }
-
-    return {
-      trend,
-      trendLabel,
-      trendColor,
-      firstHalfCount,
-      secondHalfCount,
-      chartBuckets: buckets,
-    };
-  }, [selectedWarRoom, ticketsSinceStart]);
+  const trendData = activeBucket === 'incidents' ? incidentTrendData : alertTrendData;
 
   // Filtered War Rooms for Directory
   const filteredWarRooms = useMemo(() => {
     let list = warRooms;
 
     if (severityFilter === 'SEV 1') {
-      list = list.filter(r => (r.severity || '').toUpperCase().includes('1'));
+      list = list.filter(r => {
+        const openCases = getSiteLiveOpenCases(r.siteName);
+        const openIncidents = openCases.filter(c => !isAlertCase(c));
+        return openIncidents.some(c => detectSeverity(c) === 'sev1');
+      });
     } else if (severityFilter === 'SEV 2') {
-      list = list.filter(r => (r.severity || '').toUpperCase().includes('2'));
+      list = list.filter(r => {
+        const openCases = getSiteLiveOpenCases(r.siteName);
+        const openIncidents = openCases.filter(c => !isAlertCase(c));
+        return openIncidents.some(c => {
+          const s = detectSeverity(c);
+          return s === 'sev2' || (s as string) === 'sev2_urgent';
+        });
+      });
     }
 
     if (!searchQuery.trim()) return list;
@@ -790,7 +944,7 @@ export function WarRoomsPage() {
       const notes = (r.notes || '').toLowerCase();
       return name.includes(q) || site.includes(q) || lead.includes(q) || notes.includes(q);
     });
-  }, [warRooms, severityFilter, searchQuery]);
+  }, [warRooms, severityFilter, searchQuery, sfOverview, compiledSitesList]);
 
   // Helper for severity badge styles
   const getSeverityBadge = (c: SFCase) => {
@@ -880,7 +1034,11 @@ export function WarRoomsPage() {
               LIVE INCIDENT RESPONSE &amp; TRIAGE BRIDGES
             </div>
             <h1 style={{ fontFamily: 'var(--font-sans)' }}>
-              {selectedWarRoom ? selectedWarRoom.name : 'Active war rooms'}
+              {selectedWarRoom
+                ? (incidentAnalytics.sev1 > 0 || incidentAnalytics.sev2Urgent > 0
+                    ? selectedWarRoom.name
+                    : selectedWarRoom.name.replace(/^(?:SEV[-\s]?[12]\s*[:\-–—]?\s*)/i, '').trim() || selectedWarRoom.name)
+                : 'Active war rooms'}
               <span className="heading-dot" style={{ color: 'var(--primary)' }}>.</span>
             </h1>
             <p style={{ fontFamily: 'var(--font-sans)' }}>
@@ -1376,12 +1534,18 @@ export function WarRoomsPage() {
                   {filteredWarRooms.map((room, idx) => {
                     const windowDurationText = formatDurationBetween(room.startDate, room.endDate);
                     const openCases = getSiteLiveOpenCases(room.siteName);
-                    const openCount = openCases.length;
-                    const sev1Open = openCases.filter(c => detectSeverity(c) === 'sev1').length;
-                    const sev2Open = openCases.filter(c => {
+                    const openIncidents = openCases.filter(c => !isAlertCase(c));
+                    const openAlerts = openCases.filter(c => isAlertCase(c));
+                    const sev1Open = openIncidents.filter(c => detectSeverity(c) === 'sev1').length;
+                    const sev2Open = openIncidents.filter(c => {
                       const s = detectSeverity(c);
-                      return s === 'sev2' || (s as string) === 'sev2_urgent' || s === 'sev2_high';
+                      return s === 'sev2' || (s as string) === 'sev2_urgent';
                     }).length;
+                    const cardHasUrgent = sev1Open > 0 || sev2Open > 0;
+                    // Remove "SEV 1" / "SEV-1" from title unless or until a Sev 1 or Sev 2 urgent incident is going on
+                    const displayRoomTitle = cardHasUrgent
+                      ? room.name
+                      : room.name.replace(/^(?:SEV[-\s]?[12]\s*[:\-–—]?\s*)/i, '').trim() || room.name;
 
                     return (
                       <article
@@ -1405,25 +1569,44 @@ export function WarRoomsPage() {
                             </span>
 
                             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                              <span
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  background: (room.severity || '').toUpperCase().includes('1')
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                                  color: (room.severity || '').toUpperCase().includes('1') ? '#ef4444' : '#f59e0b',
-                                  border: `1px solid ${(room.severity || '').toUpperCase().includes('1') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
-                                  fontSize: 9.5,
-                                  fontWeight: 700,
-                                  padding: '2.5px 7px',
-                                  borderRadius: 4,
-                                  letterSpacing: '0.04em',
-                                  fontFamily: 'var(--font-mono)',
-                                }}
-                              >
-                                {room.severity || 'SEV 1'}
-                              </span>
+                              {/* Remove SEV 1 badge unless or until a Sev 1 or Sev 2 urgent is going on */}
+                              {cardHasUrgent ? (
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    background: sev1Open > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                    color: sev1Open > 0 ? '#ef4444' : '#f59e0b',
+                                    border: `1px solid ${sev1Open > 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                                    fontSize: 9.5,
+                                    fontWeight: 700,
+                                    padding: '2.5px 7px',
+                                    borderRadius: 4,
+                                    letterSpacing: '0.04em',
+                                    fontFamily: 'var(--font-mono)',
+                                  }}
+                                >
+                                  {sev1Open > 0 ? 'SEV 1 URGENT' : 'SEV 2 URGENT'}
+                                </span>
+                              ) : (
+                                <span
+                                  style={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    background: 'rgba(34, 197, 94, 0.12)',
+                                    color: '#22c55e',
+                                    border: '1px solid rgba(34, 197, 94, 0.25)',
+                                    fontSize: 9.5,
+                                    fontWeight: 700,
+                                    padding: '2.5px 7px',
+                                    borderRadius: 4,
+                                    letterSpacing: '0.04em',
+                                    fontFamily: 'var(--font-mono)',
+                                  }}
+                                >
+                                  ACTIVE BRIDGE
+                                </span>
+                              )}
 
                               <span
                                 className="rz-badge-pill"
@@ -1461,10 +1644,10 @@ export function WarRoomsPage() {
                             </div>
                           </div>
 
-                          {/* Card Title */}
+                          {/* Card Title - SEV 1 omitted when no Sev 1/2 urgent is going on */}
                           <div className="site-card-title">
                             <h3 style={{ fontSize: 17, fontWeight: 700, letterSpacing: '-0.015em', fontFamily: 'var(--font-sans)' }}>
-                              {room.name}
+                              {displayRoomTitle}
                             </h3>
                             <ArrowUpRight />
                           </div>
@@ -1504,7 +1687,7 @@ export function WarRoomsPage() {
                             </span>
                           </div>
 
-                          {/* Current Live Open Tickets Strip (User Requested Feature) */}
+                          {/* Separate Open Incidents and Open Alerts Strips */}
                           <div
                             style={{
                               display: 'flex',
@@ -1518,20 +1701,37 @@ export function WarRoomsPage() {
                               fontSize: 10.5,
                               fontFamily: 'var(--font-mono)',
                               marginBottom: 10,
+                              flexWrap: 'wrap',
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                               <span
-                                className="source-dot"
                                 style={{
-                                  background: openCount > 0 ? 'var(--primary)' : '#22c55e',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  color: openIncidents.length > 0 ? 'var(--primary)' : 'var(--muted-foreground)',
+                                  fontWeight: 600,
                                 }}
-                              />
-                              <span style={{ color: openCount > 0 ? 'var(--foreground)' : 'var(--muted-foreground)', fontWeight: 600 }}>
-                                {openCount > 0 ? `${openCount} Live Open Tickets` : 'No Open Tickets'}
+                              >
+                                <Flame style={{ width: 11, height: 11 }} />
+                                {openIncidents.length} Open Incidents
+                              </span>
+                              <span style={{ color: 'var(--muted-foreground)' }}>•</span>
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  color: openAlerts.length > 0 ? '#38bdf8' : 'var(--muted-foreground)',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                <Bell style={{ width: 11, height: 11 }} />
+                                {openAlerts.length} Alerts
                               </span>
                             </div>
-                            {openCount > 0 && (
+                            {cardHasUrgent && (
                               <span style={{ color: 'var(--muted-foreground)', fontSize: 9.5 }}>
                                 {sev1Open > 0 ? `${sev1Open} Sev-1` : ''}
                                 {sev1Open > 0 && sev2Open > 0 ? ' • ' : ''}
@@ -1540,7 +1740,7 @@ export function WarRoomsPage() {
                             )}
                           </div>
 
-                          {/* Scheduled Start & End Time Box */}
+                          {/* Scheduled Start & End Time Box with Edit Call Link Option */}
                           <div
                             style={{
                               fontSize: 11,
@@ -1572,13 +1772,13 @@ export function WarRoomsPage() {
                                 type="button"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  openEditDatesModal(room);
+                                  openEditModal(room);
                                 }}
                                 style={{
                                   background: 'transparent',
                                   border: 'none',
                                   padding: 0,
-                                  fontSize: 10,
+                                  fontSize: 10.5,
                                   color: 'var(--primary)',
                                   cursor: 'pointer',
                                   display: 'inline-flex',
@@ -1587,10 +1787,10 @@ export function WarRoomsPage() {
                                   fontWeight: 600,
                                   fontFamily: 'var(--font-sans)',
                                 }}
-                                title="Edit Start & End Dates"
+                                title="Edit War Room Call Link & Dates"
                               >
                                 <Edit2 style={{ width: 10, height: 10 }} />
-                                <span>Edit dates</span>
+                                <span>Edit call link &amp; dates</span>
                               </button>
                             </div>
                           </div>
@@ -1668,63 +1868,104 @@ export function WarRoomsPage() {
                     <ZoomIcon size={24} />
                   </div>
 
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)', margin: 0, fontFamily: 'var(--font-sans)' }}>
-                        {selectedWarRoom.name}
-                      </h2>
-                      <span
-                        style={{
-                          background: (selectedWarRoom.severity || '').toUpperCase().includes('1')
-                            ? 'rgba(239, 68, 68, 0.15)'
-                            : 'rgba(245, 158, 11, 0.15)',
-                          color: (selectedWarRoom.severity || '').toUpperCase().includes('1') ? '#ef4444' : '#f59e0b',
-                          border: `1px solid ${(selectedWarRoom.severity || '').toUpperCase().includes('1') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
-                          fontWeight: 700,
-                          fontSize: 10,
-                          padding: '2.5px 8px',
-                          borderRadius: 4,
-                          fontFamily: 'var(--font-mono)',
-                        }}
-                      >
-                        {selectedWarRoom.severity || 'SEV 1'}
-                      </span>
-                      <span
-                        className="rz-badge-pill"
-                        style={{
-                          background: 'var(--secondary)',
-                          color: 'var(--foreground)',
-                          border: '1px solid var(--border)',
-                          fontSize: 9.5,
-                        }}
-                      >
-                        ● {liveOpenCasesForSelected.length} Live Open Tickets
-                      </span>
-                    </div>
+                  {(() => {
+                    const hasUrgentSelected = incidentAnalytics.sev1 > 0 || incidentAnalytics.sev2Urgent > 0;
+                    const selectedDisplayTitle = hasUrgentSelected
+                      ? selectedWarRoom.name
+                      : selectedWarRoom.name.replace(/^(?:SEV[-\s]?[12]\s*[:\-–—]?\s*)/i, '').trim() || selectedWarRoom.name;
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, flexWrap: 'wrap', fontFamily: 'var(--font-sans)' }}>
-                      {selectedWarRoom.siteName && (
-                        <span
-                          style={{
-                            fontSize: 12,
-                            color: 'var(--foreground)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: 5,
-                            fontWeight: 600,
-                          }}
-                        >
-                          <MapPin style={{ width: 12, height: 12, color: 'var(--muted-foreground)' }} />
-                          {selectedWarRoom.siteName}
-                        </span>
-                      )}
-                      {selectedWarRoom.lead && (
-                        <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
-                          Lead: <strong style={{ color: 'var(--foreground)' }}>{selectedWarRoom.lead}</strong>
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                    return (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                          <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--foreground)', margin: 0, fontFamily: 'var(--font-sans)' }}>
+                            {selectedDisplayTitle}
+                          </h2>
+
+                          {/* Remove SEV 1 badge unless or until a Sev 1 or Sev 2 urgent is going on */}
+                          {hasUrgentSelected ? (
+                            <span
+                              style={{
+                                background: incidentAnalytics.sev1 > 0 ? 'rgba(239, 68, 68, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                                color: incidentAnalytics.sev1 > 0 ? '#ef4444' : '#f59e0b',
+                                border: `1px solid ${incidentAnalytics.sev1 > 0 ? 'rgba(239, 68, 68, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                                fontWeight: 700,
+                                fontSize: 10,
+                                padding: '2.5px 8px',
+                                borderRadius: 4,
+                                fontFamily: 'var(--font-mono)',
+                              }}
+                            >
+                              {incidentAnalytics.sev1 > 0 ? 'SEV 1 URGENT' : 'SEV 2 URGENT'}
+                            </span>
+                          ) : (
+                            <span
+                              style={{
+                                background: 'rgba(34, 197, 94, 0.12)',
+                                color: '#22c55e',
+                                border: '1px solid rgba(34, 197, 94, 0.25)',
+                                fontWeight: 700,
+                                fontSize: 10,
+                                padding: '2.5px 8px',
+                                borderRadius: 4,
+                                fontFamily: 'var(--font-mono)',
+                              }}
+                            >
+                              ACTIVE BRIDGE
+                            </span>
+                          )}
+
+                          <span
+                            className="rz-badge-pill"
+                            style={{
+                              background: 'var(--secondary)',
+                              color: 'var(--primary)',
+                              border: '1px solid var(--border)',
+                              fontSize: 9.5,
+                              fontWeight: 600,
+                            }}
+                          >
+                            🔥 {liveOpenIncidents.length} Open Incidents
+                          </span>
+
+                          <span
+                            className="rz-badge-pill"
+                            style={{
+                              background: 'var(--secondary)',
+                              color: '#38bdf8',
+                              border: '1px solid var(--border)',
+                              fontSize: 9.5,
+                              fontWeight: 600,
+                            }}
+                          >
+                            🔔 {liveOpenAlerts.length} Alerts
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, flexWrap: 'wrap', fontFamily: 'var(--font-sans)' }}>
+                          {selectedWarRoom.siteName && (
+                            <span
+                              style={{
+                                fontSize: 12,
+                                color: 'var(--foreground)',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 5,
+                                fontWeight: 600,
+                              }}
+                            >
+                              <MapPin style={{ width: 12, height: 12, color: 'var(--muted-foreground)' }} />
+                              {selectedWarRoom.siteName}
+                            </span>
+                          )}
+                          {selectedWarRoom.lead && (
+                            <span style={{ fontSize: 12, color: 'var(--muted-foreground)' }}>
+                              Lead: <strong style={{ color: 'var(--foreground)' }}>{selectedWarRoom.lead}</strong>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Actions: Copy Link & Join Meeting (GreyOrange Signature Orange) */}
@@ -1770,7 +2011,7 @@ export function WarRoomsPage() {
                 </div>
               </div>
 
-              {/* URL String Display & Date Window */}
+              {/* URL String Display & Date Window with Edit Call Link Option */}
               <div
                 style={{
                   background: 'var(--background)',
@@ -1815,26 +2056,26 @@ export function WarRoomsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => openEditDatesModal(selectedWarRoom)}
+                    onClick={() => openEditModal(selectedWarRoom)}
                     style={{
                       background: 'var(--secondary)',
                       border: '1px solid var(--border)',
                       borderRadius: 4,
-                      padding: '2.5px 8px',
-                      fontSize: 10.5,
+                      padding: '3px 9px',
+                      fontSize: 11,
                       color: 'var(--foreground)',
                       cursor: 'pointer',
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 4,
+                      gap: 5,
                       fontWeight: 600,
                       fontFamily: 'var(--font-sans)',
                       transition: 'all 0.15s ease',
                     }}
-                    title="Edit Start & End Dates"
+                    title="Edit War Room Call Link & Schedule"
                   >
                     <Edit2 style={{ width: 11, height: 11, color: 'var(--primary)' }} />
-                    <span>Edit dates</span>
+                    <span>Edit call link &amp; dates</span>
                   </button>
                 </div>
               </div>
@@ -1847,106 +2088,302 @@ export function WarRoomsPage() {
               )}
             </div>
 
-            {/* 2. OVERVIEW ANALYTICS (HOW THE SITE IS PERFORMING) */}
+            {/* BUCKET SELECTOR: SEPARATE BUCKETS FOR INCIDENTS AND ALERTS */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                borderBottom: '1px solid var(--border)',
+                paddingBottom: 12,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveBucket('incidents');
+                    setActiveTicketTab('open');
+                    setTicketSeveritySubFilter('all');
+                  }}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 7,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: '1px solid',
+                    borderColor: activeBucket === 'incidents' ? 'var(--primary)' : 'var(--border)',
+                    background: activeBucket === 'incidents' ? 'rgba(249, 115, 22, 0.12)' : 'var(--card)',
+                    color: activeBucket === 'incidents' ? 'var(--primary)' : 'var(--muted-foreground)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontFamily: 'var(--font-sans)',
+                    transition: 'all 0.15s ease',
+                    boxShadow: activeBucket === 'incidents' ? '0 0 14px rgba(249, 115, 22, 0.2)' : 'none',
+                  }}
+                >
+                  <Flame style={{ width: 16, height: 16 }} />
+                  <span>Incidents Bucket</span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      background: activeBucket === 'incidents' ? 'var(--primary)' : 'var(--secondary)',
+                      color: activeBucket === 'incidents' ? '#ffffff' : 'var(--muted-foreground)',
+                    }}
+                  >
+                    {liveOpenIncidents.length} open
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveBucket('alerts');
+                    setActiveTicketTab('open');
+                    setTicketSeveritySubFilter('all');
+                  }}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: 7,
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    border: '1px solid',
+                    borderColor: activeBucket === 'alerts' ? '#38bdf8' : 'var(--border)',
+                    background: activeBucket === 'alerts' ? 'rgba(56, 189, 248, 0.12)' : 'var(--card)',
+                    color: activeBucket === 'alerts' ? '#38bdf8' : 'var(--muted-foreground)',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontFamily: 'var(--font-sans)',
+                    transition: 'all 0.15s ease',
+                    boxShadow: activeBucket === 'alerts' ? '0 0 14px rgba(56, 189, 248, 0.2)' : 'none',
+                  }}
+                >
+                  <Bell style={{ width: 16, height: 16 }} />
+                  <span>Alerts Bucket</span>
+                  <span
+                    style={{
+                      fontSize: 10.5,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '2px 7px',
+                      borderRadius: 4,
+                      background: activeBucket === 'alerts' ? '#38bdf8' : 'var(--secondary)',
+                      color: activeBucket === 'alerts' ? '#0f172a' : 'var(--muted-foreground)',
+                    }}
+                  >
+                    {liveOpenAlerts.length} open
+                  </span>
+                </button>
+              </div>
+
+              <span style={{ fontSize: 11, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
+                {activeBucket === 'incidents' ? '• REAL OPERATIONAL INCIDENTS & OUTAGES' : '• AUTOMATED MONITORING & OPSGENIE ALERTS'}
+              </span>
+            </div>
+
+            {/* 2. OVERVIEW ANALYTICS (RESPECTIVE METRICS PER BUCKET) */}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
                 <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--foreground)', display: 'flex', alignItems: 'center', gap: 7, margin: 0, fontFamily: 'var(--font-sans)' }}>
-                  <Activity style={{ width: 16, height: 16, color: 'var(--primary)' }} />
-                  Site Performance &amp; Severity Analytics
+                  <Activity style={{ width: 16, height: 16, color: activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8' }} />
+                  {activeBucket === 'incidents' ? 'Incident Severity & Health Analytics' : 'Alert Volume & Monitoring Telemetry'}
                 </h3>
-                <span
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 700,
-                    fontFamily: 'var(--font-mono)',
-                    padding: '3px 10px',
-                    borderRadius: 5,
-                    color: analyticsData.siteHealth === 'CRITICAL' ? '#ef4444' : analyticsData.siteHealth === 'DEGRADED' ? '#f59e0b' : '#22c55e',
-                    background: analyticsData.siteHealth === 'CRITICAL' ? 'rgba(239, 68, 68, 0.12)' : analyticsData.siteHealth === 'DEGRADED' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(34, 197, 94, 0.12)',
-                    border: '1px solid var(--border)',
-                  }}
-                >
-                  HEALTH STATUS: {analyticsData.siteHealth}
-                </span>
+                {activeBucket === 'incidents' ? (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '3px 10px',
+                      borderRadius: 5,
+                      color: incidentAnalytics.siteHealth === 'CRITICAL' ? '#ef4444' : incidentAnalytics.siteHealth === 'DEGRADED' ? '#f59e0b' : '#22c55e',
+                      background: incidentAnalytics.siteHealth === 'CRITICAL' ? 'rgba(239, 68, 68, 0.12)' : incidentAnalytics.siteHealth === 'DEGRADED' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(34, 197, 94, 0.12)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    HEALTH STATUS: {incidentAnalytics.siteHealth}
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 700,
+                      fontFamily: 'var(--font-mono)',
+                      padding: '3px 10px',
+                      borderRadius: 5,
+                      color: '#38bdf8',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.25)',
+                    }}
+                  >
+                    MONITORING: {liveOpenAlerts.length > 0 ? `${liveOpenAlerts.length} ACTIVE` : 'CLEAR'}
+                  </span>
+                )}
               </div>
 
-              {/* 4 Standard Metric Cards matching Red Zone layout */}
-              <div className="overview-metrics" style={{ marginTop: 0 }}>
-                {/* Sev 1 Urgents */}
-                <div className="metric">
-                  <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                    <Flame style={{ color: '#ef4444' }} />
-                    SEV 1 URGENTS
-                  </span>
-                  <div>
-                    <strong style={{ color: analyticsData.sev1 > 0 ? '#ef4444' : undefined, fontFamily: 'var(--font-mono)' }}>
-                      {analyticsData.sev1}
-                    </strong>
-                    <span style={{ fontFamily: 'var(--font-sans)' }}>Critical outages</span>
+              {/* 4 Metric Cards for Incidents vs Alerts */}
+              {activeBucket === 'incidents' ? (
+                <div className="overview-metrics" style={{ marginTop: 0 }}>
+                  {/* Sev 1 Urgents */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Flame style={{ color: '#ef4444' }} />
+                      SEV 1 URGENTS
+                    </span>
+                    <div>
+                      <strong style={{ color: incidentAnalytics.sev1 > 0 ? '#ef4444' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev1}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Critical outages</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev1 > 0 ? '#ef4444' : '#22c55e' }} />
+                      Target: 0 Sev-1 incidents
+                    </div>
                   </div>
-                  <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                    <span className="source-dot" style={{ background: analyticsData.sev1 > 0 ? '#ef4444' : '#22c55e' }} />
-                    Target: 0 Sev-1 incidents
-                  </div>
-                </div>
 
-                {/* Sev 2 Urgents */}
-                <div className="metric">
-                  <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                    <AlertTriangle style={{ color: '#f59e0b' }} />
-                    SEV 2 URGENTS
-                  </span>
-                  <div>
-                    <strong style={{ color: analyticsData.sev2Urgent > 0 ? '#f59e0b' : undefined, fontFamily: 'var(--font-mono)' }}>
-                      {analyticsData.sev2Urgent}
-                    </strong>
-                    <span style={{ fontFamily: 'var(--font-sans)' }}>Major degraded</span>
+                  {/* Sev 2 Urgents */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <AlertTriangle style={{ color: '#f59e0b' }} />
+                      SEV 2 URGENTS
+                    </span>
+                    <div>
+                      <strong style={{ color: incidentAnalytics.sev2Urgent > 0 ? '#f59e0b' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev2Urgent}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Major degraded</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev2Urgent >= 5 ? '#f59e0b' : 'var(--muted-foreground)' }} />
+                      Threshold: &lt; 5 Sev-2
+                    </div>
                   </div>
-                  <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                    <span className="source-dot" style={{ background: analyticsData.sev2Urgent >= 5 ? '#f59e0b' : 'var(--muted-foreground)' }} />
-                    Threshold: &lt; 5 Sev-2
-                  </div>
-                </div>
 
-                {/* Sev 2 Highs */}
-                <div className="metric">
-                  <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                    <AlertCircle style={{ color: '#c084fc' }} />
-                    SEV 2 HIGHS
-                  </span>
-                  <div>
-                    <strong style={{ color: analyticsData.sev2High > 0 ? '#c084fc' : undefined, fontFamily: 'var(--font-mono)' }}>
-                      {analyticsData.sev2High}
-                    </strong>
-                    <span style={{ fontFamily: 'var(--font-sans)' }}>High priority</span>
+                  {/* Sev 2 Highs */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <AlertCircle style={{ color: '#c084fc' }} />
+                      SEV 2 HIGHS
+                    </span>
+                    <div>
+                      <strong style={{ color: incidentAnalytics.sev2High > 0 ? '#c084fc' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev2High}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>High priority</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev2High > 0 ? '#c084fc' : 'var(--muted-foreground)' }} />
+                      Operational high priority
+                    </div>
                   </div>
-                  <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                    <span className="source-dot" style={{ background: analyticsData.sev2High > 0 ? '#c084fc' : 'var(--muted-foreground)' }} />
-                    Operational high priority
-                  </div>
-                </div>
 
-                {/* Current Live Open Tickets (Directly fulfilling user request) */}
-                <div className="metric">
-                  <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                    <Radio style={{ color: 'var(--primary)' }} />
-                    CURRENT OPEN TICKETS
-                  </span>
-                  <div>
-                    <strong style={{ color: liveOpenCasesForSelected.length > 0 ? 'var(--primary)' : undefined, fontFamily: 'var(--font-mono)' }}>
-                      {liveOpenCasesForSelected.length}
-                    </strong>
-                    <span style={{ fontFamily: 'var(--font-sans)' }}>Currently active &amp; unsolved</span>
-                  </div>
-                  <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                    <span className="source-dot" style={{ background: liveOpenCasesForSelected.length > 0 ? 'var(--primary)' : '#22c55e' }} />
-                    {analyticsData.totalTickets} total bridge tickets
+                  {/* Current Live Open Incidents */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Flame style={{ color: 'var(--primary)' }} />
+                      LIVE OPEN INCIDENTS
+                    </span>
+                    <div>
+                      <strong style={{ color: liveOpenIncidents.length > 0 ? 'var(--primary)' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {liveOpenIncidents.length}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Currently active &amp; unsolved</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: liveOpenIncidents.length > 0 ? 'var(--primary)' : '#22c55e' }} />
+                      {incidentAnalytics.totalTickets} total incidents in window
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="overview-metrics" style={{ marginTop: 0 }}>
+                  {/* Live Open Alerts */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Bell style={{ color: '#38bdf8' }} />
+                      LIVE OPEN ALERTS
+                    </span>
+                    <div>
+                      <strong style={{ color: liveOpenAlerts.length > 0 ? '#38bdf8' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {liveOpenAlerts.length}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Active alerts firing</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: liveOpenAlerts.length > 0 ? '#38bdf8' : '#22c55e' }} />
+                      Opsgenie automated rules
+                    </div>
+                  </div>
+
+                  {/* Alerts Since Start Date */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Clock style={{ color: '#60a5fa' }} />
+                      ALERTS SINCE START
+                    </span>
+                    <div>
+                      <strong style={{ fontFamily: 'var(--font-mono)' }}>
+                        {alertAnalytics.sinceStart}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Total alert triggers in window</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: '#60a5fa' }} />
+                      Cumulative window volume
+                    </div>
+                  </div>
+
+                  {/* Alert Inflow Last 24 Hours */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Activity style={{ color: '#a78bfa' }} />
+                      INFLOW (LAST 24H)
+                    </span>
+                    <div>
+                      <strong style={{ fontFamily: 'var(--font-mono)' }}>
+                        {alertAnalytics.last24h}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Triggered in past 24 hours</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: '#a78bfa' }} />
+                      Recent telemetry velocity
+                    </div>
+                  </div>
+
+                  {/* Active On-Hold / Runbooks */}
+                  <div className="metric">
+                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                      <Radio style={{ color: '#fb923c' }} />
+                      ON HOLD / RUNBOOKS
+                    </span>
+                    <div>
+                      <strong style={{ fontFamily: 'var(--font-mono)' }}>
+                        {alertAnalytics.onHold}
+                      </strong>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Pending runbook / on hold</span>
+                    </div>
+                    <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
+                      <span className="source-dot" style={{ background: alertAnalytics.onHold > 0 ? '#fb923c' : '#22c55e' }} />
+                      {alertAnalytics.activeRunning} active investigating
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* 3. INCIDENT FLOW TREND GRAPH (UPTREND / DOWNTREND) */}
+            {/* 3. RESPECTIVE FLOW VELOCITY & DIRECTION GRAPH (INCIDENTS GRAPH VS ALERTS GRAPH) */}
             <div
               style={{
                 background: 'var(--card)',
@@ -1961,7 +2398,7 @@ export function WarRoomsPage() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--foreground)', fontFamily: 'var(--font-sans)' }}>
-                    Incident Flow Velocity &amp; Direction
+                    {activeBucket === 'incidents' ? 'Incident Flow Velocity & Direction' : 'Alert Flow Velocity & Direction'}
                   </span>
                   <span
                     style={{
@@ -1990,11 +2427,11 @@ export function WarRoomsPage() {
                 </div>
 
                 <span style={{ fontSize: 11, color: 'var(--muted-foreground)', fontFamily: 'var(--font-mono)' }}>
-                  1st half: {trendData.firstHalfCount} tickets • 2nd half: {trendData.secondHalfCount} tickets
+                  1st half: {trendData.firstHalfCount} {activeBucket === 'incidents' ? 'incidents' : 'alerts'} • 2nd half: {trendData.secondHalfCount} {activeBucket === 'incidents' ? 'incidents' : 'alerts'}
                 </span>
               </div>
 
-              {/* Interactive SVG Area Chart */}
+              {/* Interactive SVG Area Chart for current bucket */}
               <div style={{ height: 130, width: '100%', position: 'relative' }}>
                 {trendData.chartBuckets.length > 0 ? (
                   (() => {
@@ -2020,6 +2457,7 @@ export function WarRoomsPage() {
                     const firstX = pts[0]?.x ?? paddingX;
                     const lastX = pts[pts.length - 1]?.x ?? width - paddingX;
                     const areaD = `${pathD} L ${lastX} ${height - paddingY} L ${firstX} ${height - paddingY} Z`;
+                    const gradId = activeBucket === 'incidents' ? 'incidentFlowGrad' : 'alertFlowGrad';
 
                     return (
                       <svg
@@ -2027,8 +2465,8 @@ export function WarRoomsPage() {
                         style={{ width: '100%', height: '100%', overflow: 'visible' }}
                       >
                         <defs>
-                          <linearGradient id="incidentGradientCleanTheme" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={trendData.trendColor} stopOpacity="0.3" />
+                          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={trendData.trendColor} stopOpacity="0.32" />
                             <stop offset="100%" stopColor={trendData.trendColor} stopOpacity="0.0" />
                           </linearGradient>
                         </defs>
@@ -2045,7 +2483,7 @@ export function WarRoomsPage() {
                         />
 
                         {/* Area fill */}
-                        <path d={areaD} fill="url(#incidentGradientCleanTheme)" />
+                        <path d={areaD} fill={`url(#${gradId})`} />
 
                         {/* Line stroke */}
                         <path
@@ -2098,13 +2536,13 @@ export function WarRoomsPage() {
                   })()
                 ) : (
                   <div style={{ display: 'grid', placeItems: 'center', height: '100%', color: 'var(--muted-foreground)', fontSize: 12, fontFamily: 'var(--font-sans)' }}>
-                    No time-series incident data recorded during this period
+                    No time-series {activeBucket === 'incidents' ? 'incident' : 'alert'} data recorded during this period
                   </div>
                 )}
               </div>
             </div>
 
-            {/* 4. TICKETS SECTION (3 TABS: LIVE OPEN TICKETS, SINCE START DATE, LAST 24 HOURS) */}
+            {/* 4. TICKETS SECTION (RESPECTIVE 3 TABS PER BUCKET) */}
             <div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, flexWrap: 'wrap', marginBottom: 12 }}>
                 {/* 3 Main Tabs */}
@@ -2120,9 +2558,9 @@ export function WarRoomsPage() {
                       fontWeight: 600,
                       cursor: 'pointer',
                       border: '1px solid',
-                      borderColor: activeTicketTab === 'open' ? 'var(--primary)' : 'var(--border)',
-                      background: activeTicketTab === 'open' ? 'var(--orange-surface)' : 'var(--card)',
-                      color: activeTicketTab === 'open' ? 'var(--primary)' : 'var(--foreground)',
+                      borderColor: activeTicketTab === 'open' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--border)',
+                      background: activeTicketTab === 'open' ? (activeBucket === 'incidents' ? 'var(--orange-surface)' : 'rgba(56, 189, 248, 0.12)') : 'var(--card)',
+                      color: activeTicketTab === 'open' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--foreground)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
@@ -2130,8 +2568,8 @@ export function WarRoomsPage() {
                       transition: 'all 0.15s ease',
                     }}
                   >
-                    <Flame style={{ width: 13, height: 13 }} />
-                    <span>Live Open Tickets</span>
+                    {activeBucket === 'incidents' ? <Flame style={{ width: 13, height: 13 }} /> : <Bell style={{ width: 13, height: 13 }} />}
+                    <span>{activeBucket === 'incidents' ? 'Live Open Incidents' : 'Live Open Alerts'}</span>
                     <span
                       style={{
                         fontSize: 10,
@@ -2139,11 +2577,11 @@ export function WarRoomsPage() {
                         fontFamily: 'var(--font-mono)',
                         padding: '1.5px 6px',
                         borderRadius: 3,
-                        background: activeTicketTab === 'open' ? 'var(--primary)' : 'var(--secondary)',
-                        color: activeTicketTab === 'open' ? '#ffffff' : 'var(--muted-foreground)',
+                        background: activeTicketTab === 'open' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--secondary)',
+                        color: activeTicketTab === 'open' ? (activeBucket === 'incidents' ? '#ffffff' : '#0f172a') : 'var(--muted-foreground)',
                       }}
                     >
-                      {liveOpenCasesForSelected.length}
+                      {activeBucket === 'incidents' ? liveOpenIncidents.length : liveOpenAlerts.length}
                     </span>
                   </button>
 
@@ -2158,9 +2596,9 @@ export function WarRoomsPage() {
                       fontWeight: 600,
                       cursor: 'pointer',
                       border: '1px solid',
-                      borderColor: activeTicketTab === 'war_room' ? 'var(--primary)' : 'var(--border)',
-                      background: activeTicketTab === 'war_room' ? 'var(--orange-surface)' : 'var(--card)',
-                      color: activeTicketTab === 'war_room' ? 'var(--primary)' : 'var(--foreground)',
+                      borderColor: activeTicketTab === 'war_room' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--border)',
+                      background: activeTicketTab === 'war_room' ? (activeBucket === 'incidents' ? 'var(--orange-surface)' : 'rgba(56, 189, 248, 0.12)') : 'var(--card)',
+                      color: activeTicketTab === 'war_room' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--foreground)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
@@ -2169,7 +2607,7 @@ export function WarRoomsPage() {
                     }}
                   >
                     <Clock style={{ width: 13, height: 13 }} />
-                    <span>Tickets from Start Date</span>
+                    <span>{activeBucket === 'incidents' ? 'Incidents from Start Date' : 'Alerts from Start Date'}</span>
                     <span
                       style={{
                         fontSize: 10,
@@ -2177,11 +2615,11 @@ export function WarRoomsPage() {
                         fontFamily: 'var(--font-mono)',
                         padding: '1.5px 6px',
                         borderRadius: 3,
-                        background: activeTicketTab === 'war_room' ? 'var(--primary)' : 'var(--secondary)',
-                        color: activeTicketTab === 'war_room' ? '#ffffff' : 'var(--muted-foreground)',
+                        background: activeTicketTab === 'war_room' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--secondary)',
+                        color: activeTicketTab === 'war_room' ? (activeBucket === 'incidents' ? '#ffffff' : '#0f172a') : 'var(--muted-foreground)',
                       }}
                     >
-                      {ticketsSinceStart.length}
+                      {activeBucket === 'incidents' ? incidentsSinceStart.length : alertsSinceStart.length}
                     </span>
                   </button>
 
@@ -2196,9 +2634,9 @@ export function WarRoomsPage() {
                       fontWeight: 600,
                       cursor: 'pointer',
                       border: '1px solid',
-                      borderColor: activeTicketTab === 'last_24h' ? 'var(--primary)' : 'var(--border)',
-                      background: activeTicketTab === 'last_24h' ? 'var(--orange-surface)' : 'var(--card)',
-                      color: activeTicketTab === 'last_24h' ? 'var(--primary)' : 'var(--foreground)',
+                      borderColor: activeTicketTab === 'last_24h' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--border)',
+                      background: activeTicketTab === 'last_24h' ? (activeBucket === 'incidents' ? 'var(--orange-surface)' : 'rgba(56, 189, 248, 0.12)') : 'var(--card)',
+                      color: activeTicketTab === 'last_24h' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--foreground)',
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: 6,
@@ -2215,11 +2653,11 @@ export function WarRoomsPage() {
                         fontFamily: 'var(--font-mono)',
                         padding: '1.5px 6px',
                         borderRadius: 3,
-                        background: activeTicketTab === 'last_24h' ? 'var(--primary)' : 'var(--secondary)',
-                        color: activeTicketTab === 'last_24h' ? '#ffffff' : 'var(--muted-foreground)',
+                        background: activeTicketTab === 'last_24h' ? (activeBucket === 'incidents' ? 'var(--primary)' : '#38bdf8') : 'var(--secondary)',
+                        color: activeTicketTab === 'last_24h' ? (activeBucket === 'incidents' ? '#ffffff' : '#0f172a') : 'var(--muted-foreground)',
                       }}
                     >
-                      {ticketsLast24h.length}
+                      {activeBucket === 'incidents' ? incidentsLast24h.length : alertsLast24h.length}
                     </span>
                   </button>
                 </div>
@@ -2318,8 +2756,8 @@ export function WarRoomsPage() {
                     letterSpacing: '0.04em',
                   }}
                 >
-                  <span>Case &amp; Subject</span>
-                  <span>Severity</span>
+                  <span>{activeBucket === 'incidents' ? 'Case & Subject' : 'Alert & Subject'}</span>
+                  <span>{activeBucket === 'incidents' ? 'Severity' : 'Priority'}</span>
                   <span>Product</span>
                   <span>Assigned To</span>
                   <span>Status</span>
@@ -2466,12 +2904,12 @@ export function WarRoomsPage() {
         )}
 
         {/* ==================================================================== */}
-        {/* EDIT WAR ROOM DATES DIALOG                                           */}
+        {/* EDIT WAR ROOM CALL LINK & DETAILS DIALOG                             */}
         {/* ==================================================================== */}
-        <Dialog open={Boolean(editingRoom)} onOpenChange={open => !open && closeEditDatesModal()}>
+        <Dialog open={Boolean(editingRoom)} onOpenChange={open => !open && closeEditModal()}>
           <DialogContent
             style={{
-              maxWidth: 440,
+              maxWidth: 480,
               background: 'var(--card)',
               border: '1px solid var(--border)',
               borderRadius: 8,
@@ -2480,64 +2918,100 @@ export function WarRoomsPage() {
             }}
           >
             <DialogHeader>
-              <DialogTitle style={{ fontSize: 15, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-sans)', color: 'var(--foreground)' }}>
-                <Calendar style={{ width: 16, height: 16, color: 'var(--primary)' }} />
-                Edit War Room Dates
+              <DialogTitle style={{ fontSize: 16, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-sans)', color: 'var(--foreground)' }}>
+                <Edit2 style={{ width: 16, height: 16, color: 'var(--primary)' }} />
+                Edit War Room Call Link &amp; Details
               </DialogTitle>
               <DialogDescription style={{ fontSize: 12, color: 'var(--muted-foreground)', fontFamily: 'var(--font-sans)' }}>
-                Update the scheduled start and end window for <strong style={{ color: 'var(--foreground)' }}>{editingRoom?.name}</strong>.
+                Update the meeting call URL, window dates, or title for <strong style={{ color: 'var(--foreground)' }}>{editingRoom?.name}</strong>.
               </DialogDescription>
             </DialogHeader>
 
-            <form onSubmit={handleSaveDates} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+            <form onSubmit={handleSaveDetails} style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+              {/* War Room Name */}
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 6, fontFamily: 'var(--font-sans)' }}>
-                  <Clock style={{ width: 13, height: 13, color: 'var(--primary)' }} />
-                  Start Date &amp; Time *
+                  <Video style={{ width: 13, height: 13, color: 'var(--primary)' }} />
+                  War Room Name *
                 </label>
-                <input
-                  type="datetime-local"
-                  value={editStartDate}
-                  onChange={e => setEditStartDate(e.target.value)}
+                <Input
+                  value={editName}
+                  onChange={e => setEditName(e.target.value)}
                   required
-                  style={{
-                    width: '100%',
-                    height: 38,
-                    fontSize: 13,
-                    borderRadius: 6,
-                    background: 'var(--background)',
-                    color: 'var(--foreground)',
-                    border: '1px solid var(--border)',
-                    padding: '0 12px',
-                    fontFamily: 'var(--font-mono)',
-                    outline: 'none',
-                  }}
+                  placeholder="e.g. Incident Bridge: System Sortation Stoppage"
+                  style={{ height: 38, fontSize: 13, background: 'var(--background)', fontFamily: 'var(--font-sans)' }}
                 />
               </div>
 
+              {/* War Room Call Link / Meeting URL */}
               <div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 6, fontFamily: 'var(--font-sans)' }}>
-                  <Clock style={{ width: 13, height: 13, color: 'var(--muted-foreground)' }} />
-                  End Date &amp; Time *
+                  <ExternalLink style={{ width: 13, height: 13, color: 'var(--primary)' }} />
+                  War Room Meeting Call Link (URL) *
                 </label>
-                <input
-                  type="datetime-local"
-                  value={editEndDate}
-                  onChange={e => setEditEndDate(e.target.value)}
+                <Input
+                  value={editUrl}
+                  onChange={e => setEditUrl(e.target.value)}
                   required
-                  style={{
-                    width: '100%',
-                    height: 38,
-                    fontSize: 13,
-                    borderRadius: 6,
-                    background: 'var(--background)',
-                    color: 'var(--foreground)',
-                    border: '1px solid var(--border)',
-                    padding: '0 12px',
-                    fontFamily: 'var(--font-mono)',
-                    outline: 'none',
-                  }}
+                  placeholder="https://greyorange.zoom.us/j/... or Google Meet URL"
+                  style={{ height: 38, fontSize: 13, background: 'var(--background)', fontFamily: 'var(--font-mono)' }}
                 />
+                <span style={{ fontSize: 10.5, color: 'var(--muted-foreground)', marginTop: 4, display: 'block', fontFamily: 'var(--font-sans)' }}>
+                  Zoom, Google Meet, or Microsoft Teams bridge URL for live operational triage.
+                </span>
+              </div>
+
+              {/* Start & End Dates Grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 6, fontFamily: 'var(--font-sans)' }}>
+                    <Clock style={{ width: 13, height: 13, color: 'var(--primary)' }} />
+                    Start Date &amp; Time *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editStartDate}
+                    onChange={e => setEditStartDate(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      height: 38,
+                      fontSize: 13,
+                      borderRadius: 6,
+                      background: 'var(--background)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      padding: '0 12px',
+                      fontFamily: 'var(--font-mono)',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+
+                <div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, fontWeight: 600, color: 'var(--foreground)', marginBottom: 6, fontFamily: 'var(--font-sans)' }}>
+                    <Clock style={{ width: 13, height: 13, color: 'var(--muted-foreground)' }} />
+                    End Date &amp; Time *
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={editEndDate}
+                    onChange={e => setEditEndDate(e.target.value)}
+                    required
+                    style={{
+                      width: '100%',
+                      height: 38,
+                      fontSize: 13,
+                      borderRadius: 6,
+                      background: 'var(--background)',
+                      color: 'var(--foreground)',
+                      border: '1px solid var(--border)',
+                      padding: '0 12px',
+                      fontFamily: 'var(--font-mono)',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
               </div>
 
               {editStartDate && editEndDate && (
@@ -2561,12 +3035,25 @@ export function WarRoomsPage() {
                 </div>
               )}
 
+              {/* Notes / Agenda */}
+              <div>
+                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 500, color: 'var(--muted-foreground)', marginBottom: 5, fontFamily: 'var(--font-sans)' }}>
+                  Agenda / Notes (Optional)
+                </label>
+                <Input
+                  value={editNotes}
+                  onChange={e => setEditNotes(e.target.value)}
+                  placeholder="Impacted subsystems or current bridge objectives..."
+                  style={{ height: 38, fontSize: 13, background: 'var(--background)', fontFamily: 'var(--font-sans)' }}
+                />
+              </div>
+
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  onClick={closeEditDatesModal}
+                  onClick={closeEditModal}
                   style={{ height: 36, fontSize: 12, fontFamily: 'var(--font-sans)' }}
                 >
                   Cancel
@@ -2574,7 +3061,7 @@ export function WarRoomsPage() {
                 <Button
                   type="submit"
                   size="sm"
-                  disabled={updateDatesMutation.isPending}
+                  disabled={updateRoomMutation.isPending}
                   style={{
                     height: 36,
                     fontSize: 12,
@@ -2586,7 +3073,7 @@ export function WarRoomsPage() {
                   }}
                 >
                   <Check style={{ width: 14, height: 14 }} />
-                  {updateDatesMutation.isPending ? 'Saving…' : 'Save Dates'}
+                  {updateRoomMutation.isPending ? 'Saving…' : 'Save Details & Link'}
                 </Button>
               </div>
             </form>

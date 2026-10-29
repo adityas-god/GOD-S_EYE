@@ -17,11 +17,11 @@ const STORAGE_KEY = 'gods_eye_active_war_rooms_v1';
 const DEFAULT_WAR_ROOMS: WarRoom[] = [
   {
     id: 'wr-default-1',
-    name: 'SEV-1 Incident Bridge: System Sortation Stoppage',
+    name: 'Incident Bridge: System Sortation Stoppage',
     url: 'https://zoom.us/j/9876543210',
     siteName: 'Target T-0582',
     siteId: 'target-t-0582',
-    severity: 'SEV 1',
+    severity: 'Standard',
     lead: 'On-Call Incident Lead',
     notes: 'P0 Incident triage: conveyor sortation communication failure.',
     startedAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
