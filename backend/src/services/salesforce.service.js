@@ -1461,7 +1461,7 @@ export const KNOWN_SITE_ALIASES = {
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat'],
   'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
@@ -1642,7 +1642,7 @@ export function extractSiteFromAlertSubject(subject, compiledSites) {
   }
 
   // Pattern 5: Look for known host keywords anywhere in the subject
-  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993)\b/i);
+  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada)\b/i);
   if (tokenMatches && tokenMatches[1]) {
     const site = resolveSiteFromToken(tokenMatches[1].toLowerCase(), compiledSites);
     if (site) return site;
@@ -1769,9 +1769,14 @@ export function resolveSiteFromToken(token, compiledSites) {
     return s ? s.originalName : 'GXO-AF';
   }
   // H&M Canada Ajax: hnm-canada, hm-canada, flexo-hnm
-  if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm/i.test(rawToken)) {
+  if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm|ajax/i.test(rawToken)) {
     const s = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
     return s ? s.originalName : 'H&M Canada Ajax';
+  }
+  // Apotek: apotek, apotekhjartat, apotekprod, apotekhjartatprod
+  if (/apotek/i.test(rawToken)) {
+    const s = compiledSites.find(x => /apotek/i.test(x.originalName));
+    return s ? s.originalName : 'Apotek';
   }
   // DHL Figs: flexo-dhlfigs, dhlfigs
   if (/dhlfigs/i.test(rawToken)) {
@@ -2058,6 +2063,11 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
       const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
       if (hm) return hm.originalName;
       return 'H&M Canada Ajax';
+    }
+    if (/apotek/i.test(rawAccountName)) {
+      const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
+      if (ap) return ap.originalName;
+      return 'Apotek';
     }
     if (/sam.*atl|4993/i.test(rawAccountName)) {
       const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
@@ -3631,7 +3641,13 @@ export function getSiteMatchSOQLParts(siteName) {
       "Subject LIKE '%flexo-hnm%'",
       "Subject LIKE '%hnm-canada%'",
       "Subject LIKE '%hm-canada%'",
+      "Subject LIKE '%ajax%'",
       "Account_Name__c LIKE '%Ajax%'",
+      "Account_Name__c LIKE '%H&M%Canada%'",
+      "Account_Name__c LIKE '%HM%Canada%'",
+      "Account.Name LIKE '%H&M%Canada%'",
+      "Account.Name LIKE '%HM%Canada%'",
+      "Customer_Location__c LIKE '%Ajax%'",
       "Snow_Sitename__c LIKE '%Ajax%'"
     );
   } else if ((clean.includes('essilor') || clean.includes('luxottica') || clean.includes('elatl') || clean.includes('el-atl')) || (clean.includes('atlanta') && !clean.includes('sam'))) {
@@ -3756,6 +3772,17 @@ export function getSiteMatchSOQLParts(siteName) {
     parts.push("Subject LIKE '%coupang%'", "Account_Name__c LIKE '%Coupang%'");
   } else if (clean.includes('sodimac')) {
     parts.push("Subject LIKE '%sodimac%'", "Account_Name__c LIKE '%Sodimac%'");
+  } else if (clean.includes('apotek')) {
+    parts.push(
+      "Subject LIKE '%apotek%'",
+      "Subject LIKE '%apotekhjartat%'",
+      "Account_Name__c LIKE '%Apotek%'",
+      "Account.Name LIKE '%Apotek%'",
+      "Snow_Sitename__c LIKE '%Apotek%'",
+      "Snow_Sitename__c LIKE '%Hjärtat%'",
+      "Snow_Sitename__c LIKE '%Hjartat%'",
+      "Customer_Location__c LIKE '%Stockholm%'"
+    );
   } else {
     const tokens = clean
       .split(/\s+/)

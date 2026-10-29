@@ -257,30 +257,42 @@ function SiteDetail() {
           endTime: appliedCustomRange.endTime,
         });
 
-        // Resilient fallback: if the site-specific query returned 0 records, but overview has open cases for this site,
-        // merge/fallback to overview cases so the panel never wipes off!
-        if ((!result.records || result.records.length === 0) && site?.name) {
+        // Resilient fallback: if the site-specific query returned 0 records or missing alerts, but overview has open cases/alerts for this site,
+        // merge/fallback to overview cases and alerts so the panel never wipes off!
+        if (site?.name) {
           try {
             const overview = queryClient.getQueryData<any>(['salesforce-overview']);
-            if (overview && Array.isArray(overview.cases)) {
+            if (overview) {
               const siteLower = site.name.trim().toLowerCase();
               const compiled = compileSiteIndex(sites || []);
               const matchesSite = (item: SFCase) => {
                 const best = findBestSiteForCase(item, compiled);
                 if (best && areSameSite(best, site.name)) return true;
-                const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || '').trim().toLowerCase();
+                const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || (item as any).Account?.Name || '').trim().toLowerCase();
                 return loc.includes(siteLower) || siteLower.includes(loc);
               };
-              const matchedCases = (overview.cases as SFCase[]).filter(matchesSite);
-              const matchedAlerts = Array.isArray(overview.alerts) ? (overview.alerts as SFCase[]) : [];
-              if (matchedCases.length > 0 || matchedAlerts.length > 0) {
-                return {
-                  ...result,
-                  totalSize: matchedCases.length,
-                  records: matchedCases,
-                  alerts: result.alerts && result.alerts.length > 0 ? result.alerts : matchedAlerts,
-                };
+              const fallbackCases = (!result.records || result.records.length === 0) && Array.isArray(overview.cases)
+                ? (overview.cases as SFCase[]).filter(matchesSite)
+                : [];
+              const matchedAlerts = Array.isArray(overview.alerts)
+                ? (overview.alerts as SFCase[]).filter(matchesSite)
+                : [];
+
+              const mergedAlertsMap = new Map<string, SFCase>();
+              for (const a of (result.alerts || [])) {
+                if (a && a.Id) mergedAlertsMap.set(a.Id, a);
               }
+              for (const a of matchedAlerts) {
+                if (a && a.Id && !mergedAlertsMap.has(a.Id)) mergedAlertsMap.set(a.Id, a);
+              }
+
+              const finalRecords = result.records && result.records.length > 0 ? result.records : fallbackCases;
+              return {
+                ...result,
+                totalSize: finalRecords.length,
+                records: finalRecords,
+                alerts: Array.from(mergedAlertsMap.values()),
+              };
             }
           } catch {}
         }
@@ -301,19 +313,19 @@ function SiteDetail() {
     retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 10000),
     refetchInterval: 30_000, // automatic background refresh every 30 seconds
     placeholderData: (prev) => {
-      if (prev && (prev as any).records && (prev as any).records.length > 0) return prev;
+      if (prev && (prev as any).records && (prev as any).records.length > 0 && (prev as any).alerts && (prev as any).alerts.length > 0) return prev;
       try {
         const overview = queryClient.getQueryData<any>(['salesforce-overview']);
-        if (overview && Array.isArray(overview.cases) && site?.name) {
+        if (overview && site?.name) {
           const siteLower = site.name.trim().toLowerCase();
           const compiled = compileSiteIndex(sites || []);
           const matchesSite = (item: SFCase) => {
             const best = findBestSiteForCase(item, compiled);
             if (best && areSameSite(best, site.name)) return true;
-            const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || '').trim().toLowerCase();
+            const loc = String(item.Customer_Location__c || item.Snow_Sitename__c || item.Site_Name_Customer_Input__c || item.Account_Name__c || (item as any).Account?.Name || '').trim().toLowerCase();
             return loc.includes(siteLower) || siteLower.includes(loc);
           };
-          const matchedCases = (overview.cases as SFCase[]).filter(matchesSite);
+          const matchedCases = Array.isArray(overview.cases) ? (overview.cases as SFCase[]).filter(matchesSite) : [];
           const matchedAlerts = Array.isArray(overview.alerts)
             ? (overview.alerts as SFCase[]).filter(matchesSite)
             : [];
@@ -447,6 +459,25 @@ function SiteDetail() {
     };
   }, [timeWindow]);
 
+  // Extract matching alerts from global salesforce-overview cache so site workspace always reflects overview count
+  const overviewAlertsForSite = useMemo(() => {
+    try {
+      const overview = queryClient.getQueryData<any>(['salesforce-overview']);
+      if (!overview || !Array.isArray(overview.alerts) || !site?.name) return [];
+      const compiled = compileSiteIndex(sites || []);
+      const siteLower = site.name.trim().toLowerCase();
+      return (overview.alerts as SFCase[]).filter(a => {
+        if (!isAlertCase(a)) return false;
+        const best = findBestSiteForCase(a, compiled);
+        if (best && areSameSite(best, site.name)) return true;
+        const loc = String(a.Customer_Location__c || a.Snow_Sitename__c || a.Site_Name_Customer_Input__c || a.Account_Name__c || (a as any).Account?.Name || '').trim().toLowerCase();
+        return loc.includes(siteLower) || siteLower.includes(loc);
+      });
+    } catch {
+      return [];
+    }
+  }, [queryClient, site?.name, sites]);
+
   // 1. Live Open Cases: strictly open cases (not closed, no end time, not alerts, not change requests)
   const allCases = useMemo(() => {
     const list = rawCases.filter(c => !isAlertCase(c) && isLiveOpenCase(c) && !isChangeRequestTicket(c) && !hasTicketEndTime(c) && !getTicketEndTime(c));
@@ -466,6 +497,11 @@ function SiteDetail() {
         map.set(c.Id, c);
       }
     }
+    for (const a of overviewAlertsForSite) {
+      if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
+        map.set(a.Id, a);
+      }
+    }
     if (analyticsData?.alerts && Array.isArray(analyticsData.alerts)) {
       for (const a of analyticsData.alerts) {
         if (isAlertCase(a) && isOpenAlert(a) && a.Id) {
@@ -474,7 +510,7 @@ function SiteDetail() {
       }
     }
     return Array.from(map.values()).filter(matchesTimeWindow);
-  }, [rawAlerts, rawCases, analyticsData?.alerts, matchesTimeWindow]);
+  }, [rawAlerts, rawCases, overviewAlertsForSite, analyticsData?.alerts, matchesTimeWindow]);
 
   // 3. Closed Alerts: strictly closed alerts (by default ONLY past 24 hours; expands when timeframe selected)
   const closedAlerts = useMemo(() => {
@@ -492,6 +528,11 @@ function SiteDetail() {
     for (const c of rawCases) {
       if (isAlertCase(c) && isClosedAlert(c) && c.Id) {
         map.set(c.Id, c);
+      }
+    }
+    for (const a of overviewAlertsForSite) {
+      if (isAlertCase(a) && isClosedAlert(a) && a.Id) {
+        map.set(a.Id, a);
       }
     }
     // Merge analyticsData alerts when a specific historical timeframe is selected
@@ -520,7 +561,7 @@ function SiteDetail() {
     }
 
     return allList.filter(matchesTimeWindow);
-  }, [rawAlerts, rawClosed, rawCases, analyticsData?.alerts, siteTimeRange, matchesTimeWindow]);
+  }, [rawAlerts, rawClosed, rawCases, overviewAlertsForSite, analyticsData?.alerts, siteTimeRange, matchesTimeWindow]);
 
   // 4. All site alerts (open + closed + deep historical alerts for precise analysis)
   const allSiteAlerts = useMemo(() => {

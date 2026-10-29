@@ -1303,6 +1303,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Owens & Minor': ['owens minor', 'owens & minor', 'owens and minor', 'owens & minors', 'owens minors', 'owens&minor', 'owens&minors', 'owens&monors', 'owens monors', 'owens monor', 'owens&minor-georgia(usa)', 'onm', 'onmprod', 'owensminorprod', 'owensminor', 'owens-minor', 'owensminor-prod', 'onm-prod', 'onm_prod', 'owens_minor'],
   "Casey's Joplin": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg", "uscstg1-caseystg", "kafka-caseyprod-prod", "kafka-caseyprod", "casey-prod", "caseys-prod", "casey-joplin"],
   "Casey's": ["caseys joplin", "casey's joplin", "casey joplin", "caseys", "casey's", "casey", "caseyprod", "caseysprod", "caseystg"],
+  'H&M Canada Ajax': ['hm canada ajax', 'hm canada', 'hnm canada', 'hm ajax', 'hnm-canada', 'h&m canada', 'h&m ajax', 'ajax', 'h&m(ajax)-(canada)', 'h&m(ajax)', 'hm(ajax)', 'flexo-hnm-canada', 'flexo-hnm', 'hnm-canada-prod', 'h&m-canada (ajax)', 'h&m-canada', 'hm-canada', 'ajaxprod'],
   'H&M P1': ['hm p1', 'h&m p1', 'hm robbinsville', 'hm robbinsville project 1', 'h&m(project1)-robbinsville(newjersey)'],
   'H&M P1-RMS': ['hm p1 rms', 'h&m p1 rms', 'hm project1 rms', 'h&m project1 rms', 'h&m (project1) _ rms'],
   'Essilor Luxottica': ['essilor luxottica', 'essilorluxottica', 'luxottica fhr', 'essilorluxottica-fhr(california)', 'fhr luxottica', 'fhr'],
@@ -1313,7 +1314,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
-  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)'],
+  'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat'],
   'Coupang INC': ['coupang inc', 'coupang incheon 4', 'coupang incheon', 'coupang_incheon(4)'],
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
@@ -1513,7 +1514,7 @@ function _computeSiteFromAlertSubject(sub: string, compiledSites: CompiledSite[]
   }
 
   // Pattern 5: Look for known host keywords anywhere in the subject
-  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993)\b/i);
+  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada)\b/i);
   if (tokenMatches && tokenMatches[1]) {
     const site = resolveSiteFromToken(tokenMatches[1].toLowerCase(), compiledSites);
     if (site) return site;
@@ -1640,9 +1641,14 @@ export function resolveSiteFromToken(token: string, compiledSites: CompiledSite[
     return s ? s.originalName : 'GXO-AF';
   }
   // H&M Canada Ajax: hnm-canada, hm-canada, flexo-hnm
-  if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm/i.test(rawToken)) {
+  if (/hnm[-_]?canada|hm[-_]?canada|flexo[-_]?hnm|ajax/i.test(rawToken)) {
     const s = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
     return s ? s.originalName : 'H&M Canada Ajax';
+  }
+  // Apotek: apotek, apotekhjartat, apotekprod, apotekhjartatprod
+  if (/apotek/i.test(rawToken)) {
+    const s = compiledSites.find(x => /apotek/i.test(x.originalName));
+    return s ? s.originalName : 'Apotek';
   }
   // DHL Figs: flexo-dhlfigs, dhlfigs
   if (/dhlfigs/i.test(rawToken)) {
@@ -1992,6 +1998,11 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
       const hm = compiledSites.find(x => /ajax|h&m canada/i.test(x.originalName));
       if (hm) return hm.originalName;
       return 'H&M Canada Ajax';
+    }
+    if (/apotek/i.test(rawAccountName)) {
+      const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
+      if (ap) return ap.originalName;
+      return 'Apotek';
     }
     if (/sam.*atl|4993/i.test(rawAccountName)) {
       const sam = compiledSites.find(x => /sam.*atl/i.test(x.originalName));
