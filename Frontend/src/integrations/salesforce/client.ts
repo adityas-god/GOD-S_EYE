@@ -52,6 +52,8 @@ export interface SFCase {
   is_open?: boolean;
   is_closed?: boolean;
   Account?: { Name: string } | null;
+  Ticket_Type__c?: string | null;
+  ticket_type?: string | null;
   [key: string]: any;
 }
 
@@ -132,13 +134,22 @@ export function hasOpsgenieUrl(c: SFCase | Record<string, unknown>): boolean {
 export function isAlertCase(c: SFCase): boolean {
   if (!c) return false;
 
+  const raw = c as Record<string, unknown>;
+
+  // PRIMARY: Salesforce Ticket_Type__c field is the authoritative source of truth.
+  // If it is explicitly set, trust it absolutely — no heuristics needed.
+  const ticketType = String(raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  if (ticketType && ticketType !== 'null' && ticketType !== 'undefined' && ticketType !== 'none' && ticketType !== 'n/a') {
+    // Ticket_Type__c is populated: only "alert" is an alert — everything else (Incident, Problem, SR, etc.) is NOT.
+    return ticketType === 'alert';
+  }
+
   // 0. Immediate Opsgenie URL check:
   // User requirement: "if there is opesgenie url present imideatly it will be considered as alert"
   if (hasOpsgenieUrl(c)) {
     return true;
   }
 
-  const raw = c as Record<string, unknown>;
   const typeStr = String(c.Type || raw.type || '').trim().toLowerCase();
   const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
   const sub = String(c.Subject || raw.subject || '').trim();

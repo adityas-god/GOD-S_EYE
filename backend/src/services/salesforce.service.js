@@ -109,7 +109,7 @@ function loadOverviewSnapshotFromDisk() {
             parsed.siteStats[k].alertCount = 0;
             parsed.siteStats[k].caseNumbers = [];
           }
-          const allSites = loadAuthoritativeSitesSnapshot();
+          const allSites = loadAllKnownSites();
           const compiledSites = compileSiteIndex(allSites);
           for (const c of parsed.cases) {
             const best = findBestSiteForCase(c, compiledSites);
@@ -275,21 +275,43 @@ export function hasOpsgenieUrl(c) {
 export function isAlertCase(c) {
   if (!c) return false;
 
-  // 0. Immediate Opsgenie URL check:
-  // User requirement: "if there is opesgenie url present imideatly it will be considered as alert"
+  const raw = c;
+  const typeStr = String(raw.Type || raw.type || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  const catStr = String(raw.Category__c || raw.category || raw.Snow_Category__c || '').trim().toLowerCase();
+  const sub = String(raw.Subject || raw.subject || '').trim();
+
+  // 1. Explicit Type or Category is Alert -> Strictly Alert!
+  if (typeStr === 'alert' || catStr === 'alert') {
+    return true;
+  }
+
+  // 2. Explicit non-alert types -> Strictly NOT an alert!
+  if (
+    typeStr === 'incident' ||
+    typeStr === 'technical support' ||
+    typeStr === 'service request' ||
+    typeStr === 'sr' ||
+    typeStr === 'problem' ||
+    typeStr === 'change request' ||
+    typeStr === 'change' ||
+    catStr === 'service request' ||
+    catStr === 'sr' ||
+    catStr === 'incident'
+  ) {
+    return false;
+  }
+
+  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts
+  if (isImTicket(c)) {
+    return false;
+  }
+
+  // 4. Immediate Opsgenie URL check (for automated alerts)
   if (hasOpsgenieUrl(c)) {
     return true;
   }
 
-  const raw = c;
-  const typeStr = String(raw.Type || raw.type || '').trim().toLowerCase();
-  const catStr = String(raw.Category__c || raw.category || raw.Snow_Category__c || '').trim().toLowerCase();
-  const sub = String(raw.Subject || raw.subject || '').trim();
-
-  // 1. Explicit Type or Category is Alert
-  if (typeStr === 'alert' || catStr === 'alert') return true;
-
-  // 2. Strong Automated Alert Subject Signatures (Checked FIRST so automated monitoring tickets are NEVER wrongly dismissed as service requests)
+  // 5. Strong Automated Alert Subject Signatures
   if (sub) {
     if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
       return true;
@@ -314,8 +336,7 @@ export function isAlertCase(c) {
     }
   }
 
-  // 3. Service Requests are customer/internal service requests, NEVER automated alerts:
-  // User requirement: "its Service requet and it is in alert queue"
+  // 6. Service Requests are customer/internal service requests, NEVER automated alerts
   const isServiceRequest =
     typeStr === 'service request' ||
     typeStr === 'sr' ||
@@ -328,13 +349,7 @@ export function isAlertCase(c) {
     return false;
   }
 
-  // 4. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
-  // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
-  if (isImTicket(c)) {
-    return false;
-  }
-
-  // 5. Fallback check on description ONLY if automated alert signatures exist
+  // 7. Fallback check on description ONLY if automated alert signatures exist
   const desc = String(c.Description || c.description || '');
   if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
     return true;
@@ -1264,9 +1279,8 @@ export function isAlertForShiftBucket(c) {
 }
 
 /**
- * Live open alert predicate: strictly open alerts with end time logic applied.
- * Excludes tickets with an End Time, Closed Date, or closed status.
- * User requirement: "all the alert ticket with on-hold status should also show up even its having end time like on hold and endtime"
+ * Live open alert predicate: strictly open alerts (ticket type: alert, not closed/solved/resolved, year >= 2026).
+ * All open alerts (including On Hold, In Progress, Assigned, New, etc.) show up in the open alerts bucket.
  */
 export function isOpenAlert(c) {
   if (!c) return false;
@@ -1281,21 +1295,8 @@ export function isOpenAlert(c) {
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
 
-  // Explicitly closed/solved/cancelled statuses in Salesforce
+  // Explicitly closed/solved/cancelled/completed/duplicate statuses in Salesforce
   for (const pattern of CLOSED_STATUS_PATTERNS) {
-    if (status.includes(pattern)) return false;
-  }
-
-  // User requirement: all alert tickets with on-hold status show up even if having end time!
-  const isHoldAlert = status.includes('hold');
-  if (isHoldAlert) {
-    return true;
-  }
-
-  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
-  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
-
-  for (const pattern of EXCLUDED_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
 
@@ -1303,8 +1304,8 @@ export function isOpenAlert(c) {
 }
 
 /**
- * Closed alert predicate: strictly alert tickets that have an End Time, Closed Date, or closed status.
- * On-hold alerts are open, so they are not closed even with end time.
+ * Closed alert predicate: strictly alert tickets that have a closed status (Closed, Solved, Resolved).
+ * On-hold alerts are open, so they are not closed.
  */
 export function isClosedAlert(c) {
   if (!c) return false;
@@ -1312,25 +1313,7 @@ export function isClosedAlert(c) {
   const status = String(c.Status || c.status || '').toLowerCase();
   if (status.includes('hold')) return false;
 
-  const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
-  if (isClosedStatus) return true;
-
-  const isActiveOpen =
-    status.includes('new') ||
-    status.includes('open') ||
-    status.includes('progress') ||
-    status.includes('investigat') ||
-    status.includes('active') ||
-    status.includes('assigned') ||
-    status.includes('escalat') ||
-    status.includes('queue') ||
-    status.includes('triag') ||
-    status.includes('review') ||
-    status.includes('pending');
-  if (isActiveOpen) return false;
-
-  const endTime = getTicketEndTime(c);
-  return Boolean(endTime);
+  return CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
 }
 
 export function isClosedAlertToday(c) {
@@ -2912,6 +2895,9 @@ export function mapRecord(c) {
     RecordType: c.RecordType || null,
     record_type: c.RecordType?.Name || c.Record_Type__c || c.Case_Record_Type__c || null,
     Change_Type__c: c.Change_Type__c || c.change_type || null,
+    // Authoritative Salesforce ticket type field — primary source for alert detection
+    Ticket_Type__c: c.Ticket_Type__c || c.ticket_type || c.Type || c.type || null,
+    ticket_type: c.Ticket_Type__c || c.ticket_type || c.Type || c.type || null,
   };
 }
 
@@ -2936,6 +2922,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
   }
 
   const fetchPromise = (async () => {
+    // Query 1: Primary Alert SOQL — catches all Type = 'Alert', Snow_Category__c = 'Alert', or alert patterns
     const alertsPrimarySoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
@@ -2943,11 +2930,12 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
       "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%ProcessExecution%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%Postgres%' OR Subject LIKE '%Lag%' OR Subject LIKE '%Runbook%')",
-      "AND ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved') OR ClosedDate = TODAY)",
+      "AND ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved') OR ClosedDate = TODAY OR Status = 'On Hold')",
       "AND CreatedDate >= 2026-01-01T00:00:00Z",
-      'ORDER BY LastModifiedDate DESC LIMIT 2000',
+      'ORDER BY LastModifiedDate DESC LIMIT 3000',
     ].join(' ');
 
+    // Query 2: Cases SOQL — catches open incident and support cases
     const casesPrimarySoql = [
       'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
@@ -2988,8 +2976,14 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     let raw = [];
     try {
       const [resAlerts, resCases] = await Promise.all([
-        executeSOQL(alertsPrimarySoql),
-        executeSOQL(casesPrimarySoql)
+        executeSOQL(alertsPrimarySoql).catch(err => {
+          console.warn('[Salesforce] alertsPrimarySoql notice:', err.message);
+          return { records: [] };
+        }),
+        executeSOQL(casesPrimarySoql).catch(err => {
+          console.warn('[Salesforce] casesPrimarySoql notice:', err.message);
+          return { records: [] };
+        })
       ]);
       const alertsRecords = resAlerts.records || [];
       const casesRecords = resCases.records || [];
@@ -3001,6 +2995,10 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
         if (r && r.Id) mapById.set(r.Id, r);
       }
       raw = Array.from(mapById.values());
+      console.log(`[Salesforce] Fetched ${alertsRecords.length} alerts records, ${casesRecords.length} cases records. Total unique: ${raw.length}`);
+      if (raw.length === 0) {
+        throw new Error('Both primary queries returned 0 records');
+      }
       _lastSalesforceError = null;
     } catch (errPrimary) {
       console.warn('[Salesforce] Dual primary SOQL notice, executing fallback query:', errPrimary.message);
@@ -3455,14 +3453,8 @@ export async function fetchOpenCasesForSite({ siteId, siteName, accountId, force
     if (_overviewCache.data?.siteStats) {
       const sKey = (effectiveSiteName || '').toLowerCase().trim();
       if (sKey && _overviewCache.data.siteStats[sKey]) {
-        _overviewCache.data.siteStats[sKey].count = Math.max(
-          _overviewCache.data.siteStats[sKey].count || 0,
-          casesToStore.length
-        );
-        _overviewCache.data.siteStats[sKey].alertCount = Math.max(
-          _overviewCache.data.siteStats[sKey].alertCount || 0,
-          matchedAlerts.length
-        );
+        _overviewCache.data.siteStats[sKey].count = casesToStore.length;
+        _overviewCache.data.siteStats[sKey].alertCount = matchedAlerts.length;
       }
     }
 
@@ -3571,25 +3563,23 @@ export async function fetchLiveCasesOverview(forceRefresh = false) {
     }
   }
 
-  // Synchronize with any site-specific cases already fetched in _siteCasesCache so site card count matches site workspace panel exactly
+  // Synchronize with any live site-specific cases already fetched in _siteCasesCache so site card count matches site workspace panel exactly
   for (const [cacheKey, cachedEntry] of _siteCasesCache.entries()) {
     if (cachedEntry?.data?.cases) {
+      // Only synchronize default/all live cases, NEVER historical ranges (24h, 48h, 7d, 15d, 1m, 2m, 3m, custom)!
+      if (!cacheKey.includes('::default::') && !cacheKey.includes('::all::')) {
+        continue;
+      }
       const sName = cachedEntry.data.siteName || '';
       const key = sName.toLowerCase();
       if (key && siteStats[key]) {
         const cachedCount = cachedEntry.data.cases.length;
-        if (cachedCount > siteStats[key].count) {
-          siteStats[key].count = cachedCount;
-          for (const c of cachedEntry.data.cases) {
-            if (c.CaseNumber && !siteStats[key].caseNumbers.includes(c.CaseNumber)) {
-              siteStats[key].caseNumbers.push(c.CaseNumber);
-            }
-          }
-          const { sev1Count, sev2Count } = calculateSiteUrgentCounts(cachedEntry.data.cases);
-          siteStats[key].sev1Count = Math.max(siteStats[key].sev1Count, sev1Count);
-          siteStats[key].sev2Count = Math.max(siteStats[key].sev2Count, sev2Count);
-        }
-        if (cachedEntry.data.alerts && cachedEntry.data.alerts.length > siteStats[key].alertCount) {
+        siteStats[key].count = cachedCount;
+        siteStats[key].caseNumbers = cachedEntry.data.cases.map(c => c.CaseNumber).filter(Boolean);
+        const { sev1Count, sev2Count } = calculateSiteUrgentCounts(cachedEntry.data.cases);
+        siteStats[key].sev1Count = sev1Count;
+        siteStats[key].sev2Count = sev2Count;
+        if (cachedEntry.data.alerts) {
           siteStats[key].alertCount = cachedEntry.data.alerts.length;
         }
       }

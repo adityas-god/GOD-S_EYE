@@ -29,7 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DashboardShell } from '@/components/dashboard-shell';
 import { ConnectionsDialog, SiteEditor, SignInDialog } from '@/components/dashboard-dialogs';
-import { sitesQueryOptions } from '@/lib/sites';
+import { sitesQueryOptions, type Site } from '@/lib/sites';
 import { useAuth } from '@/components/auth-context';
 import {
   sfFetchCasesForSite,
@@ -611,8 +611,8 @@ function SiteDetail() {
             ...prev.siteStats,
             [sKey]: {
               ...existing,
-              count: Math.max(existing.count || 0, allCases.length),
-              alertCount: Math.max(existing.alertCount || 0, openAlerts.length),
+              count: allCases.length,
+              alertCount: openAlerts.length,
             },
           },
         };
@@ -622,8 +622,11 @@ function SiteDetail() {
         if (!Array.isArray(prevSites)) return prevSites;
         return prevSites.map((s: Site) => {
           if (s.name?.trim().toLowerCase() === sKey) {
-            if ((s.open_cases_count ?? 0) >= allCases.length) return s;
-            return { ...s, open_cases_count: allCases.length };
+            return {
+              ...s,
+              open_cases_count: allCases.length,
+              open_alerts_count: openAlerts.length,
+            };
           }
           return s;
         });

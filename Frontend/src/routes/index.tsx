@@ -225,12 +225,14 @@ function Index() {
       const siteCasesQueries = queryClient.getQueriesData<any>({ queryKey: ['site-cases'] });
       for (const [qKey, qData] of siteCasesQueries) {
         if (qData) {
+          const range = Array.isArray(qKey) ? qKey[4] : null;
+          if (range && range !== 'all') continue; // Skip historical timeframes
           const records = Array.isArray(qData.records) ? qData.records : (Array.isArray(qData.cases) ? qData.cases : []);
           const alerts = Array.isArray(qData.alerts) ? qData.alerts : [];
           const sName = String(qData.site?.name || (Array.isArray(qKey) ? qKey[2] || qKey[1] : '') || '').trim().toLowerCase();
           if (sName) {
-            cachedCasesBySite.set(sName, Math.max(cachedCasesBySite.get(sName) || 0, records.length));
-            cachedAlertsBySite.set(sName, Math.max(cachedAlertsBySite.get(sName) || 0, alerts.length));
+            cachedCasesBySite.set(sName, records.length);
+            cachedAlertsBySite.set(sName, alerts.length);
           }
         }
       }
@@ -298,17 +300,13 @@ function Index() {
       const directCases = directLiveCasesBySite.get(siteLower) ?? 0;
       const directAlerts = directLiveAlertsBySite.get(siteLower) ?? 0;
 
-      const openCount = Math.max(
-        stats?.count ?? 0,
-        site.open_cases_count ?? 0,
-        directCases,
-        cachedCases
-      );
-      const alertCount = Math.max(
-        stats?.alertCount ?? 0,
-        directAlerts,
-        cachedAlerts
-      );
+      const openCount = cachedCasesBySite.has(siteLower)
+        ? cachedCasesBySite.get(siteLower)!
+        : (stats && stats.count !== undefined ? stats.count : directCases);
+
+      const alertCount = cachedAlertsBySite.has(siteLower)
+        ? cachedAlertsBySite.get(siteLower)!
+        : (stats && stats.alertCount !== undefined ? stats.alertCount : directAlerts);
       const isDown = stats ? stats.isDown : (site.is_down ?? false);
       const caseNumbers = stats?.caseNumbers ?? [];
       const sev1Count = stats ? (stats.sev1Count ?? 0) : 0;
@@ -413,33 +411,45 @@ function Index() {
     });
   }, [sfOverview?.cases]);
 
-  // Strictly filter alerts: only open alerts (no end time, no closed/hold status, strictly year >= 2026)
+  // Strictly filter alerts: only open alerts (ticket type: alert, not closed/solved/resolved, strictly year >= 2026)
   const openAlerts = useMemo(() => {
     const list = [
       ...(sfOverview?.alerts ?? []),
-      ...(sfOverview?.cases ?? []).filter(c => isAlertCase(c) && isOpenAlert(c)),
+      ...(sfOverview?.allAlerts ?? []),
+      ...(sfOverview?.cases ?? []),
     ];
     const map = new Map<string, SFCase>();
     for (const a of list) {
+      if (!a || !a.Id) continue;
       if (a.CreatedDate) {
         const yr = new Date(a.CreatedDate).getFullYear();
         if (!isNaN(yr) && yr < 2026) continue;
       }
-      if (a && a.Id) map.set(a.Id, a);
+      if (isAlertCase(a) && isOpenAlert(a)) {
+        map.set(a.Id, a);
+      }
     }
     return Array.from(map.values());
-  }, [sfOverview?.alerts, sfOverview?.cases]);
+  }, [sfOverview?.alerts, sfOverview?.allAlerts, sfOverview?.cases]);
 
-  // Closed alerts: alerts with end time or closed status
+  // Closed alerts: alerts with closed status (Closed, Solved, Resolved)
   const closedAlerts = useMemo(() => {
     const list = [
       ...(sfOverview?.closedAlerts ?? []),
-      ...(sfOverview?.alerts ?? []).filter(isClosedAlert),
-      ...(sfOverview?.cases ?? []).filter(c => isAlertCase(c) && isClosedAlert(c)),
+      ...(sfOverview?.alerts ?? []),
+      ...(sfOverview?.allAlerts ?? []),
+      ...(sfOverview?.cases ?? []),
     ];
     const map = new Map<string, SFCase>();
     for (const c of list) {
-      if (c && c.Id) map.set(c.Id, c);
+      if (!c || !c.Id) continue;
+      if (c.CreatedDate) {
+        const yr = new Date(c.CreatedDate).getFullYear();
+        if (!isNaN(yr) && yr < 2026) continue;
+      }
+      if (isAlertCase(c) && isClosedAlert(c)) {
+        map.set(c.Id, c);
+      }
     }
     return Array.from(map.values());
   }, [sfOverview]);
@@ -1890,7 +1900,7 @@ function Index() {
                             {matchedSiteId ? (
                               <Link
                                 to="/sites/$siteId"
-                                params={{ siteId: matchedSiteId }}
+                                params={{ siteId: matchedSiteId as string }}
                                 preload={false}
                                 onClick={e => e.stopPropagation()}
                                 style={{ color: 'inherit', textDecoration: 'underline', textUnderlineOffset: 2 }}
