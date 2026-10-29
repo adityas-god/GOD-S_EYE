@@ -136,26 +136,37 @@ export function isAlertCase(c: SFCase): boolean {
 
   const raw = c as Record<string, unknown>;
 
-  // PRIMARY: Salesforce Ticket_Type__c field is the authoritative source of truth.
-  // If it is explicitly set, trust it absolutely — no heuristics needed.
-  const ticketType = String(raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
-  if (ticketType && ticketType !== 'null' && ticketType !== 'undefined' && ticketType !== 'none' && ticketType !== 'n/a') {
-    // Ticket_Type__c is populated: only "alert" is an alert — everything else (Incident, Problem, SR, etc.) is NOT.
-    return ticketType === 'alert';
+  // PRIMARY: Salesforce Ticket Type / Type is the authoritative source of truth.
+  const typeStr = String(raw.Ticket_Type__c || raw.ticket_type || raw.Type || raw.type || '').trim().toLowerCase();
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  const sub = String(c.Subject || raw.subject || '').trim();
+
+  // 1. Explicit Type or Category is Alert -> Strictly Alert!
+  if (typeStr === 'alert' || catStr === 'alert') {
+    return true;
   }
 
-  // 0. Immediate Opsgenie URL check:
+  // 2. Explicit non-alert types -> Strictly NOT an alert!
+  if (
+    typeStr === 'incident' ||
+    typeStr === 'technical support' ||
+    typeStr === 'service request' ||
+    typeStr === 'sr' ||
+    typeStr === 'problem' ||
+    typeStr === 'change request' ||
+    typeStr === 'change' ||
+    catStr === 'service request' ||
+    catStr === 'sr' ||
+    catStr === 'incident'
+  ) {
+    return false;
+  }
+
+  // 3. Immediate Opsgenie URL check:
   // User requirement: "if there is opesgenie url present imideatly it will be considered as alert"
   if (hasOpsgenieUrl(c)) {
     return true;
   }
-
-  const typeStr = String(c.Type || raw.type || '').trim().toLowerCase();
-  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
-  const sub = String(c.Subject || raw.subject || '').trim();
-
-  // 1. Explicit Type or Category is Alert
-  if (typeStr === 'alert' || catStr === 'alert') return true;
 
   // 2. Strong Automated Alert Subject Signatures (Checked FIRST so automated monitoring tickets are NEVER wrongly dismissed as service requests)
   if (sub) {
@@ -165,7 +176,7 @@ export function isAlertCase(c: SFCase): boolean {
 
     // Automated monitoring rule signatures (case-insensitive substring/word matching)
     if (
-      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
+      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|buttoninactive|node-red|nodered|continuous trace|hostreportingstopped|tomcatappreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
         sub
       )
     ) {

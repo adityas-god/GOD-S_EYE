@@ -241,7 +241,11 @@ export function WarRoomsPage() {
   // Detail view tickets tab: 'open' | 'war_room' | 'last_24h'
   const [activeTicketTab, setActiveTicketTab] = useState<'open' | 'war_room' | 'last_24h'>('open');
   const [ticketSearch, setTicketSearch] = useState('');
-  const [ticketSeveritySubFilter, setTicketSeveritySubFilter] = useState<'all' | 'sev1' | 'sev2'>('all');
+  const [ticketSeverityFilter, setTicketSeverityFilter] = useState('All');
+  const [ticketProductFilter, setTicketProductFilter] = useState('All');
+  const [ticketAssigneeFilter, setTicketAssigneeFilter] = useState('All');
+  const [ticketStatusFilter, setTicketStatusFilter] = useState('All');
+  const [ticketSortOrder, setTicketSortOrder] = useState<'newest' | 'oldest'>('newest');
 
   // Form State (Start Date & End Date required)
   const [name, setName] = useState('');
@@ -777,36 +781,124 @@ export function WarRoomsPage() {
     }
   }, [activeBucket, activeTicketTab, liveOpenIncidents, incidentsSinceStart, incidentsLast24h, liveOpenAlerts, alertsSinceStart, alertsLast24h]);
 
-  // Filtered tickets based on search and sub-severity filter
+  // Unique filter values derived from activeTicketList
+  const uniqueProducts = useMemo(() => {
+    const set = new Set<string>();
+    activeTicketList.forEach(c => {
+      const p = String(c.Product_Type__c || c.product_line || '').trim();
+      if (p) set.add(p);
+    });
+    return Array.from(set).sort();
+  }, [activeTicketList]);
+
+  const uniqueAssignees = useMemo(() => {
+    const set = new Set<string>();
+    activeTicketList.forEach(c => {
+      const a = getAssigneeDisplayName(c);
+      if (a && a !== 'Unassigned') set.add(a);
+    });
+    return Array.from(set).sort();
+  }, [activeTicketList]);
+
+  const uniqueStatuses = useMemo(() => {
+    const set = new Set<string>();
+    activeTicketList.forEach(c => {
+      const s = String(c.Status || '').trim();
+      if (s) set.add(s);
+    });
+    return Array.from(set).sort();
+  }, [activeTicketList]);
+
+  const uniqueSeverities = useMemo(() => {
+    const set = new Set<string>();
+    activeTicketList.forEach(c => {
+      const s = String(c.Priority || c.Highest_Severity__c || c.Alert_Priority__c || '').trim();
+      if (s) set.add(s);
+    });
+    return Array.from(set).sort();
+  }, [activeTicketList]);
+
+  // Filtered tickets based on search, severity, product, assignee, status, and sort order
   const filteredTickets = useMemo(() => {
     let list = activeTicketList;
 
-    if (ticketSeveritySubFilter === 'sev1') {
-      list = list.filter(c => detectSeverity(c) === 'sev1');
-    } else if (ticketSeveritySubFilter === 'sev2') {
+    // Severity / Priority Filter
+    if (ticketSeverityFilter !== 'All') {
+      if (ticketSeverityFilter === 'SEV 1 URGENT' || ticketSeverityFilter === 'sev1') {
+        list = list.filter(c => detectSeverity(c) === 'sev1');
+      } else if (ticketSeverityFilter === 'SEV 2 URGENT' || ticketSeverityFilter === 'sev2') {
+        list = list.filter(c => {
+          const s = detectSeverity(c);
+          return s === 'sev2' || (s as string) === 'sev2_urgent';
+        });
+      } else if (ticketSeverityFilter === 'SEV 2 HIGH' || ticketSeverityFilter === 'sev2_high') {
+        list = list.filter(c => detectSeverity(c) === 'sev2_high');
+      } else {
+        list = list.filter(c => {
+          const s = String(c.Priority || c.Highest_Severity__c || c.Alert_Priority__c || '').toLowerCase();
+          return s === ticketSeverityFilter.toLowerCase();
+        });
+      }
+    }
+
+    // Product Filter
+    if (ticketProductFilter !== 'All') {
       list = list.filter(c => {
-        const s = detectSeverity(c);
-        return s === 'sev2' || (s as string) === 'sev2_urgent' || s === 'sev2_high';
+        const p = String(c.Product_Type__c || c.product_line || '').toLowerCase();
+        return p === ticketProductFilter.toLowerCase();
       });
     }
 
-    if (!ticketSearch.trim()) return list;
-    const q = ticketSearch.trim().toLowerCase();
-    return list.filter(c => {
-      const num = String(c.CaseNumber || '').toLowerCase();
-      const sub = String(c.Subject || '').toLowerCase();
-      const desc = String(c.Description || '').toLowerCase();
-      const assignee = getAssigneeDisplayName(c).toLowerCase();
-      const status = String(c.Status || '').toLowerCase();
-      return (
-        num.includes(q) ||
-        sub.includes(q) ||
-        desc.includes(q) ||
-        assignee.includes(q) ||
-        status.includes(q)
-      );
+    // Assignee Filter
+    if (ticketAssigneeFilter !== 'All') {
+      list = list.filter(c => {
+        const a = getAssigneeDisplayName(c).toLowerCase();
+        return a === ticketAssigneeFilter.toLowerCase();
+      });
+    }
+
+    // Status Filter
+    if (ticketStatusFilter !== 'All') {
+      list = list.filter(c => {
+        const s = String(c.Status || '').toLowerCase();
+        return s === ticketStatusFilter.toLowerCase();
+      });
+    }
+
+    // Search query
+    if (ticketSearch.trim()) {
+      const q = ticketSearch.trim().toLowerCase();
+      list = list.filter(c => {
+        const num = String(c.CaseNumber || '').toLowerCase();
+        const sub = String(c.Subject || '').toLowerCase();
+        const desc = String(c.Description || '').toLowerCase();
+        const assignee = getAssigneeDisplayName(c).toLowerCase();
+        const status = String(c.Status || '').toLowerCase();
+        return (
+          num.includes(q) ||
+          sub.includes(q) ||
+          desc.includes(q) ||
+          assignee.includes(q) ||
+          status.includes(q)
+        );
+      });
+    }
+
+    // Sorting by Created Date
+    return [...list].sort((a, b) => {
+      const tA = getCaseCreatedMs(a);
+      const tB = getCaseCreatedMs(b);
+      return ticketSortOrder === 'newest' ? tB - tA : tA - tB;
     });
-  }, [activeTicketList, ticketSearch, ticketSeveritySubFilter]);
+  }, [
+    activeTicketList,
+    ticketSeverityFilter,
+    ticketProductFilter,
+    ticketAssigneeFilter,
+    ticketStatusFilter,
+    ticketSearch,
+    ticketSortOrder,
+  ]);
 
   // --------------------------------------------------------------------------
   // Analytics for Incidents Bucket
@@ -2662,21 +2754,53 @@ export function WarRoomsPage() {
                   </button>
                 </div>
 
-                {/* Sub-Severity & Search Controls */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                {/* Sub-Severity, Filter Reset & Search Controls */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  {/* Reset All Active Filters Button */}
+                  {(ticketSeverityFilter !== 'All' || ticketProductFilter !== 'All' || ticketAssigneeFilter !== 'All' || ticketStatusFilter !== 'All' || ticketSearch.trim().length > 0) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTicketSeverityFilter('All');
+                        setTicketProductFilter('All');
+                        setTicketAssigneeFilter('All');
+                        setTicketStatusFilter('All');
+                        setTicketSearch('');
+                      }}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        color: '#ef4444',
+                        background: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        borderRadius: 4,
+                        padding: '4px 8px',
+                        cursor: 'pointer',
+                        fontFamily: 'var(--font-sans)',
+                      }}
+                      title="Reset all active filters"
+                    >
+                      <X style={{ width: 12, height: 12 }} />
+                      <span>Reset filters</span>
+                    </button>
+                  )}
+
                   <div style={{ display: 'flex', gap: 3, background: 'var(--secondary)', padding: 3, borderRadius: 6, border: '1px solid var(--border)' }}>
                     <button
                       type="button"
-                      onClick={() => setTicketSeveritySubFilter('all')}
+                      onClick={() => setTicketSeverityFilter('All')}
                       style={{
                         padding: '4px 9px',
                         fontSize: 10.5,
-                        fontWeight: ticketSeveritySubFilter === 'all' ? 700 : 500,
+                        fontWeight: ticketSeverityFilter === 'All' ? 700 : 500,
                         borderRadius: 4,
                         border: 'none',
                         cursor: 'pointer',
-                        background: ticketSeveritySubFilter === 'all' ? 'var(--card)' : 'transparent',
-                        color: ticketSeveritySubFilter === 'all' ? 'var(--foreground)' : 'var(--muted-foreground)',
+                        background: ticketSeverityFilter === 'All' ? 'var(--card)' : 'transparent',
+                        color: ticketSeverityFilter === 'All' ? 'var(--foreground)' : 'var(--muted-foreground)',
                         fontFamily: 'var(--font-sans)',
                       }}
                     >
@@ -2684,16 +2808,16 @@ export function WarRoomsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTicketSeveritySubFilter('sev1')}
+                      onClick={() => setTicketSeverityFilter('SEV 1 URGENT')}
                       style={{
                         padding: '4px 9px',
                         fontSize: 10.5,
-                        fontWeight: ticketSeveritySubFilter === 'sev1' ? 700 : 500,
+                        fontWeight: ticketSeverityFilter === 'SEV 1 URGENT' ? 700 : 500,
                         borderRadius: 4,
                         border: 'none',
                         cursor: 'pointer',
-                        background: ticketSeveritySubFilter === 'sev1' ? 'var(--card)' : 'transparent',
-                        color: ticketSeveritySubFilter === 'sev1' ? '#ef4444' : 'var(--muted-foreground)',
+                        background: ticketSeverityFilter === 'SEV 1 URGENT' ? 'var(--card)' : 'transparent',
+                        color: ticketSeverityFilter === 'SEV 1 URGENT' ? '#ef4444' : 'var(--muted-foreground)',
                         fontFamily: 'var(--font-sans)',
                       }}
                     >
@@ -2701,16 +2825,16 @@ export function WarRoomsPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setTicketSeveritySubFilter('sev2')}
+                      onClick={() => setTicketSeverityFilter('SEV 2 URGENT')}
                       style={{
                         padding: '4px 9px',
                         fontSize: 10.5,
-                        fontWeight: ticketSeveritySubFilter === 'sev2' ? 700 : 500,
+                        fontWeight: ticketSeverityFilter === 'SEV 2 URGENT' ? 700 : 500,
                         borderRadius: 4,
                         border: 'none',
                         cursor: 'pointer',
-                        background: ticketSeveritySubFilter === 'sev2' ? 'var(--card)' : 'transparent',
-                        color: ticketSeveritySubFilter === 'sev2' ? '#f59e0b' : 'var(--muted-foreground)',
+                        background: ticketSeverityFilter === 'SEV 2 URGENT' ? 'var(--card)' : 'transparent',
+                        color: ticketSeverityFilter === 'SEV 2 URGENT' ? '#f59e0b' : 'var(--muted-foreground)',
                         fontFamily: 'var(--font-sans)',
                       }}
                     >
@@ -2740,12 +2864,12 @@ export function WarRoomsPage() {
                   overflow: 'hidden',
                 }}
               >
-                {/* Table Header */}
+                {/* Table Header with interactive column filter dropdowns */}
                 <div
                   style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(260px, 1.8fr) 130px 100px 140px 120px 140px',
-                    padding: '10px 16px',
+                    gridTemplateColumns: 'minmax(260px, 1.8fr) 130px 105px 140px 120px 140px',
+                    padding: '8px 16px',
                     background: 'var(--secondary)',
                     borderBottom: '1px solid var(--border)',
                     fontSize: 10,
@@ -2754,14 +2878,212 @@ export function WarRoomsPage() {
                     fontFamily: 'var(--font-mono)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.04em',
+                    alignItems: 'center',
+                    gap: 8,
                   }}
                 >
                   <span>{activeBucket === 'incidents' ? 'Case & Subject' : 'Alert & Subject'}</span>
-                  <span>{activeBucket === 'incidents' ? 'Severity' : 'Priority'}</span>
-                  <span>Product</span>
-                  <span>Assigned To</span>
-                  <span>Status</span>
-                  <span>Created Date</span>
+
+                  {/* Column 1: Severity / Priority Filter */}
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <select
+                      aria-label="Filter by Severity"
+                      value={ticketSeverityFilter}
+                      onChange={e => setTicketSeverityFilter(e.target.value)}
+                      style={{
+                        background: ticketSeverityFilter !== 'All' ? '#dc2626' : 'transparent',
+                        color: ticketSeverityFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                        border: ticketSeverityFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={ticketSeverityFilter !== 'All' ? `Filtered: ${ticketSeverityFilter}` : 'Click to filter by Severity'}
+                    >
+                      <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                        {ticketSeverityFilter !== 'All' ? `SEV: ${ticketSeverityFilter}` : `${activeBucket === 'incidents' ? 'SEVERITY' : 'PRIORITY'} ▾`}
+                      </option>
+                      {ticketSeverityFilter !== 'All' && (
+                        <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                          ✕ Clear Filter (Show All)
+                        </option>
+                      )}
+                      {activeBucket === 'incidents' && (
+                        <>
+                          <option value="SEV 1 URGENT" style={{ background: '#18191e', color: '#ef4444', fontWeight: 700 }}>
+                            ● SEV 1 URGENT ({activeTicketList.filter(c => detectSeverity(c) === 'sev1').length})
+                          </option>
+                          <option value="SEV 2 URGENT" style={{ background: '#18191e', color: '#f59e0b', fontWeight: 700 }}>
+                            ● SEV 2 URGENT ({activeTicketList.filter(c => { const s = detectSeverity(c); return s === 'sev2' || (s as string) === 'sev2_urgent'; }).length})
+                          </option>
+                          <option value="SEV 2 HIGH" style={{ background: '#18191e', color: '#c084fc', fontWeight: 700 }}>
+                            ● SEV 2 HIGH ({activeTicketList.filter(c => detectSeverity(c) === 'sev2_high').length})
+                          </option>
+                        </>
+                      )}
+                      {uniqueSeverities
+                        .filter(sev => sev !== 'SEV 1 URGENT' && sev !== 'SEV 2 URGENT' && sev !== 'SEV 2 HIGH')
+                        .map(sev => (
+                          <option key={sev} value={sev} style={{ background: '#18191e', color: '#fff' }}>
+                            {sev} ({activeTicketList.filter(c => (c.Alert_Priority__c === sev || c.Highest_Severity__c === sev || c.Priority === sev)).length})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+
+                  {/* Column 2: Product Filter */}
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <select
+                      aria-label="Filter by Product"
+                      value={ticketProductFilter}
+                      onChange={e => setTicketProductFilter(e.target.value)}
+                      style={{
+                        background: ticketProductFilter !== 'All' ? '#dc2626' : 'transparent',
+                        color: ticketProductFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                        border: ticketProductFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={ticketProductFilter !== 'All' ? `Filtered: ${ticketProductFilter}` : 'Click to filter by Product'}
+                    >
+                      <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                        {ticketProductFilter !== 'All' ? `PROD: ${ticketProductFilter}` : 'PRODUCT ▾'}
+                      </option>
+                      {ticketProductFilter !== 'All' && (
+                        <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                          ✕ Clear Filter (Show All)
+                        </option>
+                      )}
+                      {uniqueProducts.map(prod => (
+                        <option key={prod} value={prod} style={{ background: '#18191e', color: '#fff' }}>
+                          {prod} ({activeTicketList.filter(c => String(c.Product_Type__c || c.product_line || '').toLowerCase() === prod.toLowerCase()).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Column 3: Assigned To Filter */}
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <select
+                      aria-label="Filter by Assigned To"
+                      value={ticketAssigneeFilter}
+                      onChange={e => setTicketAssigneeFilter(e.target.value)}
+                      style={{
+                        background: ticketAssigneeFilter !== 'All' ? '#dc2626' : 'transparent',
+                        color: ticketAssigneeFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                        border: ticketAssigneeFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={ticketAssigneeFilter !== 'All' ? `Filtered: ${ticketAssigneeFilter}` : 'Click to filter by Assigned To'}
+                    >
+                      <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                        {ticketAssigneeFilter !== 'All' ? `ASSIGNED: ${ticketAssigneeFilter}` : 'ASSIGNED TO ▾'}
+                      </option>
+                      {ticketAssigneeFilter !== 'All' && (
+                        <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                          ✕ Clear Filter (Show All)
+                        </option>
+                      )}
+                      {uniqueAssignees.map(a => (
+                        <option key={a} value={a} style={{ background: '#18191e', color: '#fff' }}>
+                          {a} ({activeTicketList.filter(c => getAssigneeDisplayName(c).toLowerCase() === a.toLowerCase()).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Column 4: Status Filter */}
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <select
+                      aria-label="Filter by Status"
+                      value={ticketStatusFilter}
+                      onChange={e => setTicketStatusFilter(e.target.value)}
+                      style={{
+                        background: ticketStatusFilter !== 'All' ? '#dc2626' : 'transparent',
+                        color: ticketStatusFilter !== 'All' ? '#ffffff' : 'var(--muted-foreground)',
+                        border: ticketStatusFilter !== 'All' ? '1px solid #ef4444' : '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '3px 4px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={ticketStatusFilter !== 'All' ? `Filtered: ${ticketStatusFilter}` : 'Click to filter by Status'}
+                    >
+                      <option value="All" style={{ background: '#18191e', color: '#fff' }}>
+                        {ticketStatusFilter !== 'All' ? `STATUS: ${ticketStatusFilter}` : 'STATUS ▾'}
+                      </option>
+                      {ticketStatusFilter !== 'All' && (
+                        <option value="All" style={{ background: '#18191e', color: '#f59e0b' }}>
+                          ✕ Clear Filter (Show All)
+                        </option>
+                      )}
+                      {uniqueStatuses.map(s => (
+                        <option key={s} value={s} style={{ background: '#18191e', color: '#fff' }}>
+                          {s} ({activeTicketList.filter(c => String(c.Status || '').toLowerCase() === s.toLowerCase()).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Column 5: Created Date Sort Toggle */}
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <button
+                      type="button"
+                      onClick={() => setTicketSortOrder(prev => prev === 'newest' ? 'oldest' : 'newest')}
+                      style={{
+                        background: 'transparent',
+                        color: 'var(--muted-foreground)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: 4,
+                        padding: '3px 6px',
+                        fontSize: 9,
+                        fontWeight: 700,
+                        fontFamily: 'var(--font-mono)',
+                        cursor: 'pointer',
+                        width: '100%',
+                        textTransform: 'uppercase',
+                        outline: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        transition: 'all 0.15s ease',
+                      }}
+                      title={`Sort by Created Date (${ticketSortOrder === 'newest' ? 'Newest first' : 'Oldest first'})`}
+                    >
+                      <span>CREATED DATE</span>
+                      <span style={{ color: 'var(--primary)', fontSize: 10 }}>{ticketSortOrder === 'newest' ? '▾' : '▴'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Table Body */}
@@ -2776,7 +3098,7 @@ export function WarRoomsPage() {
                           key={c.Id || c.CaseNumber}
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: 'minmax(260px, 1.8fr) 130px 100px 140px 120px 140px',
+                            gridTemplateColumns: 'minmax(260px, 1.8fr) 130px 105px 140px 120px 140px',
                             padding: '12px 16px',
                             alignItems: 'center',
                             borderBottom: '1px solid var(--border)',
