@@ -88,20 +88,23 @@ function loadOverviewSnapshotFromDisk() {
       const raw = fs.readFileSync(SNAPSHOT_FILE, 'utf8');
       const parsed = JSON.parse(raw);
       if (parsed && Array.isArray(parsed.cases) && parsed.cases.length > 0) {
-        parsed.cases = parsed.cases.filter(c => {
-          if (!c || !c.CreatedDate) return true;
-          const yr = new Date(c.CreatedDate).getFullYear();
-          return isNaN(yr) || yr >= 2026;
-        });
-        if (Array.isArray(parsed.alerts)) {
-          parsed.alerts = parsed.alerts.filter(a => {
-            if (!a || !a.CreatedDate) return true;
-            const yr = new Date(a.CreatedDate).getFullYear();
-            return isNaN(yr) || yr >= 2026;
-          });
+        // Collect all open records and re-partition using authoritative predicates
+        const combined = [...(parsed.cases || []), ...(parsed.alerts || [])];
+        const uniqueById = new Map();
+        for (const item of combined) {
+          if (item && (item.Id || item.CaseNumber)) {
+            const key = item.Id || item.CaseNumber;
+            if (!uniqueById.has(key)) uniqueById.set(key, item);
+          }
         }
+        const deduped = Array.from(uniqueById.values());
+
+        parsed.cases = deduped.filter(isLiveOpenCase);
+        parsed.alerts = deduped.filter(isOpenAlert);
+        parsed.openAlerts = parsed.alerts;
+        parsed.closedAlerts = deduped.filter(isClosedAlert);
         parsed.totalLiveCases = parsed.cases.length;
-        parsed.totalLiveAlerts = (parsed.alerts || []).length;
+        parsed.totalLiveAlerts = parsed.alerts.length;
 
         if (parsed.siteStats && typeof parsed.siteStats === 'object') {
           for (const k of Object.keys(parsed.siteStats)) {
@@ -133,6 +136,9 @@ function loadOverviewSnapshotFromDisk() {
             }
           }
         }
+        try {
+          fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(parsed), 'utf8');
+        } catch {}
         return parsed;
       }
     }
@@ -230,6 +236,19 @@ const CLOSED_STATUS_PATTERNS = [
   'duplicate',
 ];
 
+// Statuses excluded from the live open alerts bucket:
+// User requirement: "dont include the pending information , pending confirmation and closed i want alerts in bucket till on hold"
+const EXCLUDED_ALERT_STATUS_PATTERNS = [
+  ...CLOSED_STATUS_PATTERNS,
+  'pending information',
+  'pending confirmation',
+  'pending-confirmation',
+  'pending customer confirmation',
+  'pending customer',
+  'waiting on customer',
+  'waiting for customer',
+];
+
 const EXCLUDED_STATUS_PATTERNS = [
   ...CLOSED_STATUS_PATTERNS,
   'on hold',
@@ -242,32 +261,131 @@ const EXCLUDED_STATUS_PATTERNS = [
   'waiting for customer',
 ];
 
+let _opsgenieField = null;
+
 /**
- * Detects if a ticket contains an Opsgenie URL or link.
- * Requirement: "if there is opesgenie url present imideatly it will be considered as alert"
+ * Dynamically resolves the exact API name of the Opsgenie URL field on the Case object.
+ * GreyOrange Salesforce org uses custom field labeled "Opsgenei URL" (API name typically 'Opsgenei_URL__c' or 'Opsgenie_URL__c').
+ */
+export async function getOpsgenieFieldName() {
+  if (_opsgenieField) return _opsgenieField;
+
+  const candidates = [
+    'Opsgenei_URL__c',
+    'Opsgenie_URL__c',
+    'Opsgenei_Url__c',
+    'Opsgenie_Url__c',
+    'OpsgeneiURL__c',
+    'OpsgenieURL__c',
+    'Opsgenie_Alert_URL__c',
+    'Alert_Url__c',
+    'Incident_Url__c',
+  ];
+
+  // 1. Try Case describe via Salesforce REST API
+  try {
+    const tokenData = await getSalesforceToken();
+    const { apiVersion } = getSfConfig();
+    const describeUrl = `${tokenData.instance_url}/services/data/${apiVersion}/sobjects/Case/describe`;
+    const res = await fetch(describeUrl, {
+      headers: {
+        Authorization: `Bearer ${tokenData.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const fields = data.fields || [];
+      const match = fields.find(f => /opsgenei\s*url|opsgenie\s*url/i.test(f.label || '') || /opsgen/i.test(f.name || ''));
+      if (match) {
+        console.log(`[Salesforce] Resolved Opsgenie field via Case describe: ${match.name} (label: "${match.label}")`);
+        _opsgenieField = match.name;
+        return _opsgenieField;
+      }
+    }
+  } catch (err) {
+    console.warn('[Salesforce] Notice during Case describe:', err.message);
+  }
+
+  // 2. Fallback: test candidate fields in a 1-record SOQL query
+  for (const cand of candidates) {
+    try {
+      await executeSOQL(`SELECT Id, ${cand} FROM Case LIMIT 1`, { paginate: false });
+      console.log(`[Salesforce] Verified valid Opsgenie field: ${cand}`);
+      _opsgenieField = cand;
+      return _opsgenieField;
+    } catch {
+      // try next candidate
+    }
+  }
+
+  _opsgenieField = 'Opsgenei_URL__c';
+  return _opsgenieField;
+}
+
+/**
+ * Formats an Opsgenie URL or Alert ID into a fully qualified HTTPS link.
+ */
+export function formatOpsgenieUrl(val) {
+  if (!val || typeof val !== 'string') return null;
+  const s = val.trim();
+  if (!s || ['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://app.opsgenie.com/alert/detail/${s}`;
+}
+
+/**
+ * Detects if a ticket contains an Opsgenie URL, alert ID, or monitoring link.
+ * Handles both full URLs ("https://app.opsgenie.com/...") and Opsgenie Alert IDs/UUIDs
+ * (e.g. "b4210e67-b795-47b0-8523-becb4b1d978b-1793335117151") stored in Salesforce custom fields.
  */
 export function hasOpsgenieUrl(c) {
   if (!c) return false;
   const raw = c;
-  const check = (val) => {
-    if (!val || typeof val !== 'string') return false;
-    return (
-      /(?:https?:\/\/)?(?:[a-zA-Z0-9._-]+\.)?opsgenie\.com/i.test(val) ||
-      /https?:\/\/[^\s]*opsgenie/i.test(val) ||
-      (/\bopsgenie\b/i.test(val) && /https?:\/\//i.test(val))
-    );
-  };
 
-  if (check(raw.Description || raw.description)) return true;
-  if (check(raw.Subject || raw.subject)) return true;
-  if (check(raw.Incident_Url__c || raw.incident_url)) return true;
-  if (check(raw.Alert_Url__c || raw.alert_url)) return true;
+  // 1. Authoritative check on the Salesforce 'Opsgenei URL' field
+  const opsFieldVal =
+    raw.Opsgenei_URL__c ||
+    raw.Opsgenie_URL__c ||
+    raw.Opsgenei_Url__c ||
+    raw.Opsgenie_Url__c ||
+    raw.opsgenei_url ||
+    raw.opsgenie_url ||
+    raw.OpsgeneiURL__c ||
+    raw.OpsgenieURL__c ||
+    raw.Opsgenie_Alert_URL__c ||
+    raw.Alert_Url__c ||
+    raw.alert_url ||
+    (_opsgenieField && raw[_opsgenieField]);
 
-  for (const k of Object.keys(raw)) {
-    if (typeof raw[k] === 'string' && check(raw[k])) {
+  if (opsFieldVal !== undefined && opsFieldVal !== null) {
+    const s = String(opsFieldVal).trim();
+    if (s && !['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) {
       return true;
     }
   }
+
+  // 2. Check any other object key that references opsgenie/alert url
+  for (const k of Object.keys(raw)) {
+    if (/opsgen|opsgenei/i.test(k) && raw[k] !== undefined && raw[k] !== null) {
+      const s = String(raw[k]).trim();
+      if (s && !['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Check description / subject for explicit opsgenie.com alert links (alert detail URL)
+  const checkUrl = (val) => {
+    if (!val || typeof val !== 'string') return false;
+    return (
+      /(?:https?:\/\/)?(?:[a-zA-Z0-9._-]+\.)?opsgenie\.com\/alert\/detail\//i.test(val) ||
+      /https?:\/\/[^\s]*opsgenie[^\s]*\/alert\//i.test(val)
+    );
+  };
+  if (checkUrl(raw.Description || raw.description)) return true;
+  if (checkUrl(raw.Subject || raw.subject)) return true;
 
   return false;
 }
@@ -276,82 +394,79 @@ export function isAlertCase(c) {
   if (!c) return false;
 
   const raw = c;
-  const typeStr = String(raw.Type || raw.type || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
-  const catStr = String(raw.Category__c || raw.category || raw.Snow_Category__c || '').trim().toLowerCase();
-  const sub = String(raw.Subject || raw.subject || '').trim();
 
-  // 1. Explicit Type or Category is Alert -> Strictly Alert!
-  if (typeStr === 'alert' || catStr === 'alert') {
-    return true;
-  }
-
-  // 2. Explicit non-alert types -> Strictly NOT an alert!
-  if (
-    typeStr === 'incident' ||
-    typeStr === 'technical support' ||
-    typeStr === 'service request' ||
-    typeStr === 'sr' ||
-    typeStr === 'problem' ||
-    typeStr === 'change request' ||
-    typeStr === 'change' ||
-    catStr === 'service request' ||
-    catStr === 'sr' ||
-    catStr === 'incident'
-  ) {
+  // 1. Child / linked tickets are NEVER alerts!
+  // In Salesforce / ITIL, automated monitoring alerts never have a ParentId; child cases are incident sub-tasks/child IMs.
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
+  if (hasParent) {
     return false;
   }
 
-  // 3. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts
+  // 2. Incident Management / ServiceNow child tickets are NEVER alerts!
   if (isImTicket(c)) {
     return false;
   }
 
-  // 4. Immediate Opsgenie URL check (for automated alerts)
+  // 3. DIR / RCA / Postmortem tickets are NEVER alerts!
+  if (isDirTicket(c)) {
+    return false;
+  }
+
+  // 4. Change Request / RFC / Firmware Upgrade tickets are NEVER alerts!
+  if (isChangeRequestTicket(c)) {
+    return false;
+  }
+
+  // 5. Preventive Maintenance / PM tickets are NEVER alerts!
+  if (isPmTicket(c)) {
+    return false;
+  }
+
+  // 6. Explicit human support / service ticket types
+  // When Type is explicitly Technical Support, Service Request, Feature Request, Query, Problem, etc.
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  const humanSupportTypes = [
+    'technical support',
+    'service request',
+    'feature request',
+    'query',
+    'problem',
+    'internal maintenance',
+    'incident management',
+    'child im',
+    'child case',
+    'subtask',
+    'work order',
+  ];
+  if (humanSupportTypes.includes(rawType)) {
+    return false;
+  }
+
+  // 7. Authoritative: Ticket Type is Alert or Category is Alert
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  if (rawType === 'alert' || catStr === 'alert') {
+    return true;
+  }
+
+  // 8. Explicit User Requirement: If Opsgenei URL / Alert ID field is populated, it is strictly an ALERT!
   if (hasOpsgenieUrl(c)) {
     return true;
   }
 
-  // 5. Strong Automated Alert Subject Signatures
-  if (sub) {
-    if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
-      return true;
-    }
-
-    // Automated monitoring rule signatures (case-insensitive substring/word matching)
-    if (
-      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
-        sub
-      )
-    ) {
-      return true;
-    }
-
-    if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
-      return true;
-    }
-
-    // Host / Site prefix with alert pattern: e.g. "hnm-canada: ProcessExecutionsFailed...", "xpo-hnm: DiskUtilHigh...", "samprod: Postgres..."
-    if (/^[a-z0-9._-]+:\s*/i.test(sub) && /(?:low|high|failed|failure|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata|util|error|down|alert|warning|critical|executions)/i.test(sub)) {
-      return true;
-    }
+  // 9. Automated alert description / subject signatures (e.g. IKEA node-red memory utilization, diskutil, etc.)
+  const sub = String(raw.Subject || raw.subject || '').trim();
+  const desc = String(raw.Description || raw.description || '').trim();
+  if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
+    return true;
   }
-
-  // 6. Service Requests are customer/internal service requests, NEVER automated alerts
-  const isServiceRequest =
-    typeStr === 'service request' ||
-    typeStr === 'sr' ||
-    catStr === 'service request' ||
-    catStr === 'sr' ||
-    /^go\s+alert:/i.test(sub) ||
-    /^(\[?sr\]?|service\s*request\b)/i.test(sub);
-
-  if (isServiceRequest) {
-    return false;
+  if (
+    /^[a-z0-9_-]+(?:prod)?\s*[:\-]\s*(?:botsavailable|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecutions|diskutil|memutil|cpuutil|postgresolddata|node-red|nodered|continuous trace|debug logs|rabbitmq|livenessfailure|buttoninactive|highinductrejection|bins idle)/i.test(sub) ||
+    /^[a-z0-9_-]+(?:-cluster-prod[a-z0-9_-]*)\s*-\s*[a-z0-9_-]+\s*-\s*/i.test(sub)
+  ) {
+    return true;
   }
-
-  // 7. Fallback check on description ONLY if automated alert signatures exist
-  const desc = String(c.Description || c.description || '');
-  if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
+  if (desc && /automated\s*alert|monitoring\s*alert|alert\s*rule|alert\s*id:|opsgenie\s*alert/i.test(desc)) {
     return true;
   }
 
@@ -748,20 +863,29 @@ export function isImTicket(c) {
 
   const raw = c;
   const sub = String(c.Subject || raw.subject || '').trim();
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
 
-  // If the ticket has automated alert signatures, it is an ALERT, NEVER an IM ticket
-  if (
-    hasOpsgenieUrl(c) ||
-    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub) ||
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(sub)
-  ) {
+  // 1. Child / linked ticket: ANY ticket with ParentId is a child case / automated IM ticket created for an incident!
+  if (hasParent) {
+    return true;
+  }
+
+  // 2. Standalone automated alert guard: If ticket is an automated alert without a parent, it is an ALERT, NEVER an IM ticket
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  const isStandAloneAlert = !hasParent && (
+    rawType === 'alert' ||
+    catStr === 'alert' ||
+    /^[a-z0-9_-]+(?:prod)?\s*[:\-]\s*(?:botsavailable|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecutions|diskutil|memutil|cpuutil|postgresolddata|node-red|nodered|continuous trace|debug logs|rabbitmq|livenessfailure|buttoninactive|highinductrejection|bins idle)/i.test(sub) ||
+    /^[a-z0-9_-]+(?:-cluster-prod[a-z0-9_-]*)\s*-\s*[a-z0-9_-]+\s*-\s*/i.test(sub) ||
+    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)
+  );
+  if (isStandAloneAlert) {
     return false;
   }
 
   // Root incident guard: Any case without a ParentId that is an Incident or Technical Support is the primary incident, NEVER an automated child IM ticket!
-  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
-  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
-  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || '').trim().toLowerCase();
   const isExplicitIncident = /^(incident|technical support|software|hardware)$/i.test(rawType);
   if (!hasParent && isExplicitIncident) {
     const isExplicitChildSubject = /(?:^|[\s\[\(_\-])(?:child\s*im|child\s*case|sub[- ]*task|internal\s*maintenance)\b/i.test(sub);
@@ -770,12 +894,7 @@ export function isImTicket(c) {
     }
   }
 
-  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
-  if (hasParent) {
-    return true;
-  }
-
-  // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
+  // 3. ServiceNow Incident ID (Snow_id__c / snow_id)
   // In GreyOrange Salesforce, Snow_id__c is only populated for ServiceNow-synced internal IM tickets
   const snowId = String(
     c.Snow_id__c || raw.Snow_Id__c || raw.Snow_ID__c || raw.snow_id || raw.snow_id__c || raw.SnowId || raw.snowId || raw.Snow_Incident_Number__c || ''
@@ -1272,15 +1391,19 @@ export function isAlertForShiftBucket(c) {
   const endTime = getTicketEndTime(c);
   const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (!isClosed) {
-    if (status.includes('pending confirmation')) return false;
-    return true; // Opened alert
+    for (const pattern of EXCLUDED_ALERT_STATUS_PATTERNS) {
+      if (status.includes(pattern)) return false;
+    }
+    return true;
   }
   return isClosedToday(c); // Only closed alert of today's date
 }
 
 /**
  * Live open alert predicate: strictly open alerts (ticket type: alert, not closed/solved/resolved, year >= 2026).
- * All open alerts (including On Hold, In Progress, Assigned, New, etc.) show up in the open alerts bucket.
+ * User requirement: "dont include the pending information , pending confirmation and closed i want alerts in bucket till on hold"
+ * Includes: New, Assigned, In-Progress, On Hold (till on hold).
+ * Excludes: Closed/Solved/Resolved/Cancelled, Pending Information, Pending Confirmation, Pending Customer.
  */
 export function isOpenAlert(c) {
   if (!c) return false;
@@ -1295,8 +1418,8 @@ export function isOpenAlert(c) {
   const status = String(c.Status || c.status || '').trim().toLowerCase();
   if (!status) return false;
 
-  // Explicitly closed/solved/cancelled/completed/duplicate statuses in Salesforce
-  for (const pattern of CLOSED_STATUS_PATTERNS) {
+  // Exclude closed/solved/cancelled/duplicate AND pending information / pending confirmation
+  for (const pattern of EXCLUDED_ALERT_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
 
@@ -1462,6 +1585,7 @@ export function normalizeCanonical(str) {
     .replace(/\b(sams\s+atl|sam\s+atl|samatl|samsatl|samprod|samsprod|samsatlprod|samatlprod)\b/gi, 'sams club atl')
     .replace(/\b(sams\s+lax|sam\s+lax|samlax|samslax|samslaxprod|samlaxprod)\b/gi, 'sams club lax')
     .replace(/\b(casey|caseys|caseyprod|caseysprod|casey's|caseys\s+joplin|casey's\s+joplin)\b/gi, "caseys joplin")
+    .replace(/\b(kencp\s*gmi|kenco\s*gmi|kencogmi|kencogmiprod)\b/gi, 'kenco gmi')
     .replace(/\bxpo\b/gi, 'gxo')
     .replace(/&/g, ' ')
     .replace(/[^a-z0-9]/g, ' ')
@@ -1474,7 +1598,7 @@ export const KNOWN_SITE_ALIASES = {
   'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
   'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', "sam's club atl", "sam's club(atl)-atlanta", 'sams club(atl)-atlanta', 'samprod', 'samsprod', 'samsatlprod', 'samsatl', 'samatlprod', 'samatl', 'sams-atl', 'samatl-prod', '4993.us', '4993-us', 'samprod-cluster', 'samsatlprod-cluster', "sam's atl", 'sam atl'],
   'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california', 'samslaxprod', 'samslax', 'samlaxprod', 'samlax', 'sams-lax', '8799.us', '9476.us'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs-usa (goodyear, az)', 'dhl figs usa goodyear az', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs-usa (goodyear, az)', 'dhl figs usa goodyear az', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod', 'figszwrmsprod', 'figszwrms', 'figszw', 'figsobrmsprod', 'figsobrms', 'figsob', 'figszwprod', 'figsobprod'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
   'GXO-H&M Prod': [
     'gxo hm prod', 'gxo-h&m prod', 'gxo h&m', 'gxo hm', 'gxo hnm',
@@ -1482,7 +1606,7 @@ export const KNOWN_SITE_ALIASES = {
     'gxo hm perris', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'gxo perris', 'xpo perris', 'gxo-hm-prod'
   ],
   'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond', 'evergreenprod'],
-  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)'],
+  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)', 'flexo-appleexpress-canada', 'appleexpress-canada', 'appleexpress', 'appleexpressprod', 'flexo-appleexpress'],
   'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania', 'farmacia tei-romania'],
   'Nishiskawa': ['nishiskawa', 'nishikawa'],
   'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13', 'mercado libre (mx13)_hidalgo-méxico', 'mercado libre (mx13)_hidalgo-mexico', 'melimx13prod', 'melimx13'],
@@ -1492,7 +1616,8 @@ export const KNOWN_SITE_ALIASES = {
   'Kenco-Jeff1': ['kenco jeff1', 'kenco jeffersonville', 'jeff1', 'kenco-jeff1(jeffersonville, usa)'],
   'Kenco Goodyear': ['kenco goodyear', 'kenco goodyear arizona', 'kenco-goodyear(arizona,usa)'],
   'Kenco Kansas': ['kenco kansas', 'kenco kansas usa', 'kenco-kansas(usa)'],
-  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)', 'lakesideprod'],
+  'Kenco GMI': ['kenco gmi', 'kenco-gmi', 'kencogmi', 'kencogmiprod', 'kenco gmi prod', 'kenco_gmi', 'kenco-gmi-prod', 'kenco gmi(usa)', 'kenco-gmi(usa)', 'kencp gmi'],
+  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)', 'lakesideprod', 'kafka-lakesideprod-prod', 'kafka-lakesideprod'],
   'Robinson USA (Dayton)': ['robinson usa dayton', 'robinson dayton', 'robinson usa', 'robinson tennessee', 'robinson-tennessee(usa)'],
   'Active Ants-Belgium': ['active ants belgium', 'active ants-belgium'],
   'Active Ants-Germany': ['active ants germany', 'active ants-germany'],
@@ -1515,7 +1640,7 @@ export const KNOWN_SITE_ALIASES = {
   'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)', 'elcolombus', 'elcolombusprod', 'elcolumbusprod', 'essilor luxottica -columbus'],
   'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)', 'sedicoprod'],
   'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico', 'walmartmxprod', 'walmartmx'],
-  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
+  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)', 'flexo-walmart-calgary', 'walmart-calgary'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
   'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat', 'hjartat', 'hjärtat', 'stockholm', 'apotek stockholm', 'hjartat stockholm', 'apotek hjartat'],
@@ -1523,7 +1648,7 @@ export const KNOWN_SITE_ALIASES = {
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
   'Dillards': ['dillards', 'dillard', 'dillards arkansas', 'dillardprod', 'dillard\'s-arkansas(usa)'],
-  'EXOL': ['exol', 'exol jackson', 'exol-jackson'],
+  'EXOL': ['exol', 'exol jackson', 'exol-jackson', 'exolprod', 'exol-prod'],
   'Flaconi': ['flaconi', 'flaconi berlin', 'flaconi-berlin(germany)'],
   'Fujirebio-Ambient': ['fujirebio ambient', 'fujirebio-ambient'],
   'Fujirebio-Chill': ['fujirebio chill', 'fujirebio-chill'],
@@ -1534,7 +1659,7 @@ export const KNOWN_SITE_ALIASES = {
   'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo anf', 'gxo a&f arizona', 'gxo-a&f-arizona(usa)', 'xpo af', 'xpo-af', 'xpo -af', 'xpo - af', 'xpo_af', 'xpo a&f', 'xpo a f', 'xpo anf', 'xpo_anf', 'xpo-anf'],
   'Jysk': ['jysk', 'jysk denmark', 'jysk-denmark'],
   'Lixil': ['lixil'],
-  'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon'],
+  'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon', 'nippon', 'nipponprod', 'flexo-nippon', 'nippon-mitsubishi'],
   'Ricoh-Nike': ['ricoh nike', 'ricoh nike beaverton', 'ricoh(nike)-beaverton(oregon,usa)'],
   'Stryker': ['stryker', 'stryker-mahwah(newjersey,usa)'],
   'Trusco Saitama': ['trusco saitama', 'trusco-saitama'],
@@ -1699,7 +1824,7 @@ export function extractSiteFromAlertSubject(subject, compiledSites) {
   }
 
   // Pattern 5: Look for known host keywords anywhere in the subject
-  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada)\b/i);
+  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada|kencogmiprod|kencogmi|nippon|nipponprod|exolprod|figszwrmsprod|figsobrmsprod|figszw|figsob|appleexpress)\b/i);
   if (tokenMatches && tokenMatches[1]) {
     const site = resolveSiteFromToken(tokenMatches[1].toLowerCase(), compiledSites);
     if (site) return site;
@@ -1769,6 +1894,11 @@ export function resolveSiteFromToken(token, compiledSites) {
   if (/^casey/i.test(rawToken)) {
     const s = compiledSites.find(x => /casey/i.test(x.originalName));
     return s ? s.originalName : "Casey's Joplin";
+  }
+  // Kenco GMI: kencogmi, kencogmiprod, kenco-gmi
+  if (/kenco[-_]?gmi|kencogmi/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gmi/i.test(x.originalName));
+    return s ? s.originalName : 'Kenco GMI';
   }
   // Sedico: sedico, sedicoprod
   if (/sedico/i.test(rawToken)) {
@@ -1922,6 +2052,10 @@ export function areSameSite(nameA, nameB, compiledSites = []) {
   const isElAtl = (s) => /el[-_]?atl|atlanta.*luxottica|luxottica.*atlanta/i.test(s);
   if (isElAtl(nameA) && isElAtl(nameB)) return true;
 
+  // Kenco GMI
+  const isKencoGmi = (s) => /kenco.*gmi|kencogmi/i.test(s);
+  if (isKencoGmi(nameA) && isKencoGmi(nameB)) return true;
+
   // Check KNOWN_SITE_ALIASES (strict exact alias inclusion)
   for (const [siteKey, aliases] of Object.entries(KNOWN_SITE_ALIASES)) {
     const keyClean = normalizeCanonical(siteKey);
@@ -1998,6 +2132,35 @@ export function findBestSiteForCase(caseRecord, compiledSites) {
     const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
     if (ap) return ap.originalName;
     return 'Apotek';
+  }
+
+  // Kenco multi-site resolution:
+  if (/kenco|kencp/i.test(combinedContext) || /kencogmi/i.test(combinedContext)) {
+    if (/\b(gmi|kencogmi)\b/i.test(combinedContext)) {
+      const gmi = compiledSites.find(x => /gmi/i.test(x.originalName));
+      if (gmi) return gmi.originalName;
+      return 'Kenco GMI';
+    }
+    if (/\b(jeff|jeff1|jeffersonville)\b/i.test(combinedContext)) {
+      const j = compiledSites.find(x => /jeff/i.test(x.originalName));
+      if (j) return j.originalName;
+      return 'Kenco-Jeff1';
+    }
+    if (/\b(goodyear)\b/i.test(combinedContext)) {
+      const gy = compiledSites.find(x => /goodyear/i.test(x.originalName));
+      if (gy) return gy.originalName;
+      return 'Kenco Goodyear';
+    }
+    if (/\b(kansas)\b/i.test(combinedContext)) {
+      const ks = compiledSites.find(x => /kansas/i.test(x.originalName));
+      if (ks) return ks.originalName;
+      return 'Kenco Kansas';
+    }
+    if (/\b(fairlife|phoenix)\b/i.test(combinedContext)) {
+      const fl = compiledSites.find(x => /fairlife/i.test(x.originalName));
+      if (fl) return fl.originalName;
+      return 'Kenco Fairlife(Phoenix, USA)';
+    }
   }
 
   // Sams Club multi-site resolution (evaluate before generic city matching):
@@ -2898,6 +3061,12 @@ export function mapRecord(c) {
     // Authoritative Salesforce ticket type field — primary source for alert detection
     Ticket_Type__c: c.Ticket_Type__c || c.ticket_type || c.Type || c.type || null,
     ticket_type: c.Ticket_Type__c || c.ticket_type || c.Type || c.type || null,
+    Opsgenei_URL__c: c.Opsgenei_URL__c || c.Opsgenie_URL__c || c.Opsgenei_Url__c || c.Opsgenie_Url__c || c.opsgenei_url || c.opsgenie_url || c.OpsgeneiURL__c || c.OpsgenieURL__c || c.Opsgenie_Alert_URL__c || c.Alert_Url__c || c.Incident_Url__c || (_opsgenieField && c[_opsgenieField]) || null,
+    Opsgenie_URL__c: c.Opsgenei_URL__c || c.Opsgenie_URL__c || c.Opsgenei_Url__c || c.Opsgenie_Url__c || c.opsgenei_url || c.opsgenie_url || c.OpsgeneiURL__c || c.OpsgenieURL__c || c.Opsgenie_Alert_URL__c || c.Alert_Url__c || c.Incident_Url__c || (_opsgenieField && c[_opsgenieField]) || null,
+    opsgenei_url: c.Opsgenei_URL__c || c.Opsgenie_URL__c || c.Opsgenei_Url__c || c.Opsgenie_Url__c || c.opsgenei_url || c.opsgenie_url || c.OpsgeneiURL__c || c.OpsgenieURL__c || c.Opsgenie_Alert_URL__c || c.Alert_Url__c || c.Incident_Url__c || (_opsgenieField && c[_opsgenieField]) || null,
+    opsgenie_url: c.Opsgenei_URL__c || c.Opsgenie_URL__c || c.Opsgenei_Url__c || c.Opsgenie_Url__c || c.opsgenei_url || c.opsgenie_url || c.OpsgeneiURL__c || c.OpsgenieURL__c || c.Opsgenie_Alert_URL__c || c.Alert_Url__c || c.Incident_Url__c || (_opsgenieField && c[_opsgenieField]) || null,
+    Alert_Url__c: c.Alert_Url__c || null,
+    Incident_Url__c: c.Incident_Url__c || null,
   };
 }
 
@@ -2922,14 +3091,21 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
   }
 
   const fetchPromise = (async () => {
-    // Query 1: Primary Alert SOQL — catches all Type = 'Alert', Snow_Category__c = 'Alert', or alert patterns
+    let opsField = 'Opsgenei_URL__c';
+    try {
+      opsField = await getOpsgenieFieldName();
+    } catch (err) {
+      console.warn('[Salesforce] Failed to resolve Opsgenie field name, using default:', err.message);
+    }
+
+    // Query 1: Primary Alert SOQL — catches all tickets with Opsgenie URL, Type = 'Alert', Snow_Category__c = 'Alert', or alert patterns
     const alertsPrimarySoql = [
-      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
+      `SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c, ${opsField},`,
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
       'FROM Case',
-      "WHERE (Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%ProcessExecution%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%Postgres%' OR Subject LIKE '%Lag%' OR Subject LIKE '%Runbook%')",
+      `WHERE (${opsField} != null OR Type = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Alert%' OR Subject LIKE '%Opsgenie%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%ProcessExecution%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%BotsAvgPower%' OR Subject LIKE '%ChargersAvailable%' OR Subject LIKE '%RabbitMQ%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%Postgres%' OR Subject LIKE '%Lag%' OR Subject LIKE '%Runbook%' OR Subject LIKE '%LivenessFailure%' OR Subject LIKE '%ButtonInactive%' OR Subject LIKE '%Mnesia%' OR Subject LIKE '%Pod%' OR Subject LIKE '%Node-Red%' OR Subject LIKE '%HostReporting%' OR Subject LIKE '%TomcatApp%' OR Subject LIKE '%Consumer Lag%' OR Subject LIKE '%Continuous trace%' OR Subject LIKE '%debug logs%' OR Subject LIKE '%kencogmi%' OR Subject LIKE '%Bins idle%' OR Subject LIKE '%cart docked%' OR Subject LIKE '%dock station%')`,
       "AND ((Status != 'Closed' AND Status != 'Solved' AND Status != 'Resolved') OR ClosedDate = TODAY OR Status = 'On Hold')",
       "AND CreatedDate >= 2026-01-01T00:00:00Z",
       'ORDER BY LastModifiedDate DESC LIMIT 3000',
@@ -2937,7 +3113,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     // Query 2: Cases SOQL — catches open incident and support cases
     const casesPrimarySoql = [
-      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c,',
+      `SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, Jira_Priority__c, Jira_Severity__c, ${opsField},`,
       'Impact_Percentage__c, Is_Site_100_Down__c, Type, Snow_Category__c, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Parent_End_Time__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Account_name_Reporting__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Snow_id__c, Owner.Name, Dev_Case_Assignee__c',
@@ -2948,7 +3124,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const fallbackSoql = [
-      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c,',
+      `SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Snow_Priority__c, Snow_Urgency__c, ${opsField},`,
       'Type, Product_Type__c, Parent_Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Solved_Date_Time__c, Downtime__c, Description,',
       'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c,',
       'Site_Name_Customer_Input__c, Impacted_Sites__c, DIR_Approval__c, Approval_status__c, Current_RCA_Status__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
@@ -2958,7 +3134,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
     ].join(' ');
 
     const safeSoql = [
-      'SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,',
+      `SELECT Id, CaseNumber, ParentId, Subject, Status, Highest_Severity__c, Alert_Priority__c, Type, Product_Type__c, ${opsField}, CreatedDate, LastModifiedDate, ClosedDate, End_Time__c, End_Time_of_Incident__c, Actual_End_Time__c, Downtime__c, Description,`,
       'AccountId, Account.Name, Account_Name__c, Customer_Location__c, Snow_Sitename__c, Site_Name_Customer_Input__c, Is_Site_100_Down__c, Snow_id__c, Owner.Name',
       'FROM Case',
       "WHERE (Status != 'Closed' OR ClosedDate = LAST_N_DAYS:3 OR LastModifiedDate = LAST_N_DAYS:3) AND CreatedDate >= 2026-01-01T00:00:00Z",
@@ -3045,7 +3221,7 @@ export async function fetchAllLiveCasesAndAlerts(forceRefresh = false) {
 
     const cases = raw.filter(isLiveOpenCase).map(mapRecord);
     const openAlerts = raw.filter(isOpenAlert).map(mapRecord);
-    const closedAlerts = raw.filter(c => isAlertCase(c) && isClosedTicket(c)).map(mapRecord);
+    const closedAlerts = raw.filter(isClosedAlert).map(mapRecord);
     const allAlerts = raw.filter(isAlertForShiftBucket).map(mapRecord);
     const closed = raw.filter(c => isClosedTicket(c)).map(mapRecord);
 
@@ -3937,6 +4113,15 @@ export function getSiteMatchSOQLParts(siteName) {
       "Snow_Sitename__c LIKE '%Hjartat%'",
       "Customer_Location__c LIKE '%Stockholm%'"
     );
+  } else if (clean.includes('kenco') && clean.includes('gmi')) {
+    parts.push(
+      "Subject LIKE '%kencogmi%'",
+      "Subject LIKE '%kenco%gmi%'",
+      "Account_Name__c LIKE '%kenco%gmi%'",
+      "Account_Name__c LIKE '%Kenco%GMI%'",
+      "Snow_Sitename__c LIKE '%kencogmi%'",
+      "Site_Name_Customer_Input__c LIKE '%kencogmi%'"
+    );
   } else {
     const tokens = clean
       .split(/\s+/)
@@ -4035,7 +4220,7 @@ export function buildSiteIncidentSOQLWhereClause(siteName, compiledSites = []) {
  */
 export function buildSiteSOQLWhereClause(siteName) {
   const ALERT_CRITERIA_SOQL =
-    "(Type = 'Alert' OR Category__c = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Runbook for%' OR Subject LIKE '%Dashboard for%' OR Subject LIKE '%Ranger Infra%' OR Subject LIKE '%[Alert]%' OR Subject LIKE '%Alert:%' OR Subject LIKE '%[Opsgenie]%' OR Subject LIKE '%Opsgenie:%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%ProcessExecutions%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%PostgresOldData%' OR Subject LIKE '%ChargersOffline%' OR Subject LIKE '%RabbitMQ%')";
+    "(Type = 'Alert' OR Category__c = 'Alert' OR Snow_Category__c = 'Alert' OR Subject LIKE '%Runbook for%' OR Subject LIKE '%Dashboard for%' OR Subject LIKE '%Ranger Infra%' OR Subject LIKE '%[Alert]%' OR Subject LIKE '%Alert:%' OR Subject LIKE '%[Opsgenie]%' OR Subject LIKE '%Opsgenie:%' OR Subject LIKE '%BotsAvailable%' OR Subject LIKE '%ProcessExecutions%' OR Subject LIKE '%DiskUtil%' OR Subject LIKE '%MemUtil%' OR Subject LIKE '%CpuUtil%' OR Subject LIKE '%PostgresOldData%' OR Subject LIKE '%ChargersOffline%' OR Subject LIKE '%RabbitMQ%' OR Subject LIKE '%Continuous trace%' OR Subject LIKE '%debug logs%' OR Subject LIKE '%LivenessFailure%' OR Subject LIKE '%ButtonInactive%' OR Subject LIKE '%Node-Red%' OR Subject LIKE '%kencogmi%')";
 
   const parts = getSiteMatchSOQLParts(siteName);
   if (parts.length === 0) {

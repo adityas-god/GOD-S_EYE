@@ -645,5 +645,13 @@ export const defaultSites = [
     "opsgenie_tag": "caseys-joplin",
     "salesforce_account_id": "001OX00000uwSzyYAE",
     "position": 79
+  },
+  {
+    "name": "Kenco GMI",
+    "product_line": "Case Pick, RTP",
+    "product_lines": ["Case Pick", "RTP"],
+    "opsgenie_tag": "kenco-gmi",
+    "salesforce_account_id": "001OX00000kencogmi",
+    "position": 80
   }
 ];

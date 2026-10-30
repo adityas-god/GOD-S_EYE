@@ -20,6 +20,12 @@ export interface SFCase {
   Priority?: string | null;
   Highest_Severity__c?: string | null;
   Alert_Priority__c?: string | null;
+  Opsgenei_URL__c?: string | null;
+  Opsgenie_URL__c?: string | null;
+  opsgenei_url?: string | null;
+  opsgenie_url?: string | null;
+  Alert_Url__c?: string | null;
+  Incident_Url__c?: string | null;
   Type?: string | null;
   Owner?: { Name?: string } | null;
   CreatedDate: string;
@@ -89,6 +95,19 @@ const CLOSED_STATUS_PATTERNS = [
   'duplicate',
 ];
 
+// Statuses excluded from the live open alerts bucket:
+// User requirement: "dont include the pending information , pending confirmation and closed i want alerts in bucket till on hold"
+const EXCLUDED_ALERT_STATUS_PATTERNS = [
+  ...CLOSED_STATUS_PATTERNS,
+  'pending information',
+  'pending confirmation',
+  'pending-confirmation',
+  'pending customer confirmation',
+  'pending customer',
+  'waiting on customer',
+  'waiting for customer',
+];
+
 const EXCLUDED_STATUS_PATTERNS = [
   ...CLOSED_STATUS_PATTERNS,
   'on hold',
@@ -96,126 +115,156 @@ const EXCLUDED_STATUS_PATTERNS = [
   'pending confirmation',
   'pending-confirmation',
   'pending customer confirmation',
+  'pending information',
+  'waiting on customer',
+  'waiting for customer',
 ];
 
 /**
- * Detects if a ticket contains an Opsgenie URL or link.
- * Requirement: "if there is opesgenie url present imideatly it will be considered as alert"
+ * Formats an Opsgenie URL or Alert ID into a fully qualified HTTPS link.
+ */
+export function formatOpsgenieUrl(val?: string | null): string | null {
+  if (!val || typeof val !== 'string') return null;
+  const s = val.trim();
+  if (!s || ['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://app.opsgenie.com/alert/detail/${s}`;
+}
+
+/**
+ * Detects if a ticket contains an Opsgenie URL, alert ID, or monitoring link.
+ * Handles both full URLs ("https://app.opsgenie.com/...") and Opsgenie Alert IDs/UUIDs
+ * (e.g. "b4210e67-b795-47b0-8523-becb4b1d978b-1793335117151") stored in Salesforce custom fields.
  */
 export function hasOpsgenieUrl(c: SFCase | Record<string, unknown>): boolean {
   if (!c) return false;
   const raw = c as Record<string, unknown>;
-  const check = (val: unknown): boolean => {
-    if (!val || typeof val !== 'string') return false;
-    return (
-      /(?:https?:\/\/)?(?:[a-zA-Z0-9._-]+\.)?opsgenie\.com/i.test(val) ||
-      /https?:\/\/[^\s]*opsgenie/i.test(val) ||
-      (/\bopsgenie\b/i.test(val) && /https?:\/\//i.test(val))
-    );
-  };
 
-  if (check(c.Description || raw.description)) return true;
-  if (check(c.Subject || raw.subject)) return true;
-  if (check(raw.Incident_Url__c || raw.incident_url)) return true;
-  if (check(raw.Alert_Url__c || raw.alert_url)) return true;
+  // 1. Authoritative check on the Salesforce 'Opsgenei URL' field
+  const opsFieldVal =
+    raw.Opsgenei_URL__c ||
+    raw.Opsgenie_URL__c ||
+    raw.Opsgenei_Url__c ||
+    raw.Opsgenie_Url__c ||
+    raw.opsgenei_url ||
+    raw.opsgenie_url ||
+    raw.OpsgeneiURL__c ||
+    raw.OpsgenieURL__c ||
+    raw.Opsgenie_Alert_URL__c ||
+    raw.Alert_Url__c ||
+    raw.alert_url;
 
-  for (const k of Object.keys(raw)) {
-    if (typeof raw[k] === 'string' && check(raw[k])) {
+  if (opsFieldVal !== undefined && opsFieldVal !== null) {
+    const s = String(opsFieldVal).trim();
+    if (s && !['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) {
       return true;
     }
   }
+
+  // 2. Check any other object key referencing opsgenie/alert url
+  for (const k of Object.keys(raw)) {
+    if (/opsgen|opsgenei/i.test(k) && raw[k] !== undefined && raw[k] !== null) {
+      const s = String(raw[k]).trim();
+      if (s && !['null', 'undefined', 'none', 'n/a', '0', 'false', 'nan', '-'].includes(s.toLowerCase())) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Fallback to description or subject if it contains an explicit opsgenie.com alert link
+  const checkUrl = (val: unknown): boolean => {
+    if (!val || typeof val !== 'string') return false;
+    return (
+      /(?:https?:\/\/)?(?:[a-zA-Z0-9._-]+\.)?opsgenie\.com\/alert\/detail\//i.test(val) ||
+      /https?:\/\/[^\s]*opsgenie[^\s]*\/alert\//i.test(val)
+    );
+  };
+  if (checkUrl(c.Description || raw.description)) return true;
+  if (checkUrl(c.Subject || raw.subject)) return true;
 
   return false;
 }
 
 /**
- * Filter out alerts: returns true if case is an automated alert or alert-type ticket
+ * Filter out alerts: returns true if case is an automated alert or alert-type ticket.
  */
 export function isAlertCase(c: SFCase): boolean {
   if (!c) return false;
 
   const raw = c as Record<string, unknown>;
 
-  // PRIMARY: Salesforce Ticket Type / Type is the authoritative source of truth.
-  const typeStr = String(raw.Ticket_Type__c || raw.ticket_type || raw.Type || raw.type || '').trim().toLowerCase();
-  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
-  const sub = String(c.Subject || raw.subject || '').trim();
-
-  // 1. Explicit Type or Category is Alert -> Strictly Alert!
-  if (typeStr === 'alert' || catStr === 'alert') {
-    return true;
-  }
-
-  // 2. Explicit non-alert types -> Strictly NOT an alert!
-  if (
-    typeStr === 'incident' ||
-    typeStr === 'technical support' ||
-    typeStr === 'service request' ||
-    typeStr === 'sr' ||
-    typeStr === 'problem' ||
-    typeStr === 'change request' ||
-    typeStr === 'change' ||
-    catStr === 'service request' ||
-    catStr === 'sr' ||
-    catStr === 'incident'
-  ) {
+  // 1. Child / linked tickets are NEVER alerts!
+  // In Salesforce / ITIL, automated monitoring alerts never have a ParentId; child cases are incident sub-tasks/child IMs.
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
+  if (hasParent) {
     return false;
   }
 
-  // 3. Immediate Opsgenie URL check:
-  // User requirement: "if there is opesgenie url present imideatly it will be considered as alert"
-  if (hasOpsgenieUrl(c)) {
-    return true;
-  }
-
-  // 2. Strong Automated Alert Subject Signatures (Checked FIRST so automated monitoring tickets are NEVER wrongly dismissed as service requests)
-  if (sub) {
-    if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
-      return true;
-    }
-
-    // Automated monitoring rule signatures (case-insensitive substring/word matching)
-    if (
-      /(?:botsavailable|botsindeadstate|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecution|diskutil|memutil|cpuutil|postgresolddata|filesizehigh|gorinternalapi|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|buttoninactive|node-red|nodered|continuous trace|hostreportingstopped|tomcatappreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(
-        sub
-      )
-    ) {
-      return true;
-    }
-
-    if (/alertname:|kubernetes\s+pod|kubernetes\s+container|kafka\s+consumer\s+lag|consumer\s+lag\s+detected/i.test(sub)) {
-      return true;
-    }
-
-    // Host / Site prefix with alert pattern: e.g. "hnm-canada: ProcessExecutionsFailed...", "xpo-hnm: DiskUtilHigh...", "samprod: Postgres..."
-    if (/^[a-z0-9._-]+:\s*/i.test(sub) && /(?:low|high|failed|failure|stopped|offline|retry|lag|crash|detected|exception|utilisation|utilization|manualretry|olddata|util|error|down|alert|warning|critical|executions)/i.test(sub)) {
-      return true;
-    }
-  }
-
-  // 3. Service Requests are customer/internal service requests, NEVER automated alerts:
-  // User requirement: "its Service requet and it is in alert queue"
-  const isServiceRequest =
-    typeStr === 'service request' ||
-    typeStr === 'sr' ||
-    catStr === 'service request' ||
-    catStr === 'sr' ||
-    /^go\s+alert:/i.test(sub) ||
-    /^(\[?sr\]?|service\s*request\b)/i.test(sub);
-
-  if (isServiceRequest) {
-    return false;
-  }
-
-  // 4. IM tickets are Incident Management tickets created for incidents, NEVER automated alerts:
-  // User requirement: "see im tickets dont need to be in alerts bucket what happenes whenver an urgent case comes or made then an automated im ticket is created"
+  // 2. Incident Management / ServiceNow child tickets are NEVER alerts!
   if (isImTicket(c)) {
     return false;
   }
 
-  // 5. Fallback check on description ONLY if automated alert signatures exist
-  const desc = String(c.Description || raw.description || '');
-  if (desc && /automated alert|monitoring alert|alert rule|alert id:/i.test(desc)) {
+  // 3. DIR / RCA / Postmortem tickets are NEVER alerts!
+  if (isDirTicket(c)) {
+    return false;
+  }
+
+  // 4. Change Request / RFC / Firmware Upgrade tickets are NEVER alerts!
+  if (isChangeRequestTicket(c)) {
+    return false;
+  }
+
+  // 5. Preventive Maintenance / PM tickets are NEVER alerts!
+  if (isPmTicket(c)) {
+    return false;
+  }
+
+  // 6. Explicit human support / service ticket types
+  // When Type is explicitly Technical Support, Service Request, Feature Request, Query, Problem, etc.
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  const humanSupportTypes = [
+    'technical support',
+    'service request',
+    'feature request',
+    'query',
+    'problem',
+    'internal maintenance',
+    'incident management',
+    'child im',
+    'child case',
+    'subtask',
+    'work order',
+  ];
+  if (humanSupportTypes.includes(rawType)) {
+    return false;
+  }
+
+  // 7. Authoritative: Ticket Type is Alert or Category is Alert
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  if (rawType === 'alert' || catStr === 'alert') {
+    return true;
+  }
+
+  // 8. Explicit User Requirement: If Opsgenei URL / Alert ID field is populated, it is strictly an ALERT!
+  if (hasOpsgenieUrl(c)) {
+    return true;
+  }
+
+  // 9. Automated alert description / subject signatures (e.g. IKEA node-red memory utilization, diskutil, etc.)
+  const sub = String(c.Subject || raw.subject || '').trim();
+  const desc = String(c.Description || raw.description || '').trim();
+  if (/(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)) {
+    return true;
+  }
+  if (
+    /^[a-z0-9_-]+(?:prod)?\s*[:\-]\s*(?:botsavailable|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecutions|diskutil|memutil|cpuutil|postgresolddata|node-red|nodered|continuous trace|debug logs|rabbitmq|livenessfailure|buttoninactive|highinductrejection|bins idle)/i.test(sub) ||
+    /^[a-z0-9_-]+(?:-cluster-prod[a-z0-9_-]*)\s*-\s*[a-z0-9_-]+\s*-\s*/i.test(sub)
+  ) {
+    return true;
+  }
+  if (desc && /automated\s*alert|monitoring\s*alert|alert\s*rule|alert\s*id:|opsgenie\s*alert/i.test(desc)) {
     return true;
   }
 
@@ -335,16 +384,19 @@ export function isAlertForShiftBucket(c: SFCase): boolean {
   const endTime = getTicketEndTime(c);
   const isClosed = Boolean(endTime) || CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
   if (!isClosed) {
-    if (status.includes('pending confirmation')) return false;
+    for (const pattern of EXCLUDED_ALERT_STATUS_PATTERNS) {
+      if (status.includes(pattern)) return false;
+    }
     return true; // Live open alert
   }
   return isClosedToday(c); // Closed alert of today's date
 }
 
 /**
- * Live open alert predicate: strictly open alerts with end time logic applied.
- * Excludes tickets with an End Time, Closed Date, or closed status.
- * User requirement: "all the alert ticket with on-hold status should also show up even its having end time like on hold and endtime"
+ * Live open alert predicate: strictly open alerts (ticket type: alert, not closed/solved/resolved, strictly year >= 2026).
+ * User requirement: "dont include the pending information , pending confirmation and closed i want alerts in bucket till on hold"
+ * Includes: New, Assigned, In-Progress, On Hold (till on hold).
+ * Excludes: Closed/Solved/Resolved/Cancelled, Pending Information, Pending Confirmation, Pending Customer.
  */
 export function isOpenAlert(c: SFCase): boolean {
   if (!c) return false;
@@ -359,21 +411,8 @@ export function isOpenAlert(c: SFCase): boolean {
   const status = String(c.Status || '').trim().toLowerCase();
   if (!status) return false;
 
-  // Explicitly closed/solved/cancelled statuses in Salesforce
-  for (const pattern of CLOSED_STATUS_PATTERNS) {
-    if (status.includes(pattern)) return false;
-  }
-
-  // User requirement: all alert tickets with on-hold status show up even if having end time!
-  const isHoldAlert = status.includes('hold');
-  if (isHoldAlert) {
-    return true;
-  }
-
-  // 1. If ticket has an End Time or Closed Date -> strictly omit from open alerts!
-  if (hasTicketEndTime(c) || Boolean(getTicketEndTime(c))) return false;
-
-  for (const pattern of EXCLUDED_STATUS_PATTERNS) {
+  // Exclude closed/solved/cancelled/duplicate AND pending information / pending confirmation
+  for (const pattern of EXCLUDED_ALERT_STATUS_PATTERNS) {
     if (status.includes(pattern)) return false;
   }
 
@@ -381,7 +420,7 @@ export function isOpenAlert(c: SFCase): boolean {
 }
 
 /**
- * Closed alert predicate: strictly alert tickets that have an End Time, Closed Date, or closed status.
+ * Closed alert predicate: strictly alert tickets that have a closed status (Closed, Solved, Resolved).
  * On-hold alerts are open, so they are not closed even with end time.
  */
 export function isClosedAlert(c: SFCase): boolean {
@@ -390,25 +429,7 @@ export function isClosedAlert(c: SFCase): boolean {
   const status = String(c.Status || '').toLowerCase();
   if (status.includes('hold')) return false;
 
-  const isClosedStatus = CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
-  if (isClosedStatus) return true;
-
-  const isActiveOpen =
-    status.includes('new') ||
-    status.includes('open') ||
-    status.includes('progress') ||
-    status.includes('investigat') ||
-    status.includes('active') ||
-    status.includes('assigned') ||
-    status.includes('escalat') ||
-    status.includes('queue') ||
-    status.includes('triag') ||
-    status.includes('review') ||
-    status.includes('pending');
-  if (isActiveOpen) return false;
-
-  const endTime = getTicketEndTime(c);
-  return Boolean(endTime);
+  return CLOSED_STATUS_PATTERNS.some(p => status.includes(p));
 }
 
 
@@ -759,31 +780,35 @@ export function isImTicket(c: SFCase): boolean {
 
   const raw = c as Record<string, unknown>;
   const sub = String(c.Subject || raw.subject || '').trim();
+  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
+  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
 
-  // If the ticket has automated alert signatures, it is an ALERT, NEVER an IM ticket
-  if (
-    hasOpsgenieUrl(c) ||
-    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub) ||
-    /(?:botsavailable|botsavailablelow|botsindeadstate|botsindeadstatehigh|botsavgpower|botsavgpowerlow|chargersavailable|chargersavailablelow|chargersoffline|processnotrunning|processexecutions|processexecutionsfailed|processexecutionsinmanualretry|diskutil|diskutilhigh|memutil|memutilhigh|cpuutil|cpuutilhigh|postgresolddata|postgresolddatadetected|filesizehigh|gorinternalapi|gorinternalapifailed|gorinternalapihighresponsetime|airflowconnectivity|system\s+stopped|tkisdisconnection|livenessfailure|hostreportingstopped|pickexceptionshigh|rabbitmq|mnesia|applicationnotresponding)/i.test(sub)
-  ) {
+  // 1. Child / linked ticket: ANY ticket with ParentId is a child case / automated IM ticket created for an incident!
+  if (hasParent) {
+    return true;
+  }
+
+  // 2. Standalone automated alert guard: If ticket is an automated alert without a parent, it is an ALERT, NEVER an IM ticket
+  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || raw.Ticket_Type__c || raw.ticket_type || '').trim().toLowerCase();
+  const catStr = String(c.Category__c || raw.category || c.Snow_Category__c || '').trim().toLowerCase();
+  const isStandAloneAlert = !hasParent && (
+    rawType === 'alert' ||
+    catStr === 'alert' ||
+    /^[a-z0-9_-]+(?:prod)?\s*[:\-]\s*(?:botsavailable|botsavgpower|chargersavailable|chargersoffline|processnotrunning|processexecutions|diskutil|memutil|cpuutil|postgresolddata|node-red|nodered|continuous trace|debug logs|rabbitmq|livenessfailure|buttoninactive|highinductrejection|bins idle)/i.test(sub) ||
+    /^[a-z0-9_-]+(?:-cluster-prod[a-z0-9_-]*)\s*-\s*[a-z0-9_-]+\s*-\s*/i.test(sub) ||
+    /(?:^\[?alert\]?[:\s-]|\[opsgenie\]|\bopsgenie:|runbook\s+for|dashboard\s+for|ranger\s+infra)/i.test(sub)
+  );
+  if (isStandAloneAlert) {
     return false;
   }
 
   // Root incident guard: Any case without a ParentId that is an Incident or Technical Support is the primary incident, NEVER an automated child IM ticket!
-  const parentId = c.ParentId || raw.parent_id || raw.Parent_Case__c || raw.Parent_Case_Number__c;
-  const hasParent = Boolean(parentId && String(parentId).trim() && !['null', 'undefined', '0', 'false'].includes(String(parentId).trim().toLowerCase()));
-  const rawType = String(c.Type || raw.type || raw.raw_type || raw.rawType || '').trim().toLowerCase();
   const isExplicitIncident = /^(incident|technical support|software|hardware)$/i.test(rawType);
   if (!hasParent && isExplicitIncident) {
     const isExplicitChildSubject = /(?:^|[\s\[\(_\-])(?:child\s*im|child\s*case|sub[- ]*task|internal\s*maintenance)\b/i.test(sub);
     if (!isExplicitChildSubject) {
       return false;
     }
-  }
-
-  // 1. Child / linked ticket: ANY non-alert ticket with ParentId is a child case / automated IM ticket created for an incident
-  if (hasParent) {
-    return true;
   }
 
   // 2. ServiceNow Incident ID (Snow_id__c / snow_id)
@@ -1289,6 +1314,7 @@ export function normalizeCanonical(str: string): string {
     .replace(/\b(sams\s+atl|sam\s+atl|samatl|samsatl|samprod|samsprod|samsatlprod|samatlprod)\b/gi, 'sams club atl')
     .replace(/\b(sams\s+lax|sam\s+lax|samlax|samslax|samslaxprod|samlaxprod)\b/gi, 'sams club lax')
     .replace(/\b(casey|caseys|caseyprod|caseysprod|casey's|caseys\s+joplin|casey's\s+joplin)\b/gi, "caseys joplin")
+    .replace(/\b(kencp\s*gmi|kenco\s*gmi|kencogmi|kencogmiprod)\b/gi, 'kenco gmi')
     .replace(/\bxpo\b/gi, 'gxo')
     .replace(/&/g, ' ')
     .replace(/[^a-z0-9]/g, ' ')
@@ -1301,7 +1327,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Ikea': ['ikea', 'ikeaa', 'ikeaprod', 'ikea-finland', 'ikea finland'],
   'Sams Club ATL': ['sams club atl', 'sams atl', 'sams club', '4993 us', '4993', 'sams-club', 'sam\'s club(atl)-atlanta', 'sams club(atl)-atlanta', 'samprod', 'samsprod', 'samsatlprod', 'samsatl', 'samatlprod', 'samatl', 'sams-atl', 'samatl-prod', '4993.us', '4993-us', 'samprod-cluster', 'samsatlprod-cluster', 'sam\'s atl', 'sam atl'],
   'Sams Club LAX': ['sams club lax', 'sams lax', '8799 us', '9476 us', '8799', '9476', 'sam\'s club(lax)-california', 'sams club(lax)-california', 'samslaxprod', 'samslax', 'samlaxprod', 'samlax', 'sams-lax', '8799.us', '9476.us'],
-  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod'],
+  'DHL- Figs': ['dhl figs', 'dhlfigs', 'dhl figs phoenix', 'dhl figs ob', 'dhl figs-goodyear,az(usa)', 'dhl figs-usa (goodyear, az)', 'dhl figs usa goodyear az', 'dhl figs goodyear', 'dhl figs-goodyear', 'goodyear figs', 'dhlfigs-phoenix', 'figs', 'flexo-dhlfigs-phoenix', 'dhlfigsprod', 'figszwrmsprod', 'figszwrms', 'figszw', 'figsobrmsprod', 'figsobrms', 'figsob', 'figszwprod', 'figsobprod'],
   'DHL-NL': ['dhl nl', 'dhlnl', 'dhlnlprod', 'dhl netherlands', 'dhl-netherlands'],
   'GXO-H&M Prod': [
     'gxo hm prod', 'gxo-h&m prod', 'gxo h&m', 'gxo hm', 'gxo hnm',
@@ -1309,7 +1335,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
     'gxo hm perris', 'gxo-h&m-perris(california)', 'gxo-h&m-perris', 'gxo perris', 'xpo perris', 'gxo-hm-prod'
   ],
   'Evergreen P&H': ['evergreen ph', 'evergreen richmond', 'evergreen p h', 'evergreen', 'evergreen-richmond(virginia,usa)', 'evergreen-richmond', 'evergreenprod'],
-  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)'],
+  'Apple_Express': ['apple express', 'apple express ontario', 'apple_express', 'apple express-ontario(canada)', 'flexo-appleexpress-canada', 'appleexpress-canada', 'appleexpress', 'appleexpressprod', 'flexo-appleexpress'],
   'Farmacia Tai': ['farmacia tai', 'farmacia tei', 'farmaciatei', 'farmacia tei romania', 'farmacia tei-romania'],
   'Nishiskawa': ['nishiskawa', 'nishikawa'],
   'Mercado Libre (MX13)': ['meli mx13', 'mercado libre mx13', 'mx13', 'mercado libre (mx13)_hidalgo-méxico', 'mercado libre (mx13)_hidalgo-mexico', 'melimx13prod', 'melimx13'],
@@ -1319,7 +1345,8 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Kenco-Jeff1': ['kenco jeff1', 'kenco jeffersonville', 'jeff1', 'kenco-jeff1(jeffersonville, usa)'],
   'Kenco Goodyear': ['kenco goodyear', 'kenco goodyear arizona', 'kenco-goodyear(arizona,usa)'],
   'Kenco Kansas': ['kenco kansas', 'kenco kansas usa', 'kenco-kansas(usa)'],
-  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)', 'lakesideprod'],
+  'Kenco GMI': ['kenco gmi', 'kenco-gmi', 'kencogmi', 'kencogmiprod', 'kenco gmi prod', 'kenco_gmi', 'kenco-gmi-prod', 'kenco gmi(usa)', 'kenco-gmi(usa)', 'kencp gmi'],
+  'Lakeside Book': ['lakeside book', 'lakeside book indiana', 'lakeside', 'lakeside book-indiana(usa)', 'lakesideprod', 'kafka-lakesideprod-prod', 'kafka-lakesideprod'],
   'Robinson USA (Dayton)': ['robinson usa dayton', 'robinson dayton', 'robinson usa', 'robinson tennessee', 'robinson-tennessee(usa)'],
   'Active Ants-Belgium': ['active ants belgium', 'active ants-belgium'],
   'Active Ants-Germany': ['active ants germany', 'active ants-germany'],
@@ -1348,7 +1375,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Essilor Luxottica -Columbus': ['essilor luxottica columbus', 'luxottica columbus', 'el columbus', 'essilorluxottica-columbus(ohio)', 'elcolombus', 'elcolombusprod', 'elcolumbusprod'],
   'Luxottica_Sedico': ['luxottica sedico', 'essilor luxottica sedico', 'sedico italy', 'sedico', 'essilorluxottica-sedico(italy)', 'sedicoprod'],
   'Walmart Mexico': ['walmart mexico', 'walmart mx', 'walmart-mexico(tepotzotlan)', 'walmart-mexico(tepotzotlÃ¡n)', 'walmart-mexico', 'walmartmxprod', 'walmartmx'],
-  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)'],
+  'Walmart-Canada': ['walmart canada', 'walmart ca', 'walmartcaprod', 'walmart-calgary(canada)', 'walmart calgary', 'walmart canada fc 2028', 'walmart-edwards(canada)', 'flexo-walmart-calgary', 'walmart-calgary'],
   'Way Fair': ['way fair', 'wayfair', 'wayfair perris', 'wayfair lancaster', 'wayfair-aberdeen(maryland,usa)'],
   'Goldbond': ['goldbond', 'goldbond israel', 'goldbond-israel'],
   'Apotek': ['apotek', 'apotek hjartat', 'apotek sweden', 'apotek hjÃ¤rtat-sweden(stockholm)', 'apotek hjärtat-sweden(stockholm)', 'apotek hjärtat-sweden (stockholm)', 'apotek hjartat-sweden (stockholm)', 'apotek hjartat-sweden', 'apotekhjartatprod', 'apotekprod', 'apotek hjartat prod', 'apotek-sweden', 'apotekhjartat', 'hjartat', 'hjärtat', 'stockholm', 'apotek stockholm', 'hjartat stockholm', 'apotek hjartat'],
@@ -1356,7 +1383,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'Coupang INC14': ['coupang inc14', 'coupang incheon 14', 'coupang- incheon(14)', 'coupang incheon(14)'],
   'DB Schenker': ['db schenker', 'db schenker netherlands', 'dbs', 'db schenker-netherlands'],
   'Dillards': ['dillards', 'dillard', 'dillards arkansas', 'dillardprod', 'dillard\'s-arkansas(usa)'],
-  'EXOL': ['exol', 'exol jackson', 'exol-jackson'],
+  'EXOL': ['exol', 'exol jackson', 'exol-jackson', 'exolprod', 'exol-prod'],
   'Flaconi': ['flaconi', 'flaconi berlin', 'flaconi-berlin(germany)'],
   'Fujirebio-Ambient': ['fujirebio ambient', 'fujirebio-ambient'],
   'Fujirebio-Chill': ['fujirebio chill', 'fujirebio-chill'],
@@ -1367,7 +1394,7 @@ export const KNOWN_SITE_ALIASES: Record<string, string[]> = {
   'GXO-AF': ['gxo af', 'gxo a f', 'gxo a&f', 'gxo anf', 'gxo a&f arizona', 'gxo-a&f-arizona(usa)', 'xpo af', 'xpo-af', 'xpo -af', 'xpo - af', 'xpo_af', 'xpo a&f', 'xpo a f', 'xpo anf', 'xpo_anf', 'xpo-anf'],
   'Jysk': ['jysk', 'jysk denmark', 'jysk-denmark'],
   'Lixil': ['lixil'],
-  'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon'],
+  'Mitsubishi-Nippon': ['mitsubishi nippon', 'mitsubishi-nippon', 'nippon', 'nipponprod', 'flexo-nippon', 'nippon-mitsubishi'],
   'Ricoh-Nike': ['ricoh nike', 'ricoh nike beaverton', 'ricoh(nike)-beaverton(oregon,usa)'],
   'Stryker': ['stryker', 'stryker-mahwah(newjersey,usa)'],
   'Trusco Saitama': ['trusco saitama', 'trusco-saitama'],
@@ -1551,7 +1578,7 @@ function _computeSiteFromAlertSubject(sub: string, compiledSites: CompiledSite[]
   }
 
   // Pattern 5: Look for known host keywords anywhere in the subject
-  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada)\b/i);
+  const tokenMatches = sub.match(/\b(samprod|samsprod|samsatlprod|samsatl|samatlprod|samatl|samslaxprod|samslax|samlaxprod|samlax|caseyprod|caseysprod|casey|caseys|owensminorprod|owensminor|onmprod|onm|sedicoprod|elatlprod|elcolombusprod|melimx13prod|dhlnlprod|sodimacsbsprod|evergreenprod|lakesideprod|4993|apotek|apotekprod|apotekhjartatprod|ajax|ajaxprod|flexo-hnm|hm-canada|hnm-canada|kencogmiprod|kencogmi|nippon|nipponprod|exolprod|figszwrmsprod|figsobrmsprod|figszw|figsob|appleexpress)\b/i);
   if (tokenMatches && tokenMatches[1]) {
     const site = resolveSiteFromToken(tokenMatches[1].toLowerCase(), compiledSites);
     if (site) return site;
@@ -1621,6 +1648,11 @@ export function resolveSiteFromToken(token: string, compiledSites: CompiledSite[
   if (/^casey/i.test(rawToken)) {
     const s = compiledSites.find(x => /casey/i.test(x.originalName));
     return s ? s.originalName : "Casey's Joplin";
+  }
+  // Kenco GMI: kencogmi, kencogmiprod, kenco-gmi
+  if (/kenco[-_]?gmi|kencogmi/i.test(rawToken)) {
+    const s = compiledSites.find(x => /gmi/i.test(x.originalName));
+    return s ? s.originalName : 'Kenco GMI';
   }
   // Sedico: sedico, sedicoprod
   if (/sedico/i.test(rawToken)) {
@@ -1818,6 +1850,12 @@ export function areSameSite(nameA: string, nameB: string, compiledSites: Compile
     return true;
   }
 
+  const isKencoGmi = (s: string) => /kenco.*gmi|kencogmi/i.test(s);
+  if (isKencoGmi(nameA) && isKencoGmi(nameB)) {
+    sameSiteCache.set(cacheKey, true);
+    return true;
+  }
+
   // Check pre-compiled KNOWN_SITE_ALIASES (strict exact alias inclusion)
   for (let i = 0; i < COMPILED_KNOWN_SITE_ALIASES.length; i++) {
     const { allNames } = COMPILED_KNOWN_SITE_ALIASES[i];
@@ -1935,6 +1973,35 @@ function _computeBestSiteForCase(caseRecord: SFCase, compiledSites: CompiledSite
     const ap = compiledSites.find(x => /apotek/i.test(x.originalName));
     if (ap) return ap.originalName;
     return 'Apotek';
+  }
+
+  // Kenco multi-site resolution:
+  if (/kenco|kencp/i.test(combinedContext) || /kencogmi/i.test(combinedContext)) {
+    if (/\b(gmi|kencogmi)\b/i.test(combinedContext)) {
+      const gmi = compiledSites.find(x => /gmi/i.test(x.originalName));
+      if (gmi) return gmi.originalName;
+      return 'Kenco GMI';
+    }
+    if (/\b(jeff|jeff1|jeffersonville)\b/i.test(combinedContext)) {
+      const j = compiledSites.find(x => /jeff/i.test(x.originalName));
+      if (j) return j.originalName;
+      return 'Kenco-Jeff1';
+    }
+    if (/\b(goodyear)\b/i.test(combinedContext)) {
+      const gy = compiledSites.find(x => /goodyear/i.test(x.originalName));
+      if (gy) return gy.originalName;
+      return 'Kenco Goodyear';
+    }
+    if (/\b(kansas)\b/i.test(combinedContext)) {
+      const ks = compiledSites.find(x => /kansas/i.test(x.originalName));
+      if (ks) return ks.originalName;
+      return 'Kenco Kansas';
+    }
+    if (/\b(fairlife|phoenix)\b/i.test(combinedContext)) {
+      const fl = compiledSites.find(x => /fairlife/i.test(x.originalName));
+      if (fl) return fl.originalName;
+      return 'Kenco Fairlife(Phoenix, USA)';
+    }
   }
 
   // Sams Club multi-site resolution:
@@ -2461,12 +2528,26 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
     }
     // Merge with empty site stats so every known site has an initialized object
     const mergedStats = { ...buildEmptySiteStats(), ...(data.siteStats || {}) };
+
+    // Re-partition cases and alerts to guarantee alerts (like IKEA) never pollute cases or Sev 1
+    const combined = [...(data.cases || []), ...(data.alerts || [])];
+    const uniqueMap = new Map<string, SFCase>();
+    for (const c of combined) {
+      if (c && (c.Id || c.CaseNumber)) {
+        uniqueMap.set(c.Id || c.CaseNumber, c);
+      }
+    }
+    const allRecords = Array.from(uniqueMap.values());
+    const realCases = allRecords.filter(isLiveOpenCase);
+    const realAlerts = allRecords.filter(isOpenAlert);
+    const realClosedAlerts = allRecords.filter(isClosedAlert);
+
     const result = {
-      totalLiveCases: data.totalLiveCases ?? (data.cases ? data.cases.length : 0),
-      totalLiveAlerts: data.totalLiveAlerts ?? (data.alerts ? data.alerts.length : 0),
-      cases: (data.cases || []) as SFCase[],
-      alerts: (data.alerts || []) as SFCase[],
-      closedAlerts: (data.closedAlerts || []) as SFCase[],
+      totalLiveCases: realCases.length,
+      totalLiveAlerts: realAlerts.length,
+      cases: realCases,
+      alerts: realAlerts,
+      closedAlerts: realClosedAlerts,
       siteStats: mergedStats,
       timestamp: data.timestamp || new Date().toISOString(),
     };
@@ -2483,7 +2564,18 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
         if (cachedRaw) {
           const cached = JSON.parse(cachedRaw);
           if (cached && (cached.cases?.length > 0 || cached.alerts?.length > 0)) {
-            console.log('[Salesforce client] Preserving persistent overview snapshot with', cached.cases?.length, 'cases.');
+            const comb = [...(cached.cases || []), ...(cached.alerts || [])];
+            const uMap = new Map<string, SFCase>();
+            for (const c of comb) {
+              if (c && (c.Id || c.CaseNumber)) uMap.set(c.Id || c.CaseNumber, c);
+            }
+            const deduped = Array.from(uMap.values());
+            cached.cases = deduped.filter(isLiveOpenCase);
+            cached.alerts = deduped.filter(isOpenAlert);
+            cached.closedAlerts = deduped.filter(isClosedAlert);
+            cached.totalLiveCases = cached.cases.length;
+            cached.totalLiveAlerts = cached.alerts.length;
+            console.log('[Salesforce client] Preserving persistent overview snapshot with', cached.cases?.length, 'cases,', cached.alerts?.length, 'alerts.');
             return cached;
           }
         }
@@ -2498,6 +2590,17 @@ export const sfFetchLiveCasesOverview = async (forceRefresh: boolean = false) =>
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw);
         if (cached && (cached.cases?.length > 0 || cached.alerts?.length > 0)) {
+          const comb = [...(cached.cases || []), ...(cached.alerts || [])];
+          const uMap = new Map<string, SFCase>();
+          for (const c of comb) {
+            if (c && (c.Id || c.CaseNumber)) uMap.set(c.Id || c.CaseNumber, c);
+          }
+          const deduped = Array.from(uMap.values());
+          cached.cases = deduped.filter(isLiveOpenCase);
+          cached.alerts = deduped.filter(isOpenAlert);
+          cached.closedAlerts = deduped.filter(isClosedAlert);
+          cached.totalLiveCases = cached.cases.length;
+          cached.totalLiveAlerts = cached.alerts.length;
           console.log('[Salesforce client] Restored overview snapshot from localStorage after network notice.');
           return cached;
         }
@@ -2535,6 +2638,17 @@ export function getCachedOverviewSnapshot(): {
       if (cachedRaw) {
         const cached = JSON.parse(cachedRaw);
         if (cached && (Array.isArray(cached.cases) || Array.isArray(cached.alerts))) {
+          const comb = [...(cached.cases || []), ...(cached.alerts || [])];
+          const uMap = new Map<string, SFCase>();
+          for (const c of comb) {
+            if (c && (c.Id || c.CaseNumber)) uMap.set(c.Id || c.CaseNumber, c);
+          }
+          const deduped = Array.from(uMap.values());
+          cached.cases = deduped.filter(isLiveOpenCase);
+          cached.alerts = deduped.filter(isOpenAlert);
+          cached.closedAlerts = deduped.filter(isClosedAlert);
+          cached.totalLiveCases = cached.cases.length;
+          cached.totalLiveAlerts = cached.alerts.length;
           return cached;
         }
       }

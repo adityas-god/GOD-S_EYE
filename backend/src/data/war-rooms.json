@@ -1,18 +1,5 @@
 [
   {
-    "id": "wr-1792792827683-o9hxj",
-    "name": "Walmart Mexico War Room",
-    "url": "https://greyorange.zoom.us/j/81427755139?pwd=wbr2KWbkA5hDta2wSXYyahJGv8NWmw.1",
-    "siteName": "Walmart Mexico",
-    "siteId": "sf-site-walmart-mexico",
-    "severity": "SEV 1",
-    "lead": "CAC",
-    "notes": "DAILY INCIDENTS",
-    "startedAt": "2026-10-23T22:00:00.000Z",
-    "startDate": "2026-10-23T22:00:00.000Z",
-    "endDate": "2026-11-06T22:00:00.000Z"
-  },
-  {
     "id": "wr-1792792756412-gn0sh",
     "name": "H&M Ajax Canada war room",
     "url": "https://greyorange.zoom.us/j/4081581913?pwd=6WCl9jquyvYkBOuUb562qrbmWbov2R.1",
@@ -79,7 +66,7 @@
   },
   {
     "id": "wr-1792791603983-y8fbs",
-    "name": "Walmart POT & Apotek War Room 24*7",
+    "name": "Apotek War Room",
     "url": "https://greyorange.zoom.us/j/86709320731?pwd=KeK17e7oGoqzN8Pk4Sbqa3lZc0Svia.1",
     "siteName": "Apotek",
     "siteId": "sf-site-apotek",

@@ -1832,7 +1832,7 @@ export function WarRoomsPage() {
                             )}
                           </div>
 
-                          {/* Scheduled Start & End Time Box with Edit Call Link Option */}
+                          {/* Scheduled Start & End Time Box */}
                           <div
                             style={{
                               fontSize: 11,

@@ -62,6 +62,7 @@ import {
   normalizeCanonical,
   type SiteCaseStat,
   getAssigneeDisplayName,
+  formatOpsgenieUrl,
 } from '@/integrations/salesforce/client';
 import { toast } from 'sonner';
 
@@ -2393,6 +2394,37 @@ function Index() {
                 </p>
               </div>
             </div>
+
+            {/* Opsgenei URL Display & Direct Action */}
+            {(() => {
+              const rawOpsVal = selectedCase.Opsgenei_URL__c || selectedCase.Opsgenie_URL__c || selectedCase.opsgenei_url || selectedCase.opsgenie_url || selectedCase.Alert_Url__c || selectedCase.Incident_Url__c;
+              const opsUrl = formatOpsgenieUrl(rawOpsVal);
+              if (!opsUrl) return null;
+              return (
+                <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(56, 189, 248, 0.08)', borderRadius: 6, border: '1px solid rgba(56, 189, 248, 0.25)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: '#38bdf8', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Opsgenei URL
+                    </span>
+                    <a
+                      href={opsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 11.5, color: '#38bdf8', textDecoration: 'underline', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={opsUrl}
+                    >
+                      {opsUrl}
+                    </a>
+                  </div>
+                  <Button asChild size="sm" style={{ background: '#0284c7', color: '#ffffff', flexShrink: 0 }}>
+                    <a href={opsUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <ExternalLink style={{ width: 12, height: 12 }} />
+                      View Alert
+                    </a>
+                  </Button>
+                </div>
+              );
+            })()}
 
             {selectedCase.Description && (
               <div style={{ marginTop: 16 }}>

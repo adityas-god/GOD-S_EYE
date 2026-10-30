@@ -1,4 +1,4 @@
-// God's Eye Backend Server - Live Salesforce & Site Management [reload 40 - 01:36]
+// God's Eye Backend Server - Live Salesforce & Site Management [reload 46 - strictly exclude IM tickets, child cases and human support tickets from alerts bucket]
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
