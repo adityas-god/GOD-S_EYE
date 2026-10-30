@@ -1859,32 +1859,6 @@ export function WarRoomsPage() {
                                 {formatDisplayDateTime(room.endDate)}
                               </span>
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 4, borderTop: '1px solid rgba(255, 255, 255, 0.05)', marginTop: 2 }}>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditModal(room);
-                                }}
-                                style={{
-                                  background: 'transparent',
-                                  border: 'none',
-                                  padding: 0,
-                                  fontSize: 10.5,
-                                  color: 'var(--primary)',
-                                  cursor: 'pointer',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 4,
-                                  fontWeight: 600,
-                                  fontFamily: 'var(--font-sans)',
-                                }}
-                                title="Edit War Room Call Link & Dates"
-                              >
-                                <Edit2 style={{ width: 10, height: 10 }} />
-                                <span>Edit call link &amp; dates</span>
-                              </button>
-                            </div>
                           </div>
 
                           {/* Metric stats row matching Sitepulse card bottom */}
