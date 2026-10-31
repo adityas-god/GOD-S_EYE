@@ -2308,9 +2308,9 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev2_high' | 'sev3
     return 'sev1';
   }
 
-  const highestSevRaw = String(raw.Highest_Severity__c || '').trim();
+  const highestSevRaw = String(raw.Highest_Severity__c || raw.Severity__c || '').trim();
   const highestSev = highestSevRaw.toUpperCase();
-  const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || '').trim().toUpperCase();
+  const prio = String(raw.Priority || raw.Snow_Priority__c || raw.Snow_Urgency__c || raw.Alert_Priority__c || raw.Automation_Priority__c || '').trim().toUpperCase();
 
   // Rule 2: Explicit Severity 1 Urgent / Critical in authoritative case fields or subject
   for (const s of [highestSev, prio].filter(Boolean)) {
@@ -2338,7 +2338,7 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev2_high' | 'sev3
     return 'sev2';
   }
 
-  // Explicit Sev 2 URGENT in fields or subject (MUST explicitly contain "URGENT", never generic "Severity 2")
+  // Explicit Sev 2 URGENT in fields or subject
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s.includes('2 - URGENT') ||
@@ -2361,24 +2361,44 @@ export function detectSeverity(c: SFCase): 'sev1' | 'sev2' | 'sev2_high' | 'sev3
     return 'sev2_high';
   }
 
-  // Explicit Sev 2 High (generic Severity 2 / Sev 2 / P2 / High / 2 - High when impact is not >= 50% and not urgent)
+  // Explicit Sev 2 High (explicitly marked 2 - High, 2 - Standard, or Sev 2 High)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (
+      s.includes('2 - HIGH') ||
+      s.includes('2 - STANDARD') ||
+      s.includes('SEV 2 HIGH') ||
+      s.includes('SEVERITY 2 HIGH')
+    ) {
+      return 'sev2_high';
+    }
+  }
+  if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2[-_ ]*HIGH|SEVERITY[-_ ]*2[-_ ]*HIGH)(?:$|[\]\)\s:])/i.test(sub)) {
+    return 'sev2_high';
+  }
+
+  // Standard GreyOrange Salesforce Severity 2 / Sev 2 / P2 cases (Urgent operational incidents)
   for (const s of [highestSev, prio].filter(Boolean)) {
     if (
       s === 'SEVERITY 2' ||
       s === 'SEV 2' ||
       s === 'SEV-2' ||
-      s.includes('SEVERITY 2') ||
-      s.includes('SEV 2') ||
       s === 'P2' ||
-      s.includes('2 - HIGH') ||
-      s.includes('2 - STANDARD') ||
-      s.includes('HIGH')
+      s.startsWith('SEVERITY 2') ||
+      s.startsWith('SEV 2') ||
+      s.startsWith('P2')
     ) {
-      return 'sev2_high';
+      return 'sev2';
     }
   }
   if (/(?:^|[\[\(\s])(?:SEV[-_ ]*2|SEVERITY[-_ ]*2|\[SEV[-_ ]*2\])(?:$|[\]\)\s:])/i.test(sub)) {
-    return 'sev2_high';
+    return 'sev2';
+  }
+
+  // Standalone High priority fallback (without explicit Severity 2)
+  for (const s of [highestSev, prio].filter(Boolean)) {
+    if (s === 'HIGH' || s.includes('HIGH')) {
+      return 'sev2_high';
+    }
   }
 
   // Rule 5: Below 1% impact -> Sev 3 (User Rule: below 1 = sev 3)

@@ -309,13 +309,25 @@ export function WarRoomsPage() {
     staleTime: 60_000,
   });
 
-  // If a war room has a site name, also query site-specific cases
-  const { data: siteCasesData } = useQuery({
-    queryKey: ['cases-site', selectedWarRoom?.siteName],
+  // Query site-specific cases & historical tickets for the war room window
+  const warRoomStartDate = selectedWarRoom?.startDate || selectedWarRoom?.startedAt || null;
+  const warRoomEndDate = selectedWarRoom?.endDate || null;
+
+  const { data: siteCasesData, refetch: refetchSiteCases } = useQuery({
+    queryKey: ['cases-site', selectedWarRoom?.siteName, warRoomStartDate, warRoomEndDate],
     queryFn: async () => {
       if (!selectedWarRoom?.siteName) return null;
       try {
-        const res = await fetch(`/api/cases/site/${encodeURIComponent(selectedWarRoom.siteName)}`);
+        const params = new URLSearchParams();
+        if (warRoomStartDate) {
+          params.set('range', 'custom');
+          params.set('startDate', new Date(warRoomStartDate).toISOString());
+          const endToUse = warRoomEndDate ? new Date(warRoomEndDate).toISOString() : new Date().toISOString();
+          params.set('endDate', endToUse);
+          params.set('force', 'true');
+        }
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        const res = await fetch(`/api/cases/site/${encodeURIComponent(selectedWarRoom.siteName)}${qs}`);
         if (res.ok) {
           return await res.json();
         }
@@ -323,7 +335,7 @@ export function WarRoomsPage() {
       return null;
     },
     enabled: Boolean(selectedWarRoom?.siteName),
-    staleTime: 60_000,
+    staleTime: 30_000,
   });
 
   // Create Mutation with Instant Optimistic Update
@@ -544,7 +556,7 @@ export function WarRoomsPage() {
   };
 
   const handleRefresh = async () => {
-    await Promise.all([refetchWarRooms(), refetchOverview()]);
+    await Promise.all([refetchWarRooms(), refetchOverview(), refetchSiteCases()]);
     toast.success('War room telemetry refreshed');
   };
 
@@ -702,12 +714,16 @@ export function WarRoomsPage() {
     if (!selectedWarRoom) return [];
     const startIso = selectedWarRoom.startDate || selectedWarRoom.startedAt;
     const startMs = startIso ? new Date(startIso).getTime() : 0;
+    const endIso = selectedWarRoom.endDate;
+    const endMs = endIso ? new Date(endIso).getTime() : 0;
     return candidateIncidents
       .filter(c => {
         if (!startMs || isNaN(startMs)) return true;
         const createdMs = getCaseCreatedMs(c);
         if (createdMs === 0) return false;
-        return createdMs >= startMs;
+        if (createdMs < startMs) return false;
+        if (endMs && !isNaN(endMs) && createdMs > endMs) return false;
+        return true;
       })
       .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
   }, [candidateIncidents, selectedWarRoom]);
@@ -734,12 +750,16 @@ export function WarRoomsPage() {
     if (!selectedWarRoom) return [];
     const startIso = selectedWarRoom.startDate || selectedWarRoom.startedAt;
     const startMs = startIso ? new Date(startIso).getTime() : 0;
+    const endIso = selectedWarRoom.endDate;
+    const endMs = endIso ? new Date(endIso).getTime() : 0;
     return candidateAlerts
       .filter(c => {
         if (!startMs || isNaN(startMs)) return true;
         const createdMs = getCaseCreatedMs(c);
         if (createdMs === 0) return false;
-        return createdMs >= startMs;
+        if (createdMs < startMs) return false;
+        if (endMs && !isNaN(endMs) && createdMs > endMs) return false;
+        return true;
       })
       .sort((a, b) => getCaseCreatedMs(b) - getCaseCreatedMs(a));
   }, [candidateAlerts, selectedWarRoom]);
@@ -833,6 +853,8 @@ export function WarRoomsPage() {
         });
       } else if (ticketSeverityFilter === 'SEV 2 HIGH' || ticketSeverityFilter === 'sev2_high') {
         list = list.filter(c => detectSeverity(c) === 'sev2_high');
+      } else if (ticketSeverityFilter === 'SEV 3' || ticketSeverityFilter === 'sev3') {
+        list = list.filter(c => detectSeverity(c) === 'sev3');
       } else {
         list = list.filter(c => {
           const s = String(c.Priority || c.Highest_Severity__c || c.Alert_Priority__c || '').toLowerCase();
@@ -901,37 +923,79 @@ export function WarRoomsPage() {
   ]);
 
   // --------------------------------------------------------------------------
-  // Analytics for Incidents Bucket
+  // Analytics for Incidents Bucket (Window Cumulative Totals & Active Outages)
   // --------------------------------------------------------------------------
   const incidentAnalytics = useMemo(() => {
-    let sev1 = 0;
-    let sev2Urgent = 0;
-    let sev2High = 0;
+    // 1. Total reported from start date till now (cumulative in war room window)
+    let sev1Total = 0;
+    let sev2UrgentTotal = 0;
+    let sev2HighTotal = 0;
+    let sev3Total = 0;
+
+    for (const c of incidentsSinceStart) {
+      const sev = detectSeverity(c);
+      if (sev === 'sev1') {
+        sev1Total++;
+      } else if (sev === 'sev2' || (sev as string) === 'sev2_urgent') {
+        sev2UrgentTotal++;
+      } else if (sev === 'sev2_high') {
+        sev2HighTotal++;
+      } else {
+        sev3Total++;
+      }
+    }
+
+    // 2. Currently active & unsolved incidents (real-time live open state)
+    let sev1Active = 0;
+    let sev2UrgentActive = 0;
+    let sev2HighActive = 0;
+    let sev3Active = 0;
 
     for (const c of liveOpenIncidents) {
       const sev = detectSeverity(c);
       if (sev === 'sev1') {
-        sev1++;
+        sev1Active++;
       } else if (sev === 'sev2' || (sev as string) === 'sev2_urgent') {
-        sev2Urgent++;
+        sev2UrgentActive++;
       } else if (sev === 'sev2_high') {
-        sev2High++;
+        sev2HighActive++;
+      } else {
+        sev3Active++;
       }
     }
 
-    const totalUrgent = sev1 + sev2Urgent + sev2High;
+    const totalUrgentTotal = sev1Total + sev2UrgentTotal + sev2HighTotal;
+    const totalUrgentActive = sev1Active + sev2UrgentActive + sev2HighActive;
+
     let siteHealth: 'CRITICAL' | 'DEGRADED' | 'OPERATIONAL' = 'OPERATIONAL';
-    if (sev1 > 0) {
+    if (sev1Active > 0) {
       siteHealth = 'CRITICAL';
-    } else if (sev2Urgent > 0 || sev2High > 0) {
+    } else if (sev2UrgentActive > 0 || sev2HighActive > 0) {
       siteHealth = 'DEGRADED';
     }
 
     return {
-      sev1,
-      sev2Urgent,
-      sev2High,
-      totalUrgent,
+      // Backward-compatible aliases pointing to active
+      sev1: sev1Active,
+      sev2Urgent: sev2UrgentActive,
+      sev2High: sev2HighActive,
+      sev3: sev3Active,
+      totalUrgent: totalUrgentActive,
+
+      // Window Cumulative Totals (from start date till now)
+      sev1Total,
+      sev2UrgentTotal,
+      sev2HighTotal,
+      sev3Total,
+      totalUrgentTotal,
+
+      // Real-time Active Counts
+      sev1Active,
+      sev2UrgentActive,
+      sev2HighActive,
+      sev3Active,
+      totalUrgentActive,
+
       totalTickets: incidentsSinceStart.length,
       siteHealth,
     };
@@ -2300,75 +2364,145 @@ export function WarRoomsPage() {
               {/* 4 Metric Cards for Incidents vs Alerts */}
               {activeBucket === 'incidents' ? (
                 <div className="overview-metrics" style={{ marginTop: 0 }}>
-                  {/* Sev 1 Urgents */}
-                  <div className="metric">
-                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                      <Flame style={{ color: '#ef4444' }} />
-                      SEV 1 URGENTS
-                    </span>
+                  {/* Card 1: Sev 1 Urgents */}
+                  <div
+                    className="metric"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      setActiveTicketTab('open');
+                      setTicketSeverityFilter('SEV 1 URGENT');
+                    }}
+                    title="Filter Sev-1 incidents"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                      <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                        <Flame style={{ color: '#ef4444' }} />
+                        SEV 1 URGENTS
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontFamily: 'var(--font-mono)',
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: 4,
+                          background: incidentAnalytics.sev1Active > 0 ? 'rgba(239, 68, 68, 0.18)' : 'rgba(34, 197, 94, 0.12)',
+                          color: incidentAnalytics.sev1Active > 0 ? '#ef4444' : '#22c55e',
+                          border: `1px solid ${incidentAnalytics.sev1Active > 0 ? 'rgba(239, 68, 68, 0.35)' : 'rgba(34, 197, 94, 0.25)'}`,
+                          letterSpacing: '0.02em',
+                        }}
+                      >
+                        {incidentAnalytics.sev1Active} ACTIVE
+                      </span>
+                    </div>
+
                     <div>
-                      <strong style={{ color: incidentAnalytics.sev1 > 0 ? '#ef4444' : undefined, fontFamily: 'var(--font-mono)' }}>
-                        {incidentAnalytics.sev1}
+                      <strong style={{ color: incidentAnalytics.sev1Total > 0 ? '#ef4444' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev1Total}
                       </strong>
                       <span style={{ fontFamily: 'var(--font-sans)' }}>Critical outages</span>
                     </div>
+
                     <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                      <span className="source-dot" style={{ background: incidentAnalytics.sev1 > 0 ? '#ef4444' : '#22c55e' }} />
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev1Active > 0 ? '#ef4444' : '#22c55e' }} />
                       Target: 0 Sev-1 incidents
                     </div>
                   </div>
 
-                  {/* Sev 2 Urgents */}
-                  <div className="metric">
-                    <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                      <AlertTriangle style={{ color: '#f59e0b' }} />
-                      SEV 2 URGENTS
-                    </span>
+                  {/* Card 2: Sev 2 Urgents */}
+                  <div
+                    className="metric"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      setActiveTicketTab('open');
+                      setTicketSeverityFilter('SEV 2 URGENT');
+                    }}
+                    title="Filter Sev-2 urgent incidents"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                      <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
+                        <AlertTriangle style={{ color: '#f59e0b' }} />
+                        SEV 2 URGENTS
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          fontFamily: 'var(--font-mono)',
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: 4,
+                          background: incidentAnalytics.sev2UrgentActive > 0 ? 'rgba(245, 158, 11, 0.18)' : 'rgba(34, 197, 94, 0.12)',
+                          color: incidentAnalytics.sev2UrgentActive > 0 ? '#f59e0b' : '#22c55e',
+                          border: `1px solid ${incidentAnalytics.sev2UrgentActive > 0 ? 'rgba(245, 158, 11, 0.35)' : 'rgba(34, 197, 94, 0.25)'}`,
+                          letterSpacing: '0.02em',
+                        }}
+                      >
+                        {incidentAnalytics.sev2UrgentActive} ACTIVE
+                      </span>
+                    </div>
+
                     <div>
-                      <strong style={{ color: incidentAnalytics.sev2Urgent > 0 ? '#f59e0b' : undefined, fontFamily: 'var(--font-mono)' }}>
-                        {incidentAnalytics.sev2Urgent}
+                      <strong style={{ color: incidentAnalytics.sev2UrgentTotal > 0 ? '#f59e0b' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev2UrgentTotal}
                       </strong>
                       <span style={{ fontFamily: 'var(--font-sans)' }}>Major degraded</span>
                     </div>
+
                     <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                      <span className="source-dot" style={{ background: incidentAnalytics.sev2Urgent >= 5 ? '#f59e0b' : 'var(--muted-foreground)' }} />
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev2UrgentActive >= 5 ? '#f59e0b' : 'var(--muted-foreground)' }} />
                       Threshold: &lt; 5 Sev-2
                     </div>
                   </div>
 
-                  {/* Sev 2 Highs */}
-                  <div className="metric">
+                  {/* Card 3: Sev 2 Highs */}
+                  <div
+                    className="metric"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      setActiveTicketTab('open');
+                      setTicketSeverityFilter('SEV 2 HIGH');
+                    }}
+                    title="Filter Sev-2 high priority incidents"
+                  >
                     <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
                       <AlertCircle style={{ color: '#c084fc' }} />
                       SEV 2 HIGHS
                     </span>
                     <div>
-                      <strong style={{ color: incidentAnalytics.sev2High > 0 ? '#c084fc' : undefined, fontFamily: 'var(--font-mono)' }}>
-                        {incidentAnalytics.sev2High}
+                      <strong style={{ color: incidentAnalytics.sev2HighActive > 0 ? '#c084fc' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev2HighActive}
                       </strong>
                       <span style={{ fontFamily: 'var(--font-sans)' }}>High priority</span>
                     </div>
                     <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                      <span className="source-dot" style={{ background: incidentAnalytics.sev2High > 0 ? '#c084fc' : 'var(--muted-foreground)' }} />
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev2HighActive > 0 ? '#c084fc' : 'var(--muted-foreground)' }} />
                       Operational high priority
                     </div>
                   </div>
 
-                  {/* Current Live Open Incidents */}
-                  <div className="metric">
+                  {/* Card 4: Sev 3 */}
+                  <div
+                    className="metric"
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      setActiveTicketTab('open');
+                      setTicketSeverityFilter('SEV 3');
+                    }}
+                    title="Filter Sev-3 low priority incidents"
+                  >
                     <span className="metric-label" style={{ fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase' }}>
-                      <Flame style={{ color: 'var(--primary)' }} />
-                      LIVE OPEN INCIDENTS
+                      <Activity style={{ color: '#60a5fa' }} />
+                      SEV 3
                     </span>
                     <div>
-                      <strong style={{ color: liveOpenIncidents.length > 0 ? 'var(--primary)' : undefined, fontFamily: 'var(--font-mono)' }}>
-                        {liveOpenIncidents.length}
+                      <strong style={{ color: incidentAnalytics.sev3Active > 0 ? '#60a5fa' : undefined, fontFamily: 'var(--font-mono)' }}>
+                        {incidentAnalytics.sev3Active}
                       </strong>
-                      <span style={{ fontFamily: 'var(--font-sans)' }}>Currently active &amp; unsolved</span>
+                      <span style={{ fontFamily: 'var(--font-sans)' }}>Low priority</span>
                     </div>
                     <div className="metric-foot" style={{ fontFamily: 'var(--font-mono)', fontSize: 9 }}>
-                      <span className="source-dot" style={{ background: liveOpenIncidents.length > 0 ? 'var(--primary)' : '#22c55e' }} />
-                      {incidentAnalytics.totalTickets} total incidents in window
+                      <span className="source-dot" style={{ background: incidentAnalytics.sev3Active > 0 ? '#60a5fa' : 'var(--muted-foreground)' }} />
+                      Operational standard
                     </div>
                   </div>
                 </div>
@@ -2813,6 +2947,40 @@ export function WarRoomsPage() {
                       }}
                     >
                       Sev-2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTicketSeverityFilter('SEV 2 HIGH')}
+                      style={{
+                        padding: '4px 9px',
+                        fontSize: 10.5,
+                        fontWeight: ticketSeverityFilter === 'SEV 2 HIGH' ? 700 : 500,
+                        borderRadius: 4,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: ticketSeverityFilter === 'SEV 2 HIGH' ? 'var(--card)' : 'transparent',
+                        color: ticketSeverityFilter === 'SEV 2 HIGH' ? '#c084fc' : 'var(--muted-foreground)',
+                        fontFamily: 'var(--font-sans)',
+                      }}
+                    >
+                      Sev-2 High
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setTicketSeverityFilter('SEV 3')}
+                      style={{
+                        padding: '4px 9px',
+                        fontSize: 10.5,
+                        fontWeight: ticketSeverityFilter === 'SEV 3' ? 700 : 500,
+                        borderRadius: 4,
+                        border: 'none',
+                        cursor: 'pointer',
+                        background: ticketSeverityFilter === 'SEV 3' ? 'var(--card)' : 'transparent',
+                        color: ticketSeverityFilter === 'SEV 3' ? '#60a5fa' : 'var(--muted-foreground)',
+                        fontFamily: 'var(--font-sans)',
+                      }}
+                    >
+                      Sev-3
                     </button>
                   </div>
 
